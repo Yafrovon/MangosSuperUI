@@ -1,0 +1,346 @@
+@{
+    ViewData["Title"] = "Bots";
+}
+
+
+@section Styles {
+    <style>
+        /* ====== Header Stats ====== */
+        .bot-stat {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+            .bot-stat i {
+                font-size: 12px;
+                color: var(--text-muted);
+            }
+
+        /* ====== Bot Grid ====== */
+        .bot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+        }
+
+        .bot-grid-empty {
+            grid-column: 1 / -1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            text-align: center;
+        }
+
+        /* ====== Bot Card ====== */
+        .bot-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            transition: border-color var(--transition-fast);
+            cursor: pointer;
+            position: relative;
+        }
+
+            .bot-card:hover {
+                border-color: var(--accent);
+            }
+
+            .bot-card.combat {
+                border-left: 3px solid #f7768e;
+            }
+
+            .bot-card.dead {
+                opacity: 0.55;
+            }
+
+        .bot-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .bot-card-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .bot-card-class {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 7px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .bot-card-bar {
+            height: 4px;
+            border-radius: 2px;
+            background: var(--bg-card-alt);
+            margin-bottom: 4px;
+            overflow: hidden;
+        }
+
+        .bot-card-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .bar-health .bot-card-bar-fill {
+            background: #9ece6a;
+        }
+
+        .bar-mana .bot-card-bar-fill {
+            background: #7aa2f7;
+        }
+
+        .bot-card-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .bot-card-task {
+            font-size: 10.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-top: 6px;
+            color: var(--text-muted);
+        }
+
+            .bot-card-task.task-combat {
+                color: #f7768e;
+            }
+
+            .bot-card-task.task-moving {
+                color: #e0af68;
+            }
+
+            .bot-card-task.task-idle {
+                color: var(--text-muted);
+            }
+
+        .bot-card-status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 4px;
+        }
+
+        .dot-connected {
+            background: #9ece6a;
+        }
+
+        .dot-disconnected {
+            background: #f7768e;
+        }
+
+        /* ====== WoW Class Colors ====== */
+        .class-warrior {
+            background: #C69B6D22;
+            color: #C79C6E;
+        }
+
+        .class-paladin {
+            background: #F48CBA22;
+            color: #F58CBA;
+        }
+
+        .class-hunter {
+            background: #AAD37222;
+            color: #ABD473;
+        }
+
+        .class-rogue {
+            background: #FFF46822;
+            color: #FFF569;
+        }
+
+        .class-priest {
+            background: #FFFFFF22;
+            color: #cccccc;
+        }
+
+        .class-shaman {
+            background: #0070DD22;
+            color: #0070DE;
+        }
+
+        .class-mage {
+            background: #3FC7EB22;
+            color: #40C7EB;
+        }
+
+        .class-warlock {
+            background: #8788EE22;
+            color: #8787EE;
+        }
+
+        .class-druid {
+            background: #FF7C0A22;
+            color: #FF7D0A;
+        }
+
+        /* ====== Event Log ====== */
+        .bot-event-log {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            background: #0f1319;
+            color: #c8d0da;
+            padding: 12px;
+            border-radius: var(--radius-md);
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-event {
+            color: #e0af68;
+        }
+
+        .log-chat {
+            color: #bb9af7;
+        }
+
+        .log-sys {
+            color: #9ece6a;
+        }
+
+        .log-err {
+            color: #f7768e;
+        }
+
+        .log-state {
+            color: #7aa2f7;
+        }
+    </style>
+}
+
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h1>AI Playerbots</h1>
+                    <p>BotBridge live dashboard — TCP port 3444</p>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <span class="bot-stat" id="statConnected" title="Connected bots">
+                        <i class="fa-solid fa-link"></i> <span id="countConnected">0</span>
+                    </span>
+                    <span class="bot-stat" id="statCombat" title="In combat">
+                        <i class="fa-solid fa-crosshairs"></i> <span id="countCombat">0</span>
+                    </span>
+                    <span class="bot-stat" id="statDead" title="Dead">
+                        <i class="fa-solid fa-skull"></i> <span id="countDead">0</span>
+                    </span>
+                    <span class="status-dot offline" id="bridgeStatus"></span>
+                    <span id="bridgeStatusText" style="font-weight: 500; font-size: 13px;">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-body">
+
+            <!-- Command Bar -->
+            <div class="cmd-section">
+                <div class="cmd-card">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="cmd-section-title">Send Command to Bot</div>
+                            <div class="d-flex gap-2">
+                                <select class="form-input" id="cmdBotSelect" style="width: 200px;">
+                                    <option value="0">-- All Bots --</option>
+                                </select>
+                                <select class="form-input" id="cmdType" style="width: 160px;">
+                                    <option value="move_to">Move To</option>
+                                    <option value="say">Say</option>
+                                    <option value="yell">Yell</option>
+                                    <option value="accept_quest">Accept Quest</option>
+                                    <option value="complete_quest">Complete Quest</option>
+                                    <option value="abandon_quest">Abandon Quest</option>
+                                    <option value="learn_spell">Learn Spell</option>
+                                    <option value="attack_target">Attack Target</option>
+                                    <option value="interact_npc">Interact NPC</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="cmd-section-title">Parameters</div>
+                            <div class="d-flex gap-2" id="cmdParamsMoveTo">
+                                <input type="number" class="form-input" id="cmdMapId" placeholder="MapID" value="0" style="width: 80px;" />
+                                <input type="number" class="form-input" id="cmdX" placeholder="X" step="0.1" style="width: 100px;" />
+                                <input type="number" class="form-input" id="cmdY" placeholder="Y" step="0.1" style="width: 100px;" />
+                                <input type="number" class="form-input" id="cmdZ" placeholder="Z" step="0.1" style="width: 100px;" />
+                            </div>
+                            <div class="d-flex gap-2" id="cmdParamsSay" style="display: none;">
+                                <input type="text" class="form-input flex-grow-1" id="cmdText" placeholder="Text to say..." />
+                            </div>
+                            <div class="d-flex gap-2" id="cmdParamsQuest" style="display: none;">
+                                <input type="number" class="form-input" id="cmdQuestId" placeholder="Quest ID" style="width: 140px;" />
+                            </div>
+                            <div class="d-flex gap-2" id="cmdParamsSpell" style="display: none;">
+                                <input type="number" class="form-input" id="cmdSpellId" placeholder="Spell ID" style="width: 140px;" />
+                            </div>
+                            <div class="d-flex gap-2" id="cmdParamsTarget" style="display: none;">
+                                <input type="number" class="form-input" id="cmdTargetGuid" placeholder="Target GUID" style="width: 140px;" />
+                            </div>
+                            <div class="mt-2">
+                                <button class="btn-accent" id="btnSendCmd"><i class="fa-solid fa-paper-plane"></i> Send</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bot Grid -->
+        <div class="cmd-section">
+            <div class="cmd-section-title">Connected Bots</div>
+            <div id="botGrid" class="bot-grid">
+                <div class="bot-grid-empty" id="botGridEmpty">
+                    <i class="fa-solid fa-robot" style="font-size: 48px; color: var(--text-muted); margin-bottom: 12px;"></i>
+                    <div style="color: var(--text-muted); font-size: 14px;">No bots connected</div>
+                    <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px;">
+                        Waiting for AiBotAI instances to connect on TCP 3444...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="cmd-section">
+            <div class="d-flex align-items-center justify-content-between mb-1">
+                <div class="cmd-section-title" style="margin-bottom: 0;">Event Log</div>
+                <button class="btn-outline-subtle" id="btnClearLog" style="padding: 2px 8px; font-size: 11px;">Clear</button>
+            </div>
+            <div class="bot-event-log" id="eventLog"></div>
+        </div>
+
+    </div>
+</div>
+</div>
+
+
+@section Scripts {
+    <script src="~/js/bots.js" asp-append-version="true"></script>
+}

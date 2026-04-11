@@ -74,22 +74,61 @@
 
     // Default group order + item order within each group
     var DEFAULT_ORDER = {
-        groups: ['operations', 'server', 'content', 'downloads', 'data'],
+        groups: ['operations', 'server', 'content', 'downloads', 'bots', 'data'],
         items: {
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
             server: ['activity', 'serverlogs', 'livelogs', 'config'],
             content: ['worldmap', 'items', 'spells', 'gameobjects', 'loottuner', 'instances', 'lootifier'],
             downloads: ['downloads-page'],
-            data: ['database']
+            bots: ['bots-dashboard'],
+            data: ['database', 'functiongraph']
         }
     };
 
     function getSidebarOrder() {
+        var defaults = JSON.parse(JSON.stringify(DEFAULT_ORDER));
+        var stored;
         try {
-            var stored = JSON.parse(localStorage.getItem(ORDER_STORAGE_KEY));
-            if (stored && stored.groups && stored.items) return stored;
-        } catch { }
-        return JSON.parse(JSON.stringify(DEFAULT_ORDER));
+            stored = JSON.parse(localStorage.getItem(ORDER_STORAGE_KEY));
+            if (!stored || !stored.groups || !stored.items) return defaults;
+        } catch { return defaults; }
+
+        // --- Merge: splice new groups/items into stored order ---
+
+        // 1. Add any default groups missing from stored list (append at end)
+        defaults.groups.forEach(function (g) {
+            if (stored.groups.indexOf(g) === -1) stored.groups.push(g);
+        });
+
+        // 2. Remove stored groups that no longer exist in defaults
+        stored.groups = stored.groups.filter(function (g) {
+            return defaults.groups.indexOf(g) !== -1;
+        });
+
+        // 3. For each group, add missing items and prune removed ones
+        defaults.groups.forEach(function (g) {
+            var defItems = defaults.items[g] || [];
+            var storedItems = stored.items[g] || [];
+
+            // Append any new default items not yet in stored list
+            defItems.forEach(function (item) {
+                if (storedItems.indexOf(item) === -1) storedItems.push(item);
+            });
+
+            // Remove items that no longer exist in defaults
+            stored.items[g] = storedItems.filter(function (item) {
+                return defItems.indexOf(item) !== -1;
+            });
+        });
+
+        // 4. Remove item entries for groups that no longer exist
+        Object.keys(stored.items).forEach(function (g) {
+            if (defaults.groups.indexOf(g) === -1) delete stored.items[g];
+        });
+
+        // Persist the merged result so this reconciliation only runs once
+        saveSidebarOrder(stored);
+        return stored;
     }
 
     function saveSidebarOrder(order) {
@@ -284,7 +323,8 @@
             instances: { icon: 'fa-dungeon', label: 'Instance Loot' },
             lootifier: { icon: 'fa-dragon', label: 'ARPG Lootifier' },
             'downloads-page': { icon: 'fa-arrow-down-to-line', label: 'Downloads' },
-            database: { icon: 'fa-database', label: 'Database Explorer' }
+            database: { icon: 'fa-database', label: 'Database Explorer' },
+            functiongraph: { icon: 'fa-project-diagram', label: 'Function Graph' }
         };
 
         order.groups.forEach(function (groupKey) {

@@ -2,6 +2,7 @@ using MangosSuperUI.Services;
 using MangosSuperUI.Models;
 using MangosSuperUI.Hubs;
 using Microsoft.AspNetCore.StaticFiles;
+using System.Diagnostics.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +24,8 @@ builder.Services.AddSingleton<StateCaptureService>();
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<DbcService>();
 builder.Services.AddSingleton<HeightMapService>();
+builder.Services.AddSingleton<BotBridgeService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BotBridgeService>());
 
 // ---------- MVC + SignalR ----------
 builder.Services.AddControllersWithViews();
@@ -59,5 +62,6 @@ app.MapControllerRoute(
 
 app.MapHub<ConsoleHub>("/hubs/console");
 app.MapHub<LogStreamHub>("/hubs/logs");
+app.MapHub<BotBridgeHub>("/hubs/botbridge");
 
 app.Run();

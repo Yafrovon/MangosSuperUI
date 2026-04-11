@@ -16,4 +16,20 @@
     <PackageReference Include="MySqlConnector" Version="2.5.0" />
   </ItemGroup>
 
+
+	<ItemGroup>
+		<Content Remove="wwwroot\item_models\**" />
+		<Content Remove="wwwroot\minimap\**" />
+		<Content Remove="wwwroot\models\**" />
+		<Content Remove="wwwroot\icons\**" />
+	</ItemGroup>
+
+	<!-- If you still want them available during local dev/build, add them back as None --><!--
+	<ItemGroup>
+		<None Include="wwwroot\item_models\**" />
+		<None Include="wwwroot\minimap\**" />
+		<None Include="wwwroot\models\**" />
+		<None Include="wwwroot\icons\**" />
+	</ItemGroup>-->
+
 </Project>

@@ -15,8 +15,9 @@
         "home" or "console" or "players" or "accounts" or "realm" => "operations",
         "activity" or "serverlogs" or "livelogs" or "config" => "server",
         "worldmap" or "items" or "spells" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
-        "database" => "data",
+        "database" or "functiongraph" => "data",
         "downloads" => "downloads",
+        "bots" => "bots",
         _ => ""
     };
 }
@@ -182,6 +183,22 @@
             </ul>
         </div>
 
+        <!-- Bots -->
+        <div class="sidebar-section" data-group="bots">
+            <div class="sidebar-section-title" data-toggle-group="bots">
+                <span>Bots</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
+                <li class="sidebar-nav-item" data-nav-key="bots-dashboard">
+                    <a asp-controller="Bots" asp-action="Index" class="@NavClass("Bots")">
+                        <i class="fa-solid fa-robot"></i>
+                        AI Bots
+                    </a>
+                </li>
+            </ul>
+        </div>
+
         <!-- Data -->
         <div class="sidebar-section" data-group="data">
             <div class="sidebar-section-title" data-toggle-group="data">
@@ -193,6 +210,12 @@
                     <a asp-controller="Database" asp-action="Index" class="@NavClass("Database")">
                         <i class="fa-solid fa-database"></i>
                         Database Explorer
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="functiongraph">
+                    <a asp-controller="FunctionGraph" asp-action="Index" class="@NavClass("FunctionGraph")">
+                        <i class="fa-solid fa-project-diagram"></i>
+                        Function Graph
                     </a>
                 </li>
             </ul>
