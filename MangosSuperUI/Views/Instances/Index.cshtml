@@ -102,6 +102,13 @@
                                 Select a boss to view their loot table
                             </div>
                         </div>
+
+                        <!-- Add Item Footer -->
+                        <div class="card-footer" id="addItemFooter" style="display: none; border-top: 1px solid var(--border-light); padding: 8px 14px;">
+                            <button class="btn-add-row" id="btnAddLootItem" style="width: 100%;">
+                                <i class="fa-solid fa-plus"></i> Add Item to Loot Table
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -135,67 +142,722 @@
     </div>
 </div>
 
+<!-- Item Picker Modal -->
+<div class="modal fade" id="itemPickerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border);">
+            <div class="modal-header" style="border-color: var(--border-light);">
+                <h5 class="modal-title" style="font-size: 15px; font-weight: 600;">
+                    <i class="fa-solid fa-magnifying-glass" style="color: var(--accent);"></i> Find Item to Add
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-7">
+                        <input type="text" class="form-input" id="itemPickerSearch" placeholder="Search by name or entry ID (e.g. Thunderfury or 19019)" />
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-input" id="itemPickerQuality">
+                            <option value="">All Qualities</option>
+                            <option value="0">Poor</option>
+                            <option value="1">Common</option>
+                            <option value="2">Uncommon</option>
+                            <option value="3">Rare</option>
+                            <option value="4">Epic</option>
+                            <option value="5">Legendary</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn-accent w-100" id="btnItemPickerSearch" style="height: 100%;">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="text-muted" style="font-size: 12px;" id="itemPickerInfo"></span>
+                    <div class="d-flex gap-2">
+                        <button class="btn-sm btn-outline-subtle" id="btnItemPickerPrev"><i class="fa-solid fa-chevron-left"></i></button>
+                        <span class="text-muted" style="font-size: 12px; line-height: 28px;" id="itemPickerPageInfo"></span>
+                        <button class="btn-sm btn-outline-subtle" id="btnItemPickerNext"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                </div>
+                <div id="itemPickerResults" style="max-height: 400px; overflow-y: auto;">
+                    <div class="text-center p-4 text-muted">Search for items to add</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Item Config Modal (step 2: set chance, group, count) -->
+<div class="modal fade" id="addItemConfigModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border);">
+            <div class="modal-header" style="border-color: var(--accent); background: rgba(99,153,255,0.06);">
+                <h5 class="modal-title" style="font-size: 15px; font-weight: 600;">
+                    <i class="fa-solid fa-plus-circle" style="color: var(--accent);"></i> Add Item to Loot Table
+                </h5>
+            </div>
+            <div class="modal-body" style="font-size: 13.5px;">
+                <!-- Selected item preview -->
+                <div class="d-flex align-items-center gap-10 mb-3 p-2" style="background: var(--bg-input); border-radius: var(--radius-sm); border: 1px solid var(--border-light); gap: 10px;">
+                    <img id="addItemIcon" class="detail-icon" style="width: 36px; height: 36px; image-rendering: pixelated; border-radius: 3px; border: 1px solid var(--border);" src="/icons/inv_misc_questionmark.png" />
+                    <div style="min-width: 0;">
+                        <div id="addItemName" style="font-weight: 600; font-size: 13px;">—</div>
+                        <div id="addItemMeta" style="font-size: 11px; color: var(--text-muted);">—</div>
+                    </div>
+                </div>
+
+                <!-- Placement target -->
+                <div class="mb-3">
+                    <label style="display: block; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">
+                        Add To
+                    </label>
+                    <select class="form-input" id="addItemTarget" style="font-size: 13px;">
+                        <option value="direct">Direct Drops</option>
+                        <!-- Reference pools populated dynamically -->
+                    </select>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;" id="addItemTargetHint">
+                        Direct = drops from this creature directly. Shared pools are reference loot tables shared across creatures.
+                    </div>
+                </div>
+
+                <!-- Group selection (within the chosen table) -->
+                <div class="mb-3">
+                    <label style="display: block; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">
+                        Drop Group <span style="font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 10px; color: var(--text-muted);">(within the chosen table)</span>
+                    </label>
+                    <select class="form-input" id="addItemGroupId" style="font-size: 13px;">
+                        <option value="0">Group 0 — Independent roll (own % chance each kill)</option>
+                        <option value="1">Group 1 — Competing pool (one item picked from group)</option>
+                        <option value="2">Group 2 — Competing pool</option>
+                        <option value="3">Group 3 — Competing pool</option>
+                    </select>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">
+                        Group 0 = item rolls independently. Groups 1+ = items compete — total % in a group should = 100%.
+                    </div>
+                </div>
+
+                <!-- Chance -->
+                <div class="mb-3">
+                    <label style="display: block; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">
+                        Drop Chance %
+                    </label>
+                    <input type="number" class="form-input" id="addItemChance" value="10" min="0" max="100" step="0.01" style="font-size: 13px; width: 120px;" />
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;" id="addItemChanceHint">
+                        For group 0: raw drop rate per kill. For groups 1+: share within pool (0 = equal weight with other 0% items).
+                    </div>
+                </div>
+
+                <!-- Group balance preview (shown for groups > 0) -->
+                <div id="groupBalancePanel" style="display: none;" class="mb-3">
+                    <label style="display: block; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">
+                        <i class="fa-solid fa-chart-pie"></i> Group Balance Preview
+                    </label>
+                    <div id="groupBalanceContent" style="background: var(--bg-input); border-radius: var(--radius-sm); border: 1px solid var(--border-light); padding: 10px; font-size: 12px; max-height: 180px; overflow-y: auto;">
+                    </div>
+                    <div id="groupBalanceWarning" style="display: none; font-size: 11px; color: var(--status-warning); margin-top: 4px;">
+                        <i class="fa-solid fa-triangle-exclamation"></i> <span></span>
+                    </div>
+                </div>
+
+                <!-- Max count -->
+                <div class="mb-0">
+                    <label style="display: block; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">
+                        Drop Count
+                    </label>
+                    <input type="number" class="form-input" id="addItemMaxCount" value="1" min="1" max="20" style="font-size: 13px; width: 80px;" />
+                    <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">How many of this item drop at once</span>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-light); gap: 8px;">
+                <button class="btn-sm btn-accent" id="btnConfirmAddItem">
+                    <i class="fa-solid fa-plus"></i> Add to Loot Table
+                </button>
+                <button class="btn-sm btn-outline-subtle" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Remove Loot Item Confirmation Modal -->
+<div class="modal fade" id="removeLootModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border);">
+            <div class="modal-header" style="border-color: var(--status-error); background: rgba(255,68,68,0.06);">
+                <h5 class="modal-title" style="font-size: 15px; font-weight: 600; color: var(--status-error);">
+                    <i class="fa-solid fa-trash"></i> Remove Loot Item
+                </h5>
+            </div>
+            <div class="modal-body" style="font-size: 13.5px;">
+                <p>Remove <strong id="removeItemName"></strong> from this boss's loot table?</p>
+                <p class="text-muted" style="font-size: 12px; margin-bottom: 0;">
+                    <i class="fa-solid fa-circle-info" style="font-size: 10px;"></i>
+                    This deletes the loot table row. The item itself is not affected. This action is logged.
+                </p>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-light); gap: 8px;">
+                <button class="btn-sm" id="btnConfirmRemoveLoot" style="background: var(--status-error); border: none; color: white; border-radius: var(--radius-sm); padding: 4px 12px; font-size: 12.5px; cursor: pointer;">
+                    <i class="fa-solid fa-trash"></i> Remove
+                </button>
+                <button class="btn-sm btn-outline-subtle" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @section Styles {
     <style>
-        .quality-0 { color: #9d9d9d; } .quality-1 { color: var(--text-primary); }
-        .quality-2 { color: #1eff00; } .quality-3 { color: #0070dd; }
-        .quality-4 { color: #a335ee; } .quality-5 { color: #ff8000; }
-        .quality-6 { color: #e6cc80; }
-        .inst-list-body { max-height: calc(100vh - 160px); overflow-y: auto; }
-        .inst-category-header { padding: 8px 14px 4px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-light); background: var(--bg-input); }
-        .inst-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border-light); transition: background 0.12s; }
-        .inst-row:hover { background: var(--bg-input); }
-        .inst-row.active { background: var(--accent-subtle); border-left: 3px solid var(--accent); }
-        .inst-row:last-child { border-bottom: none; }
-        .inst-name { font-size: 12.5px; font-weight: 500; flex: 1; }
-        .inst-meta { font-size: 10px; color: var(--text-muted); }
-        .inst-badge { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: var(--bg-body); color: var(--text-muted); }
-        .boss-list-body { max-height: calc(100vh - 210px); overflow-y: auto; }
-        .boss-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border-light); transition: background 0.12s; }
-        .boss-row:hover { background: var(--bg-input); }
-        .boss-row.active { background: var(--accent-subtle); border-left: 3px solid var(--accent); }
-        .boss-row:last-child { border-bottom: none; }
-        .boss-rank-icon { font-size: 11px; width: 18px; text-align: center; flex-shrink: 0; }
-        .boss-rank-3 { color: var(--status-warning); }
-        .boss-rank-2 { color: #a335ee; }
-        .boss-rank-1 { color: var(--text-muted); }
-        .boss-rank-0 { color: var(--text-muted); opacity: 0.5; }
-        .boss-info { flex: 1; min-width: 0; }
-        .boss-name { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .boss-level { font-size: 10px; color: var(--text-muted); }
-        .boss-loot-count { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: var(--bg-body); color: var(--text-muted); flex-shrink: 0; }
-        .instance-mult-footer { border-top: 1px solid var(--border-light); padding: 8px 12px; }
-        .mult-mini { padding: 3px 8px; font-size: 11px; font-weight: 700; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; transition: all 0.12s; }
-        .mult-mini:hover { border-color: var(--accent); color: var(--accent); }
-        .filter-check-inline { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-        .filter-check-inline input { accent-color: var(--accent); }
-        .loot-panel-body { max-height: calc(100vh - 160px); overflow-y: auto; }
-        .loot-section-header { padding: 8px 14px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; background: var(--bg-input); border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
-        .ref-tag { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: rgba(99,153,255,0.1); color: var(--accent); font-weight: 600; }
-        .loot-item-row { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; transition: background 0.12s; }
-        .loot-item-row:hover { background: rgba(99,153,255,0.03); }
-        .loot-item-row:last-child { border-bottom: none; }
-        .loot-item-icon { width: 26px; height: 26px; image-rendering: pixelated; border-radius: 2px; border: 1px solid var(--border); flex-shrink: 0; }
-        .loot-item-name { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .loot-edit-field { width: 58px; text-align: right; padding: 3px 6px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 3px; color: var(--text-primary); font-size: 12px; font-family: monospace; transition: border-color 0.12s; }
-        .loot-edit-field:focus { border-color: var(--accent); outline: none; }
-        .loot-edit-field.changed { border-color: var(--status-warning); background: rgba(255,170,0,0.06); }
-        .loot-field-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; text-align: center; display: block; margin-bottom: 1px; }
-        .loot-field-group { text-align: center; flex-shrink: 0; }
-        .loot-save-btn { background: var(--accent); border: none; color: white; border-radius: 3px; padding: 3px 8px; font-size: 10px; font-weight: 700; cursor: pointer; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
-        .loot-item-row.dirty .loot-save-btn { opacity: 1; }
-        .loot-quest-badge { font-size: 8px; padding: 0 4px; border-radius: 4px; background: rgba(99,153,255,0.12); color: var(--accent); font-weight: 700; vertical-align: middle; margin-left: 4px; }
-        .loot-count-field { width: 36px; text-align: center; }
-        .loot-count-sep { color: var(--text-muted); font-size: 11px; }
-        .loot-fields { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
-        .loot-field-unit { font-size: 10px; color: var(--text-muted); margin-right: 4px; }
-        .loot-chance-wrap { position: relative; }
-        .loot-effective-hint { position: absolute; bottom: -13px; left: 0; right: 0; text-align: right; font-size: 9px; color: var(--text-muted); white-space: nowrap; }
-        .loot-group-badge { font-size: 8px; padding: 0 4px; border-radius: 4px; background: rgba(255,170,0,0.12); color: var(--status-warning); font-weight: 700; vertical-align: middle; margin-left: 4px; }
-        .inst-toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; padding: 12px 20px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; animation: toastIn 0.3s ease-out; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
-        .inst-toast.success { background: var(--status-online); color: white; }
-        .inst-toast.error { background: var(--status-error); color: white; }
-        @@keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .quality-0 {
+            color: #9d9d9d;
+        }
+
+        .quality-1 {
+            color: var(--text-primary);
+        }
+
+        .quality-2 {
+            color: #1eff00;
+        }
+
+        .quality-3 {
+            color: #0070dd;
+        }
+
+        .quality-4 {
+            color: #a335ee;
+        }
+
+        .quality-5 {
+            color: #ff8000;
+        }
+
+        .quality-6 {
+            color: #e6cc80;
+        }
+
+        .inst-list-body {
+            max-height: calc(100vh - 160px);
+            overflow-y: auto;
+        }
+
+        .inst-category-header {
+            padding: 8px 14px 4px;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border-light);
+            background: var(--bg-input);
+        }
+
+        .inst-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-light);
+            transition: background 0.12s;
+        }
+
+            .inst-row:hover {
+                background: var(--bg-input);
+            }
+
+            .inst-row.active {
+                background: var(--accent-subtle);
+                border-left: 3px solid var(--accent);
+            }
+
+            .inst-row:last-child {
+                border-bottom: none;
+            }
+
+        .inst-name {
+            font-size: 12.5px;
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .inst-meta {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        .inst-badge {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: var(--bg-body);
+            color: var(--text-muted);
+        }
+
+        .boss-list-body {
+            max-height: calc(100vh - 210px);
+            overflow-y: auto;
+        }
+
+        .boss-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-light);
+            transition: background 0.12s;
+        }
+
+            .boss-row:hover {
+                background: var(--bg-input);
+            }
+
+            .boss-row.active {
+                background: var(--accent-subtle);
+                border-left: 3px solid var(--accent);
+            }
+
+            .boss-row:last-child {
+                border-bottom: none;
+            }
+
+        .boss-rank-icon {
+            font-size: 11px;
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .boss-rank-3 {
+            color: var(--status-warning);
+        }
+
+        .boss-rank-2 {
+            color: #a335ee;
+        }
+
+        .boss-rank-1 {
+            color: var(--text-muted);
+        }
+
+        .boss-rank-0 {
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+
+        .boss-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .boss-name {
+            font-size: 12.5px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .boss-level {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        .boss-loot-count {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: var(--bg-body);
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .instance-mult-footer {
+            border-top: 1px solid var(--border-light);
+            padding: 8px 12px;
+        }
+
+        .mult-mini {
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+            .mult-mini:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+        .filter-check-inline {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+
+            .filter-check-inline input {
+                accent-color: var(--accent);
+            }
+
+        .loot-panel-body {
+            max-height: calc(100vh - 160px);
+            overflow-y: auto;
+        }
+
+        .loot-section-header {
+            padding: 8px 14px;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: var(--bg-input);
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .ref-tag {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: rgba(99,153,255,0.1);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .loot-item-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-bottom: 1px solid var(--border-light);
+            font-size: 12.5px;
+            transition: background 0.12s;
+        }
+
+            .loot-item-row:hover {
+                background: rgba(99,153,255,0.03);
+            }
+
+            .loot-item-row:last-child {
+                border-bottom: none;
+            }
+
+        .loot-item-icon {
+            width: 26px;
+            height: 26px;
+            image-rendering: pixelated;
+            border-radius: 2px;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .loot-item-name {
+            flex: 1;
+            min-width: 0;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .loot-edit-field {
+            width: 58px;
+            text-align: right;
+            padding: 3px 6px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-primary);
+            font-size: 12px;
+            font-family: monospace;
+            transition: border-color 0.12s;
+        }
+
+            .loot-edit-field:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
+
+            .loot-edit-field.changed {
+                border-color: var(--status-warning);
+                background: rgba(255,170,0,0.06);
+            }
+
+        .loot-field-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            text-align: center;
+            display: block;
+            margin-bottom: 1px;
+        }
+
+        .loot-field-group {
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .loot-save-btn {
+            background: var(--accent);
+            border: none;
+            color: white;
+            border-radius: 3px;
+            padding: 3px 8px;
+            font-size: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.15s;
+            flex-shrink: 0;
+        }
+
+        .loot-item-row.dirty .loot-save-btn {
+            opacity: 1;
+        }
+
+        .loot-quest-badge {
+            font-size: 8px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: rgba(99,153,255,0.12);
+            color: var(--accent);
+            font-weight: 700;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        .loot-count-field {
+            width: 36px;
+            text-align: center;
+        }
+
+        .loot-count-sep {
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
+        .loot-fields {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            flex-shrink: 0;
+        }
+
+        .loot-field-unit {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-right: 4px;
+        }
+
+        .loot-chance-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .loot-effective-hint {
+            display: none;
+        }
+
+        .loot-group-badge {
+            font-size: 8px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: rgba(255,170,0,0.12);
+            color: var(--status-warning);
+            font-weight: 700;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        .inst-toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 9999;
+            padding: 12px 20px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 500;
+            animation: toastIn 0.3s ease-out;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+            .inst-toast.success {
+                background: var(--status-online);
+                color: white;
+            }
+
+            .inst-toast.error {
+                background: var(--status-error);
+                color: white;
+            }
+
+        @@keyframes toastIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ── Item Picker ── */
+        .ip-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-light);
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+
+            .ip-row:hover {
+                background: var(--accent-subtle);
+            }
+
+            .ip-row:last-child {
+                border-bottom: none;
+            }
+
+            .ip-row .ip-icon {
+                width: 28px;
+                height: 28px;
+                image-rendering: pixelated;
+                border-radius: 2px;
+                border: 1px solid var(--border);
+                flex-shrink: 0;
+            }
+
+            .ip-row .ip-name {
+                font-size: 13px;
+                font-weight: 500;
+                flex: 1;
+                min-width: 0;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .ip-row .ip-meta {
+                font-size: 10px;
+                color: var(--text-muted);
+            }
+
+            .ip-row .ip-id {
+                font-size: 10px;
+                color: var(--text-muted);
+                font-family: monospace;
+                flex-shrink: 0;
+            }
+
+        /* ── Remove Button on Loot Rows ── */
+        .loot-remove-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 3px 5px;
+            border-radius: 3px;
+            transition: all 0.12s;
+            flex-shrink: 0;
+            opacity: 0.4;
+        }
+
+            .loot-remove-btn:hover {
+                color: var(--status-error);
+                opacity: 1;
+                background: rgba(255,68,68,0.08);
+            }
+
+        /* ── Group Balance ── */
+        .gb-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 0;
+        }
+
+        .gb-icon {
+            width: 18px;
+            height: 18px;
+            image-rendering: pixelated;
+            border-radius: 2px;
+        }
+
+        .gb-name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .gb-pct {
+            font-family: monospace;
+            font-weight: 600;
+            flex-shrink: 0;
+            text-align: right;
+            width: 50px;
+        }
+
+        .gb-bar-wrap {
+            width: 60px;
+            height: 6px;
+            background: var(--bg-body);
+            border-radius: 3px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .gb-bar {
+            height: 100%;
+            border-radius: 3px;
+            background: var(--accent);
+            transition: width 0.2s;
+        }
+
+        .gb-new {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* ── Add Item Button ── */
+        .btn-add-row {
+            background: none;
+            border: 1px dashed var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 6px 12px;
+            font-size: 12px;
+            text-align: center;
+            transition: all 0.12s;
+        }
+
+            .btn-add-row:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
     </style>
 }
 

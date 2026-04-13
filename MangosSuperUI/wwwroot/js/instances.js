@@ -6,6 +6,13 @@ $(function () {
     var currentCreatureEntry = null;
     var currentLootData = null;
 
+    // Item picker state
+    var itemPickerPage = 1;
+    var itemPickerQuery = '';
+    var itemPickerQuality = '';
+    var pendingAddItem = null;   // { entry, name, quality, iconPath }
+    var pendingRemoveData = null; // { entry, item, groupId, patchMin, patchMax, source, itemName }
+
     var QUALITY_NAMES = ['Poor', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Artifact'];
 
     // ===================== BASELINE INTEGRATION =====================
@@ -271,6 +278,9 @@ $(function () {
 
             $('#lootContainer').html(h);
 
+            // Show add-item button
+            $('#addItemFooter').show();
+
             // Load OG loot changelog
             loadLootChangelog(creatureEntry);
         });
@@ -286,15 +296,11 @@ $(function () {
         // For equal-weight items, show 0 but with a tooltip showing effective %
         var chanceDisplay = formatChance(absChance);
         var chanceTitle = '';
+        var effectiveSuffix = '';
         if (isEqualWeight && effectiveChance !== undefined && effectiveChance !== null) {
             chanceTitle = ' title="Currently equal weight in group — effective ~' + formatChance(effectiveChance) + '%. Enter a value to set an explicit rate."';
             chanceDisplay = '0';
-        }
-
-        // Effective chance hint shown below the input
-        var effectiveHint = '';
-        if (isEqualWeight && effectiveChance !== undefined && effectiveChance !== null) {
-            effectiveHint = '<span class="loot-effective-hint">≈' + formatChance(effectiveChance) + '%</span>';
+            effectiveSuffix = '<span style="font-size:9px;color:var(--text-muted);white-space:nowrap;margin-left:1px;" title="Effective chance in group">≈' + formatChance(effectiveChance) + '</span>';
         }
 
         var entryAttr = ' data-entry="' + lootEntry + '"';
@@ -325,13 +331,14 @@ $(function () {
             '<div class="loot-fields">' +
             '<div class="loot-chance-wrap">' +
             '<input type="text" class="loot-edit-field loot-chance-field" value="' + chanceDisplay + '"' + chanceTitle + ' />' +
-            effectiveHint +
             '</div>' +
             '<span class="loot-field-unit">%</span>' +
+            effectiveSuffix +
             '<input type="number" class="loot-edit-field loot-count-field loot-max-field" value="' + item.maxCount + '" min="1" title="Drop count" />' +
             '<span class="loot-field-unit">×</span>' +
             '</div>' +
             '<button class="loot-save-btn" title="Save changes"><i class="fa-solid fa-check"></i></button>' +
+            '<button class="loot-remove-btn" title="Remove from loot table"><i class="fa-solid fa-trash-can"></i></button>' +
             '</div>';
     }
 
@@ -591,6 +598,286 @@ $(function () {
         setTimeout(function () { el.fadeOut(300, function () { el.remove(); }); }, 3500);
     }
 
+    // ===================== ITEM PICKER (for Add Item) =====================
+
+    var itemSearchTimer = null;
+
+    function openItemPicker() {
+        itemPickerPage = 1;
+        itemPickerQuery = '';
+        itemPickerQuality = '';
+        pendingAddItem = null;
+        $('#itemPickerSearch').val('');
+        $('#itemPickerQuality').val('');
+        $('#itemPickerResults').html('<div class="text-center p-4 text-muted">Search for items to add</div>');
+        $('#itemPickerInfo').text('');
+        $('#itemPickerPageInfo').text('');
+        var modalEl = document.getElementById('itemPickerModal');
+        new bootstrap.Modal(modalEl).show();
+        setTimeout(function () { $('#itemPickerSearch').focus(); }, 300);
+    }
+
+    function loadItemPickerPage() {
+        var params = { q: itemPickerQuery, page: itemPickerPage, pageSize: 30 };
+        if (itemPickerQuality !== '') params.qualityFilter = parseInt(itemPickerQuality);
+
+        $('#itemPickerResults').html('<div class="text-center p-4"><i class="fa-solid fa-spinner fa-spin"></i></div>');
+
+        $.getJSON('/Instances/SearchItems', params, function (data) {
+            $('#itemPickerInfo').text(data.totalCount.toLocaleString() + ' items');
+            $('#itemPickerPageInfo').text(data.page + ' / ' + data.totalPages);
+            $('#btnItemPickerPrev').prop('disabled', data.page <= 1);
+            $('#btnItemPickerNext').prop('disabled', data.page >= data.totalPages);
+
+            if (!data.items || data.items.length === 0) {
+                $('#itemPickerResults').html('<div class="text-center text-muted p-4">No items found</div>');
+                return;
+            }
+
+            var icons = data.icons || {};
+            var h = '';
+            data.items.forEach(function (item) {
+                var iconPath = icons[item.displayId] || '/icons/inv_misc_questionmark.png';
+                var qClass = 'quality-' + item.quality;
+                var qName = QUALITY_NAMES[item.quality] || '';
+
+                h += '<div class="ip-row" data-entry="' + item.entry + '" data-name="' + escAttr(item.name) + '" data-quality="' + item.quality + '" data-icon="' + escAttr(iconPath) + '">' +
+                    '<img class="ip-icon" src="' + esc(iconPath) + '" loading="lazy" />' +
+                    '<div style="flex:1;min-width:0;">' +
+                    '<div class="ip-name ' + qClass + '">' + esc(item.name) + '</div>' +
+                    '<div class="ip-meta">' + qName + ' &middot; iLvl ' + (item.itemLevel || 0) +
+                    (item.requiredLevel > 0 ? ' &middot; Req ' + item.requiredLevel : '') + '</div>' +
+                    '</div>' +
+                    '<div class="ip-id">#' + item.entry + '</div></div>';
+            });
+
+            $('#itemPickerResults').html(h);
+        }).fail(function () {
+            $('#itemPickerResults').html('<div class="text-center text-muted p-4">Search failed</div>');
+        });
+    }
+
+    function selectItemForAdd(entry, name, quality, iconPath) {
+        pendingAddItem = { entry: entry, name: name, quality: quality, iconPath: iconPath };
+
+        // Close the picker
+        var pickerEl = document.getElementById('itemPickerModal');
+        if (pickerEl) {
+            var inst = bootstrap.Modal.getInstance(pickerEl);
+            if (inst) inst.hide();
+        }
+
+        // Fill the config modal
+        var qClass = 'quality-' + quality;
+        var qName = QUALITY_NAMES[quality] || '';
+        $('#addItemIcon').attr('src', iconPath);
+        $('#addItemName').html('<span class="' + qClass + '">' + esc(name) + '</span>');
+        $('#addItemMeta').text(qName + ' — #' + entry);
+        $('#addItemChance').val(10);
+        $('#addItemMaxCount').val(1);
+        $('#addItemGroupId').val('0');
+        $('#groupBalancePanel').hide();
+
+        // Populate target dropdown: Direct + any reference pools from current boss
+        var $target = $('#addItemTarget');
+        $target.empty();
+        $target.append('<option value="direct">Direct Drops (creature_loot_template)</option>');
+
+        if (currentLootData && currentLootData.referenceGroups) {
+            currentLootData.referenceGroups.forEach(function (rg) {
+                $target.append(
+                    '<option value="ref:' + rg.refEntry + '">Shared Pool #' + rg.refEntry +
+                    ' (' + rg.itemCount + ' items, ' + formatChance(rg.refChance) + '% roll, ' + rg.refMaxCount + ' picks)</option>'
+                );
+            });
+        }
+
+        // Open config modal
+        setTimeout(function () {
+            new bootstrap.Modal(document.getElementById('addItemConfigModal')).show();
+        }, 300);
+    }
+
+    // ===================== GROUP BALANCE PREVIEW =====================
+
+    function loadGroupBalance() {
+        var groupId = parseInt($('#addItemGroupId').val());
+        if (groupId === 0 || !currentLootData) {
+            $('#groupBalancePanel').hide();
+            return;
+        }
+
+        // Determine the target table and entry
+        var targetVal = $('#addItemTarget').val();
+        var lootEntry, source;
+        if (targetVal && targetVal.indexOf('ref:') === 0) {
+            lootEntry = parseInt(targetVal.replace('ref:', ''));
+            source = 'reference';
+        } else {
+            lootEntry = currentLootData.lootId;
+            source = 'direct';
+        }
+
+        $('#groupBalancePanel').show();
+        $('#groupBalanceContent').html('<div class="text-center p-2"><i class="fa-solid fa-spinner fa-spin"></i></div>');
+
+        $.getJSON('/Instances/GroupInfo', { lootEntry: lootEntry, groupId: groupId, source: source }, function (data) {
+            var newChance = parseFloat($('#addItemChance').val()) || 0;
+            var h = '';
+
+            if (data.items && data.items.length > 0) {
+                data.items.forEach(function (item) {
+                    h += '<div class="gb-row">' +
+                        '<img class="gb-icon" src="' + esc(item.iconPath) + '" />' +
+                        '<span class="gb-name quality-' + item.quality + '">' + esc(item.itemName) + '</span>' +
+                        '<span class="gb-pct">' + formatChance(item.effectiveChance) + '%</span>' +
+                        '<div class="gb-bar-wrap"><div class="gb-bar" style="width:' + item.effectiveChance + '%;"></div></div>' +
+                        '</div>';
+                });
+            } else {
+                h += '<div class="text-muted" style="font-size: 11px;">No items in this group yet — your item will be the first.</div>';
+            }
+
+            // Show the new item preview
+            if (pendingAddItem) {
+                h += '<div class="gb-row gb-new">' +
+                    '<img class="gb-icon" src="' + esc(pendingAddItem.iconPath) + '" />' +
+                    '<span class="gb-name">' + esc(pendingAddItem.name) + ' (new)</span>' +
+                    '<span class="gb-pct">' + (newChance > 0 ? formatChance(newChance) + '%' : 'equal') + '</span>' +
+                    '<div class="gb-bar-wrap"><div class="gb-bar" style="width:' + newChance + '%; background: var(--accent);"></div></div>' +
+                    '</div>';
+            }
+
+            $('#groupBalanceContent').html(h);
+
+            // Warning if total explicit exceeds 100
+            var totalExplicit = (data.totalExplicit || 0) + newChance;
+            if (totalExplicit > 100) {
+                $('#groupBalanceWarning').show().find('span').text(
+                    'Total explicit chances = ' + formatChance(totalExplicit) + '% (exceeds 100%). Consider reducing some values or using 0 for equal weighting.');
+            } else {
+                $('#groupBalanceWarning').hide();
+            }
+        }).fail(function () {
+            $('#groupBalanceContent').html('<div class="text-muted">Could not load group data</div>');
+        });
+    }
+
+    // ===================== ADD ITEM (submit) =====================
+
+    function submitAddItem() {
+        if (!pendingAddItem || !currentCreatureEntry) return;
+
+        var targetVal = $('#addItemTarget').val();
+        var payload = {
+            creatureEntry: currentCreatureEntry,
+            itemEntry: pendingAddItem.entry,
+            chance: parseFloat($('#addItemChance').val()) || 0,
+            groupId: parseInt($('#addItemGroupId').val()) || 0,
+            minCount: 1,
+            maxCount: parseInt($('#addItemMaxCount').val()) || 1,
+            patchMin: 0,
+            patchMax: 10
+        };
+
+        // If targeting a reference pool, set refEntry
+        if (targetVal && targetVal.indexOf('ref:') === 0) {
+            payload.refEntry = parseInt(targetVal.replace('ref:', ''));
+        }
+
+        var $btn = $('#btnConfirmAddItem');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Adding…');
+
+        $.ajax({
+            url: '/Instances/AddLootItem',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+            success: function (result) {
+                if (result.success) {
+                    showToast('Added ' + esc(pendingAddItem.name) + ' to loot table', 'success');
+                    var modalEl = document.getElementById('addItemConfigModal');
+                    if (modalEl) {
+                        var inst = bootstrap.Modal.getInstance(modalEl);
+                        if (inst) inst.hide();
+                    }
+                    pendingAddItem = null;
+                    loadLoot(currentCreatureEntry); // Refresh
+                } else {
+                    showToast('Failed: ' + (result.error || 'Unknown'), 'error');
+                }
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-plus"></i> Add to Loot Table');
+            },
+            error: function () {
+                showToast('Failed — server error', 'error');
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-plus"></i> Add to Loot Table');
+            }
+        });
+    }
+
+    // ===================== REMOVE ITEM =====================
+
+    function openRemoveConfirm(row) {
+        var $row = $(row);
+        pendingRemoveData = {
+            entry: parseInt($row.data('entry')),
+            item: parseInt($row.data('item')),
+            groupId: parseInt($row.data('groupid')),
+            patchMin: parseInt($row.data('patchmin')),
+            patchMax: parseInt($row.data('patchmax')),
+            source: $row.data('source') || 'direct',
+            itemName: $row.data('itemname') || 'Unknown'
+        };
+
+        var qualityClass = '';
+        var nameEl = $row.find('.loot-item-name');
+        if (nameEl.length) {
+            var cl = nameEl.attr('class') || '';
+            var match = cl.match(/quality-\d/);
+            if (match) qualityClass = match[0];
+        }
+
+        $('#removeItemName').html(
+            '<span class="' + qualityClass + '">' + esc(pendingRemoveData.itemName) + '</span>' +
+            ' <span class="text-muted">(#' + pendingRemoveData.item + ')</span>'
+        );
+
+        new bootstrap.Modal(document.getElementById('removeLootModal')).show();
+    }
+
+    function submitRemoveItem() {
+        if (!pendingRemoveData) return;
+
+        var $btn = $('#btnConfirmRemoveLoot');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Removing…');
+
+        $.ajax({
+            url: '/Instances/RemoveLootItem',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(pendingRemoveData),
+            success: function (result) {
+                if (result.success) {
+                    showToast('Removed ' + esc(pendingRemoveData.itemName), 'success');
+                    var modalEl = document.getElementById('removeLootModal');
+                    if (modalEl) {
+                        var inst = bootstrap.Modal.getInstance(modalEl);
+                        if (inst) inst.hide();
+                    }
+                    pendingRemoveData = null;
+                    if (currentCreatureEntry) loadLoot(currentCreatureEntry); // Refresh
+                } else {
+                    showToast('Failed: ' + (result.error || 'Unknown'), 'error');
+                }
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-trash"></i> Remove');
+            },
+            error: function () {
+                showToast('Failed — server error', 'error');
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-trash"></i> Remove');
+            }
+        });
+    }
+
     // ===================== EVENTS =====================
 
     // Instance click
@@ -680,6 +967,86 @@ $(function () {
     // Instance multiplier buttons
     $(document).on('click', '.instance-mult-footer .mult-mini', function () {
         applyInstanceMultiplier(parseFloat($(this).data('mult')));
+    });
+
+    // ── Remove loot item button ──
+    $(document).on('click', '.loot-remove-btn', function (e) {
+        e.stopPropagation();
+        openRemoveConfirm($(this).closest('.loot-item-row'));
+    });
+
+    $('#btnConfirmRemoveLoot').on('click', function () {
+        submitRemoveItem();
+    });
+
+    // ── Add Item button → open picker ──
+    $('#btnAddLootItem').on('click', function () {
+        if (!currentCreatureEntry) return;
+        openItemPicker();
+    });
+
+    // ── Item Picker search ──
+    $('#itemPickerSearch').on('input', function () {
+        clearTimeout(itemSearchTimer);
+        itemSearchTimer = setTimeout(function () {
+            itemPickerQuery = $('#itemPickerSearch').val();
+            itemPickerPage = 1;
+            loadItemPickerPage();
+        }, 300);
+    });
+
+    $('#btnItemPickerSearch').on('click', function () {
+        itemPickerQuery = $('#itemPickerSearch').val();
+        itemPickerQuality = $('#itemPickerQuality').val();
+        itemPickerPage = 1;
+        loadItemPickerPage();
+    });
+
+    $('#itemPickerSearch').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            itemPickerQuery = $('#itemPickerSearch').val();
+            itemPickerQuality = $('#itemPickerQuality').val();
+            itemPickerPage = 1;
+            loadItemPickerPage();
+        }
+    });
+
+    $('#btnItemPickerPrev').on('click', function () {
+        if (itemPickerPage > 1) { itemPickerPage--; loadItemPickerPage(); }
+    });
+    $('#btnItemPickerNext').on('click', function () {
+        itemPickerPage++;
+        loadItemPickerPage();
+    });
+
+    // ── Item Picker: select item → go to config ──
+    $(document).on('click', '.ip-row', function () {
+        var entry = parseInt($(this).data('entry'));
+        var name = $(this).data('name');
+        var quality = parseInt($(this).data('quality'));
+        var iconPath = $(this).data('icon');
+        selectItemForAdd(entry, name, quality, iconPath);
+    });
+
+    // ── Add Item Config: target/group change → load balance ──
+    $('#addItemTarget').on('change', function () {
+        loadGroupBalance();
+    });
+
+    $('#addItemGroupId').on('change', function () {
+        loadGroupBalance();
+    });
+
+    $('#addItemChance').on('input', function () {
+        if (parseInt($('#addItemGroupId').val()) > 0) {
+            loadGroupBalance();
+        }
+    });
+
+    // ── Add Item Config: confirm ──
+    $('#btnConfirmAddItem').on('click', function () {
+        submitAddItem();
     });
 
     // ===================== INIT =====================

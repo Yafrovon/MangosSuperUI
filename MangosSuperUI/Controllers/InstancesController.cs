@@ -516,6 +516,282 @@ public class InstancesController : Controller
 
         return Json(new { success = true, totalUpdated = updated, creatureName });
     }
+
+
+    // ===================== ADD ITEM TO LOOT TABLE =====================
+
+    /// <summary>
+    /// POST /Instances/AddLootItem — Insert a new item into a creature's loot table.
+    /// </summary>
+    [HttpPost]
+    public async Task<IActionResult> AddLootItem([FromBody] AddLootItemRequest request)
+    {
+        using var conn = _db.Mangos();
+
+        // Determine which table and entry to insert into
+        string tableName;
+        int lootEntry;
+
+        if (request.refEntry.HasValue && request.refEntry.Value > 0)
+        {
+            // Insert into a reference loot table
+            tableName = "reference_loot_template";
+            lootEntry = request.refEntry.Value;
+        }
+        else
+        {
+            // Insert into the creature's direct loot table
+            tableName = "creature_loot_template";
+            var lootId = await conn.ExecuteScalarAsync<int?>(
+                "SELECT loot_id FROM creature_template WHERE entry = @Entry ORDER BY patch DESC LIMIT 1",
+                new { Entry = request.creatureEntry });
+
+            if (!lootId.HasValue || lootId.Value == 0)
+                return Json(new { success = false, error = "Creature has no loot table" });
+
+            lootEntry = lootId.Value;
+        }
+
+        // Check if this item already exists in the target table+group
+        var exists = await conn.ExecuteScalarAsync<int>(
+            $@"SELECT COUNT(*) FROM `{tableName}`
+                  WHERE entry = @LootEntry AND item = @Item AND groupid = @GroupId",
+            new { LootEntry = lootEntry, Item = request.itemEntry, GroupId = request.groupId });
+
+        if (exists > 0)
+            return Json(new { success = false, error = "Item already exists in this loot table (same group)" });
+
+        // Insert the new loot row
+        await conn.ExecuteAsync(
+            $@"INSERT INTO `{tableName}`
+                    (entry, item, ChanceOrQuestChance, groupid, mincountOrRef, maxcount, patch_min, patch_max,
+                     condition_id)
+                  VALUES
+                    (@LootEntry, @Item, @Chance, @GroupId, @MinCount, @MaxCount, @PatchMin, @PatchMax, 0)",
+            new
+            {
+                LootEntry = lootEntry,
+                Item = request.itemEntry,
+                Chance = request.chance,
+                GroupId = request.groupId,
+                MinCount = request.minCount,
+                MaxCount = request.maxCount,
+                PatchMin = request.patchMin,
+                PatchMax = request.patchMax
+            });
+
+        // Get item name for audit
+        var itemName = await conn.ExecuteScalarAsync<string>(
+            "SELECT name FROM item_template WHERE entry = @Entry ORDER BY patch DESC LIMIT 1",
+            new { Entry = request.itemEntry }) ?? $"Item #{request.itemEntry}";
+
+        var creatureName = await conn.ExecuteScalarAsync<string>(
+            "SELECT name FROM creature_template WHERE entry = @Entry ORDER BY patch DESC LIMIT 1",
+            new { Entry = request.creatureEntry }) ?? $"Creature #{request.creatureEntry}";
+
+        var targetLabel = request.refEntry.HasValue ? $"ref pool #{request.refEntry.Value}" : "direct loot";
+
+        await _audit.LogAsync(new AuditEntry
+        {
+            Operator = "admin",
+            OperatorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Category = "content",
+            Action = "loot_add_item",
+            TargetType = request.refEntry.HasValue ? "reference_loot" : "creature_loot",
+            TargetName = $"{creatureName} → {itemName} ({targetLabel})",
+            TargetId = request.creatureEntry,
+            StateAfter = JsonSerializer.Serialize(new
+            {
+                table = tableName,
+                lootEntry,
+                item = request.itemEntry,
+                chance = request.chance,
+                groupId = request.groupId,
+                minCount = request.minCount,
+                maxCount = request.maxCount
+            }),
+            IsReversible = true,
+            Success = true,
+            Notes = $"Added {itemName} (#{request.itemEntry}) to {tableName} entry={lootEntry} at {request.chance}%"
+        });
+
+        return Json(new { success = true, itemName, creatureName, lootEntry, tableName });
+    }
+
+    // ===================== REMOVE ITEM FROM LOOT TABLE =====================
+
+    /// <summary>
+    /// POST /Instances/RemoveLootItem — Delete an item from a creature's loot table.
+    /// </summary>
+    [HttpPost]
+    public async Task<IActionResult> RemoveLootItem([FromBody] RemoveLootItemRequest request)
+    {
+        var tableName = request.source == "reference" ? "reference_loot_template" : "creature_loot_template";
+
+        using var conn = _db.Mangos();
+
+        // Capture before state
+        var before = await conn.QueryFirstOrDefaultAsync<dynamic>(
+            $@"SELECT * FROM `{tableName}`
+                   WHERE entry = @Entry AND item = @Item AND groupid = @GroupId
+                     AND patch_min = @PatchMin AND patch_max = @PatchMax",
+            new { request.entry, request.item, request.groupId, request.patchMin, request.patchMax });
+
+        if (before == null)
+            return Json(new { success = false, error = "Loot row not found" });
+
+        await conn.ExecuteAsync(
+            $@"DELETE FROM `{tableName}`
+                   WHERE entry = @Entry AND item = @Item AND groupid = @GroupId
+                     AND patch_min = @PatchMin AND patch_max = @PatchMax",
+            new { request.entry, request.item, request.groupId, request.patchMin, request.patchMax });
+
+        await _audit.LogAsync(new AuditEntry
+        {
+            Operator = "admin",
+            OperatorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Category = "content",
+            Action = "loot_remove_item",
+            TargetType = "loot_row",
+            TargetName = request.itemName ?? $"Item #{request.item}",
+            TargetId = request.item,
+            StateBefore = JsonSerializer.Serialize((IDictionary<string, object>)before),
+            IsReversible = true,
+            Success = true,
+            Notes = $"Removed item #{request.item} from {tableName} entry={request.entry}"
+        });
+
+        return Json(new { success = true });
+    }
+
+    // ===================== LIGHTWEIGHT ITEM SEARCH (for picker) =====================
+
+    /// <summary>
+    /// GET /Instances/SearchItems?q=thunderfury&page=1&pageSize=30
+    /// Lightweight item search for the add-item picker modal.
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> SearchItems(string? q, int? qualityFilter, int page = 1, int pageSize = 30)
+    {
+        using var conn = _db.Mangos();
+
+        var where = "WHERE patch = (SELECT MAX(patch) FROM item_template it2 WHERE it2.entry = item_template.entry)";
+        var parameters = new DynamicParameters();
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            if (uint.TryParse(q.Trim(), out var entryId))
+            {
+                where += " AND entry = @EntryId";
+                parameters.Add("EntryId", entryId);
+            }
+            else
+            {
+                where += " AND name LIKE @Search";
+                parameters.Add("Search", $"%{q.Trim()}%");
+            }
+        }
+
+        if (qualityFilter.HasValue)
+        {
+            where += " AND quality = @Quality";
+            parameters.Add("Quality", qualityFilter.Value);
+        }
+
+        var countSql = $"SELECT COUNT(*) FROM item_template {where}";
+        var totalCount = await conn.ExecuteScalarAsync<int>(countSql, parameters);
+
+        var offset = (page - 1) * pageSize;
+        parameters.Add("Offset", offset);
+        parameters.Add("PageSize", pageSize);
+
+        var dataSql = $@"
+                SELECT entry, name, quality, display_id AS displayId,
+                       inventory_type AS inventoryType, item_level AS itemLevel,
+                       required_level AS requiredLevel, class, subclass
+                FROM item_template {where}
+                ORDER BY quality DESC, item_level DESC, entry ASC
+                LIMIT @PageSize OFFSET @Offset";
+
+        var items = (await conn.QueryAsync<dynamic>(dataSql, parameters)).ToList();
+
+        var iconMap = new Dictionary<uint, string>();
+        foreach (var item in items)
+        {
+            uint did = (uint)(item.displayId ?? 0);
+            if (did > 0 && !iconMap.ContainsKey(did))
+                iconMap[did] = _dbc.GetItemIconPath(did);
+        }
+
+        return Json(new
+        {
+            items,
+            icons = iconMap,
+            totalCount,
+            page,
+            pageSize,
+            totalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+        });
+    }
+
+    // ===================== GROUP INFO (for percentage balancing) =====================
+
+    /// <summary>
+    /// GET /Instances/GroupInfo?lootEntry=12345&groupId=1&source=direct
+    /// Returns all items in a specific group with their chances, for percentage balancing UI.
+    /// source=direct → creature_loot_template, source=reference → reference_loot_template
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> GroupInfo(int lootEntry, int groupId, string source = "direct")
+    {
+        using var conn = _db.Mangos();
+        var tableName = source == "reference" ? "reference_loot_template" : "creature_loot_template";
+
+        var items = await conn.QueryAsync<dynamic>(
+            $@"SELECT t.item, t.ChanceOrQuestChance AS chance, t.maxcount,
+                         it.name, it.quality, it.display_id AS displayId
+                  FROM `{tableName}` t
+                  LEFT JOIN item_template it ON it.entry = t.item
+                    AND it.patch = (SELECT MAX(patch) FROM item_template it2 WHERE it2.entry = it.entry)
+                  WHERE t.entry = @LootEntry AND t.groupid = @GroupId AND t.mincountOrRef > 0
+                  ORDER BY ABS(t.ChanceOrQuestChance) DESC",
+            new { LootEntry = lootEntry, GroupId = groupId });
+
+        var itemList = items.ToList();
+        float totalExplicit = 0;
+        int zeroCount = 0;
+        foreach (var item in itemList)
+        {
+            float abs = Math.Abs((float)item.chance);
+            if (abs > 0) totalExplicit += abs;
+            else zeroCount++;
+        }
+
+        var resolvedItems = itemList.Select(i =>
+        {
+            uint did = (uint)(i.displayId ?? 0);
+            float abs = Math.Abs((float)i.chance);
+            float effective = abs > 0 ? abs : (zeroCount > 0 ? Math.Max(0, 100 - totalExplicit) / zeroCount : 0);
+            return new
+            {
+                itemEntry = (int)i.item,
+                itemName = (string)(i.name ?? $"Item #{i.item}"),
+                quality = (int)(i.quality ?? 0),
+                iconPath = _dbc.GetItemIconPath(did),
+                chance = (float)i.chance,
+                effectiveChance = effective,
+                maxCount = (int)i.maxcount
+            };
+        });
+
+        return Json(new
+        {
+            items = resolvedItems,
+            totalExplicit,
+            zeroCount,
+            remaining = Math.Max(0, 100 - totalExplicit)
+        });
+    }
 }
 
 // ── DTOs ──────────────────────────────────────────────────────
@@ -548,4 +824,28 @@ public class BossEntry
     public string Name { get; set; } = "";
     public int Order { get; set; }
     public bool Optional { get; set; }
+}
+
+public class AddLootItemRequest
+{
+    public int creatureEntry { get; set; }
+    public int itemEntry { get; set; }
+    public float chance { get; set; }
+    public int groupId { get; set; } = 0;
+    public int minCount { get; set; } = 1;
+    public int maxCount { get; set; } = 1;
+    public int patchMin { get; set; } = 0;
+    public int patchMax { get; set; } = 10;
+    public int? refEntry { get; set; }  // If set, insert into reference_loot_template instead
+}
+
+public class RemoveLootItemRequest
+{
+    public int entry { get; set; }
+    public int item { get; set; }
+    public int groupId { get; set; }
+    public int patchMin { get; set; }
+    public int patchMax { get; set; }
+    public string? itemName { get; set; }
+    public string source { get; set; } = "direct";
 }

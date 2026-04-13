@@ -143,6 +143,9 @@ public class BotEventPayload
 
     [JsonPropertyName("chat_type")]
     public string? ChatType { get; set; }
+
+    [JsonPropertyName("channel_name")]
+    public string? ChannelName { get; set; }
 }
 
 public class BotChatPayload
@@ -190,6 +193,12 @@ public class SayTextPayload
 
     [JsonPropertyName("chatType")]
     public int ChatType { get; set; } // 0=SAY, 6=YELL, 7=WHISPER
+
+    [JsonPropertyName("target")]
+    public string? Target { get; set; } // Player name for whisper replies
+
+    [JsonPropertyName("channel")]
+    public string? Channel { get; set; } // Channel name for channel replies
 }
 
 // --- Phase 2.5 command payloads ---
@@ -265,7 +274,7 @@ public class BotConnection
 /// Outbound message types:
 ///   MOVE_TO     — walk to coordinates
 ///   SAY_TEXT    — say/yell/whisper text
-///   SET_TASK    — assign a task (future)
+///   SET_TASK    — assign a persistent task (GRIND, IDLE)
 ///   PING        — keepalive
 /// </summary>
 public class BotBridgeService : BackgroundService
@@ -273,6 +282,9 @@ public class BotBridgeService : BackgroundService
     private readonly ILogger<BotBridgeService> _logger;
     private readonly IHubContext<BotBridgeHub> _hub;
     private TcpListener? _listener;
+
+    // BotBrain integration — set after startup to avoid circular DI
+    private BotBrainService? _brain;
 
     // All connected bots, keyed by character GUID
     public ConcurrentDictionary<int, BotConnection> Connections { get; } = new();
@@ -283,13 +295,24 @@ public class BotBridgeService : BackgroundService
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public BotBridgeService(ILogger<BotBridgeService> logger, IHubContext<BotBridgeHub> hub)
     {
         _logger = logger;
         _hub = hub;
+    }
+
+    /// <summary>
+    /// Called by BotBrainService after DI resolution to wire itself in.
+    /// Can't inject directly due to circular dependency (Bridge ← Brain → Bridge).
+    /// </summary>
+    public void SetBrainService(BotBrainService brain)
+    {
+        _brain = brain;
+        _logger.LogInformation("BotBridge: BotBrainService wired for event routing");
     }
 
     // ==================== Lifecycle ====================
@@ -535,8 +558,8 @@ public class BotBridgeService : BackgroundService
                 break;
 
             case "CHAT_RECV":
-                _logger.LogInformation("BotBridge: CHAT_RECV bot={Name} from={Sender}: {Message}",
-                    conn.State.Name, evt.Sender, evt.Message);
+                _logger.LogInformation("BotBridge: CHAT_RECV bot={Name} from={Sender} [{ChatType}]: {Message}",
+                    conn.State.Name, evt.Sender, evt.ChatType ?? "say", evt.Message);
                 await _hub.Clients.All.SendAsync("BotChatReceived", new
                 {
                     guid = conn.Guid,
@@ -544,9 +567,24 @@ public class BotBridgeService : BackgroundService
                     senderName = evt.Sender ?? "Unknown",
                     message = evt.Message ?? "",
                     chatType = evt.ChatType ?? "say",
+                    channelName = evt.ChannelName ?? "",
                     timestamp = DateTime.UtcNow
                 });
                 // TODO Phase 4: Route to Ollama personality engine
+                break;
+
+            case "TASK_COMPLETE":
+                _logger.LogInformation("BotBridge: TASK_COMPLETE {Name} — {Data}",
+                    conn.State.Name, evt.Data);
+                conn.State.TaskState = "IDLE";
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "TASK_COMPLETE",
+                    data = evt.Data,
+                    timestamp = DateTime.UtcNow
+                });
                 break;
 
             default:
@@ -561,6 +599,26 @@ public class BotBridgeService : BackgroundService
                     timestamp = DateTime.UtcNow
                 });
                 break;
+        }
+
+        // Route to behavioral engine (if wired)
+        if (_brain != null)
+        {
+            var botEvent = new MangosSuperUI.BotLogic.Core.BotEvent
+            {
+                EventType = eventType,
+                CreatureEntry = evt.CreatureEntry ?? 0,
+                CreatureGuid = evt.CreatureGuid ?? 0,
+                QuestId = evt.QuestId ?? 0,
+                QuestStatus = evt.Status ?? "",
+                NewLevel = evt.NewLevel ?? 0,
+                Sender = evt.Sender ?? "",
+                Message = evt.Message ?? "",
+                ChatType = evt.ChatType ?? "",
+                ChannelName = evt.ChannelName ?? "",
+                Data = evt.Data ?? ""
+            };
+            _ = Task.Run(() => _brain.HandleBridgeEventAsync(conn.Guid, botEvent));
         }
     }
 
@@ -583,7 +641,18 @@ public class BotBridgeService : BackgroundService
             timestamp = DateTime.UtcNow
         });
 
-        // TODO Phase 4: Route to Ollama personality engine
+        // Route to behavioral engine (if wired)
+        if (_brain != null)
+        {
+            var botEvent = new MangosSuperUI.BotLogic.Core.BotEvent
+            {
+                EventType = "CHAT_RECV",
+                Sender = chat.SenderName,
+                Message = chat.Message,
+                ChatType = chat.ChatType.ToString()
+            };
+            _ = Task.Run(() => _brain.HandleBridgeEventAsync(conn.Guid, botEvent));
+        }
     }
 
     // ==================== Outbound Commands ====================
@@ -623,13 +692,15 @@ public class BotBridgeService : BackgroundService
         });
     }
 
-    public Task SendSayTextAsync(int guid, string text, int chatType = 0)
+    public Task SendSayTextAsync(int guid, string text, int chatType = 0, string? target = null, string? channel = null)
     {
         return SendToBotAsync(guid, "SAY_TEXT", new SayTextPayload
         {
             Guid = guid,
             Text = text,
-            ChatType = chatType
+            ChatType = chatType,
+            Target = target,
+            Channel = channel
         });
     }
 
@@ -671,6 +742,26 @@ public class BotBridgeService : BackgroundService
     public Task SendInteractNpcAsync(int guid, int npcGuid)
     {
         return SendToBotAsync(guid, "INTERACT_NPC", new TargetGuidPayload { Guid = npcGuid });
+    }
+
+    public Task SendSetTaskGrindAsync(int guid, float x, float y, float z,
+        float radius = 40f, int creatureEntry = 0, int killCount = 0)
+    {
+        return SendToBotAsync(guid, "SET_TASK", new
+        {
+            task = "GRIND",
+            x,
+            y,
+            z,
+            radius,
+            creature_entry = creatureEntry,
+            kill_count = killCount
+        });
+    }
+
+    public Task SendSetTaskIdleAsync(int guid)
+    {
+        return SendToBotAsync(guid, "SET_TASK", new { task = "IDLE" });
     }
 
     // ==================== Query ====================

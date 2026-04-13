@@ -4,6 +4,7 @@ $(function () {
 
     var currentPage = 1;
     var totalPages = 1;
+    var currentPageSize = parseInt(localStorage.getItem('msui_spells_pageSize')) || 50;
     var currentIcons = {};
     var currentSpell = null;   // loaded spell data
     var editedFields = {};     // tracked changes { column: newValue }
@@ -283,7 +284,7 @@ $(function () {
             schoolFilter: $('#filterSchool').val() || undefined,
             mechanicFilter: $('#filterMechanic').val() || undefined,
             page: currentPage,
-            pageSize: 50
+            pageSize: currentPageSize
         };
 
         Object.keys(params).forEach(function (k) { if (params[k] === undefined || params[k] === '') delete params[k]; });
@@ -335,7 +336,7 @@ $(function () {
             schoolFilter: $('#filterSchool').val() || undefined,
             mechanicFilter: $('#filterMechanic').val() || undefined,
             page: currentPage,
-            pageSize: 50
+            pageSize: currentPageSize
         };
 
         Object.keys(params).forEach(function (k) { if (params[k] === undefined || params[k] === '') delete params[k]; });
@@ -413,9 +414,18 @@ $(function () {
     function renderPagination(page, pages) {
         if (pages > 1) {
             $('#spellPaginationBar').show();
-            $('#spellPageInfo').text('Page ' + page + ' of ' + pages);
+            $('#spellPageJump').val(page).attr('max', pages);
+            $('#spellPageTotal').text(pages);
+            $('#btnSpellFirstPage').prop('disabled', page <= 1);
             $('#btnSpellPrevPage').prop('disabled', page <= 1);
             $('#btnSpellNextPage').prop('disabled', page >= pages);
+            $('#btnSpellLastPage').prop('disabled', page >= pages);
+        } else if (pages === 1) {
+            // Single page — still show bar for page size selector access
+            $('#spellPaginationBar').show();
+            $('#spellPageJump').val(1).attr('max', 1);
+            $('#spellPageTotal').text('1');
+            $('#btnSpellFirstPage, #btnSpellPrevPage, #btnSpellNextPage, #btnSpellLastPage').prop('disabled', true);
         } else {
             $('#spellPaginationBar').hide();
         }
@@ -987,8 +997,26 @@ $(function () {
         doSearch(1);
     });
 
+    $('#btnSpellFirstPage').on('click', function () { doSearch(1); });
     $('#btnSpellPrevPage').on('click', function () { if (currentPage > 1) doSearch(currentPage - 1); });
     $('#btnSpellNextPage').on('click', function () { if (currentPage < totalPages) doSearch(currentPage + 1); });
+    $('#btnSpellLastPage').on('click', function () { doSearch(totalPages); });
+    $('#spellPageJump').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+            var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, totalPages));
+            doSearch(p);
+        }
+    });
+    $('#spellPageJump').on('blur', function () {
+        var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, totalPages));
+        if (p !== currentPage) doSearch(p);
+    });
+    $('#spellPageSize').val(currentPageSize);
+    $('#spellPageSize').on('change', function () {
+        currentPageSize = parseInt($(this).val()) || 50;
+        try { localStorage.setItem('msui_spells_pageSize', currentPageSize); } catch (e) { }
+        doSearch(1);
+    });
 
     $(document).on('click', '.spell-row', function () {
         $('.spell-row').removeClass('active');

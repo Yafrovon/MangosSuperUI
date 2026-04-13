@@ -1,4 +1,4 @@
-// MangosSuperUI — Bots Page JS (BotBridge SignalR client)
+// MangosSuperUI — Bot Tuner JS (BotBridge + BotBrain SignalR client)
 
 $(function () {
 
@@ -15,12 +15,29 @@ $(function () {
         1: 'Human', 2: 'Orc', 3: 'Dwarf', 4: 'Night Elf',
         5: 'Undead', 6: 'Tauren', 7: 'Gnome', 8: 'Troll'
     };
+    var TRAIT_META = {
+        patience: { icon: 'fa-hourglass-half', color: '#9ece6a' },
+        greed: { icon: 'fa-coins', color: '#e0af68' },
+        curiosity: { icon: 'fa-compass', color: '#7aa2f7' },
+        sociability: { icon: 'fa-comments', color: '#bb9af7' },
+        aggression: { icon: 'fa-crosshairs', color: '#f7768e' },
+        efficiency: { icon: 'fa-bolt', color: '#ff9e64' },
+        cautiousness: { icon: 'fa-shield-halved', color: '#73daca' },
+        indecisiveness: { icon: 'fa-shuffle', color: '#c0caf5' },
+        spontaneity: { icon: 'fa-dice', color: '#2ac3de' }
+    };
 
     // ===================== STATE =====================
     var connection = null;
     var connected = false;
-    var botStates = {}; // guid → state object
-    var maxLogLines = 500;
+    var botStates = {};       // guid → BotState (from bridge)
+    var botBrains = {};       // guid → brain data (personality, decisions)
+    var selectedGuid = null;
+    var decisionLog = {};     // guid → array of decision entries
+    var decisionCount = 0;    // total decisions since page load (for DPM)
+    var dpmStartTime = Date.now();
+    var engineEnabled = false;
+    var maxTimelineEntries = 100;
 
     // ===================== SIGNALR =====================
     function initConnection() {
@@ -29,80 +46,85 @@ $(function () {
             .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
             .build();
 
-        // --- Server → Client ---
-
+        // --- Bridge events ---
         connection.on('AllBots', function (bots) {
             botStates = {};
-            for (var i = 0; i < bots.length; i++) {
-                botStates[bots[i].guid] = bots[i];
-            }
-            renderGrid();
+            for (var i = 0; i < bots.length; i++) botStates[bots[i].guid] = bots[i];
+            renderRoster();
             updateStats();
-            logAppend('Loaded ' + bots.length + ' bot(s) from server', 'log-sys');
         });
 
         connection.on('BotConnected', function (state) {
             botStates[state.guid] = state;
-            renderGrid();
+            renderRoster();
             updateStats();
             updateBotDropdown();
-            logAppend('CONNECTED: ' + state.name + ' (L' + state.level + ' ' + (CLASS_NAMES[state.classId] || '?') + ')', 'log-sys');
+            tlAppend(state.guid, 'Connected: ' + state.name + ' L' + state.level + ' ' + (CLASS_NAMES[state.classId] || ''), 'bt-tl-event');
         });
 
         connection.on('BotDisconnected', function (guid) {
             if (botStates[guid]) {
-                var name = botStates[guid].name;
                 botStates[guid].taskState = 'DISCONNECTED';
-                renderBotCard(guid);
+                renderRosterCard(guid);
                 updateStats();
-                logAppend('DISCONNECTED: ' + name + ' (guid=' + guid + ')', 'log-err');
+                tlAppend(guid, 'Disconnected', 'bt-tl-error');
             }
         });
 
         connection.on('BotStateUpdate', function (state) {
             botStates[state.guid] = state;
-            renderBotCard(state.guid);
+            renderRosterCard(state.guid);
             updateStats();
         });
 
         connection.on('BotEvent', function (evt) {
-            var text = '[' + evt.name + '] ' + evt.eventType;
-            switch (evt.eventType) {
-                case 'KILL':
-                    text += ': creature entry=' + evt.creatureEntry + ' guid=' + evt.creatureGuid;
-                    logAppend(text, 'log-event');
-                    break;
-                case 'QUEST_UPDATE':
-                    text += ': quest ' + evt.questId + ' → ' + evt.status;
-                    logAppend(text, 'log-state');
-                    break;
-                case 'LEVEL_UP':
-                    text += ': now level ' + evt.newLevel;
-                    logAppend(text, 'log-sys');
-                    // Update local state
-                    if (botStates[evt.guid]) {
-                        botStates[evt.guid].level = evt.newLevel;
-                        renderBotCard(evt.guid);
-                        updateBotDropdown();
-                    }
-                    break;
-                default:
-                    text += ': ' + (evt.data || '');
-                    logAppend(text, 'log-event');
-                    break;
-            }
+            var cls = 'bt-tl-event';
+            var text = evt.eventType;
+            if (evt.eventType === 'KILL') text += ' creature=' + evt.creatureEntry;
+            else if (evt.eventType === 'LEVEL_UP') { text += ' → L' + evt.newLevel; cls = 'bt-tl-switch'; }
+            else if (evt.eventType === 'QUEST_UPDATE') text += ' quest=' + evt.questId + ' ' + evt.status;
+            else text += ' ' + (evt.data || '');
+            tlAppend(evt.guid, text, cls);
         });
 
         connection.on('BotChatReceived', function (chat) {
-            logAppend('[' + chat.botName + '] WHISPER from ' + chat.senderName + ': ' + chat.message, 'log-chat');
+            tlAppend(chat.guid, 'WHISPER from ' + chat.senderName + ': ' + chat.message, 'bt-tl-event');
         });
 
-        connection.on('CommandAck', function (ack) {
-            logAppend('CMD OK: ' + ack.command + (ack.guid ? ' → bot ' + ack.guid : ''), 'log-state');
+        // --- Brain events ---
+        connection.on('BotBrainInit', function (data) {
+            botBrains[data.guid] = data;
+            renderRosterCard(data.guid);
+            if (selectedGuid === data.guid) renderDetail();
+            tlAppend(data.guid, 'Brain initialized — ' +
+                data.personality.chatStyle + '/' + data.personality.temperament +
+                (data.personality.quirks.length ? ' [' + data.personality.quirks.map(function (q) { return q.name; }).join(', ') + ']' : ''),
+                'bt-tl-switch');
         });
 
-        // --- Connection lifecycle ---
+        connection.on('BotDecision', function (data) {
+            botBrains[data.guid] = botBrains[data.guid] || {};
+            botBrains[data.guid].lastDecision = data;
+            decisionCount++;
 
+            if (!decisionLog[data.guid]) decisionLog[data.guid] = [];
+            decisionLog[data.guid].push(data);
+            if (decisionLog[data.guid].length > maxTimelineEntries)
+                decisionLog[data.guid].shift();
+
+            renderRosterCard(data.guid);
+            if (selectedGuid === data.guid) {
+                renderWeights(data.weights);
+                renderTimeline(data.guid);
+            }
+
+            var cls = data.activityChanged ? 'bt-tl-switch' : 'bt-tl-stay';
+            tlAppend(data.guid, data.decision, cls);
+        });
+
+        connection.on('CommandAck', function () { /* silent */ });
+
+        // --- Lifecycle ---
         connection.onreconnecting(function () { setStatus('offline'); });
         connection.onreconnected(function () {
             setStatus('online');
@@ -110,15 +132,12 @@ $(function () {
         });
         connection.onclose(function () { setStatus('offline'); });
 
-        connection.start()
-            .then(function () {
-                setStatus('online');
-                connection.invoke('GetAllBots').catch(function () { });
-            })
-            .catch(function (err) {
-                setStatus('error');
-                logAppend('SignalR connect failed: ' + err.toString(), 'log-err');
-            });
+        connection.start().then(function () {
+            setStatus('online');
+            connection.invoke('GetAllBots').catch(function () { });
+        }).catch(function (err) {
+            setStatus('error');
+        });
     }
 
     function setStatus(state) {
@@ -128,124 +147,257 @@ $(function () {
         $('#bridgeStatusText').text(labels[state] || state);
     }
 
-    // ===================== RENDERING =====================
+    // ===================== ROSTER =====================
 
-    function renderGrid() {
-        var guids = Object.keys(botStates);
-        if (guids.length === 0) {
-            $('#botGridEmpty').show();
-            // Remove any existing cards
-            $('#botGrid .bot-card').remove();
-            return;
-        }
-        $('#botGridEmpty').hide();
-
-        // Build set of existing card GUIDs
-        var existing = {};
-        $('#botGrid .bot-card').each(function () {
-            existing[$(this).data('guid')] = true;
+    function renderRoster() {
+        var guids = Object.keys(botStates).sort(function (a, b) {
+            return (botStates[a].name || '').localeCompare(botStates[b].name || '');
         });
 
-        // Add missing cards
+        if (guids.length === 0) {
+            $('#rosterEmpty').show();
+            $('#botRoster .bt-roster-card').remove();
+            return;
+        }
+        $('#rosterEmpty').hide();
+
+        var existing = {};
+        $('#botRoster .bt-roster-card').each(function () { existing[$(this).data('guid')] = true; });
+
         for (var i = 0; i < guids.length; i++) {
             var guid = parseInt(guids[i]);
             if (!existing[guid]) {
-                var html = buildCardHtml(guid);
-                $('#botGrid').append(html);
+                $('#botRoster').append('<div class="bt-roster-card" data-guid="' + guid + '" id="roster-' + guid + '"></div>');
             }
-            renderBotCard(guid);
+            renderRosterCard(guid);
         }
-
         updateBotDropdown();
     }
 
-    function buildCardHtml(guid) {
-        return '<div class="bot-card" data-guid="' + guid + '" id="bot-' + guid + '">' +
-            '<div class="bot-card-header">' +
-            '<span class="bot-card-name"></span>' +
-            '<span class="bot-card-class"></span>' +
-            '</div>' +
-            '<div class="bot-card-bar bar-health"><div class="bot-card-bar-fill"></div></div>' +
-            '<div class="bot-card-bar bar-mana"><div class="bot-card-bar-fill"></div></div>' +
-            '<div class="bot-card-info">' +
-            '<span class="bot-card-pos"></span>' +
-            '<span class="bot-card-level"></span>' +
-            '</div>' +
-            '<div class="bot-card-task"></div>' +
-            '</div>';
-    }
-
-    function renderBotCard(guid) {
-        var state = botStates[guid];
-        if (!state) return;
-
-        var $card = $('#bot-' + guid);
+    function renderRosterCard(guid) {
+        var s = botStates[guid];
+        if (!s) return;
+        var $card = $('#roster-' + guid);
         if ($card.length === 0) return;
 
-        // Name + status dot
-        var dotClass = state.taskState === 'DISCONNECTED' ? 'dot-disconnected' : 'dot-connected';
-        $card.find('.bot-card-name').html(
-            '<span class="bot-card-status-dot ' + dotClass + '"></span>' + state.name
+        var isDisc = s.taskState === 'DISCONNECTED';
+        var isDead = s.isDead;
+        var dotCls = isDisc ? 'offline' : (isDead ? 'dead' : 'alive');
+
+        var brain = botBrains[guid];
+        var actText = 'IDLE';
+        var actCls = 'bt-act-idle';
+        if (brain && brain.lastDecision) {
+            actText = brain.lastDecision.newActivity;
+            actCls = 'bt-act-' + actText.toLowerCase();
+        } else if (s.inCombat) {
+            actText = 'COMBAT';
+            actCls = 'bt-act-grinding';
+        } else if (s.taskState && s.taskState !== 'IDLE') {
+            actText = s.taskState;
+        }
+
+        var className = CLASS_NAMES[s.classId] || '?';
+        var raceName = RACE_NAMES[s.race] || '?';
+
+        $card.html(
+            '<span class="bt-roster-dot ' + dotCls + '"></span>' +
+            '<div class="bt-roster-info">' +
+            '<div class="bt-roster-name">' + esc(s.name) + '</div>' +
+            '<div class="bt-roster-meta">L' + s.level + ' ' + raceName + ' <span class="bt-class-badge ' + (CLASS_CSS[s.classId] || '') + '">' + className + '</span></div>' +
+            '</div>' +
+            '<span class="bt-roster-activity ' + actCls + '">' + actText + '</span>'
         );
 
-        // Class badge
-        var className = CLASS_NAMES[state.classId] || 'Unknown';
-        var classCss = CLASS_CSS[state.classId] || '';
-        $card.find('.bot-card-class').text(className).attr('class', 'bot-card-class ' + classCss);
-
-        // Health bar
-        var hpPct = state.maxHealth > 0 ? (state.health / state.maxHealth * 100) : 0;
-        $card.find('.bar-health .bot-card-bar-fill').css('width', hpPct + '%');
-
-        // Mana bar
-        var manaPct = state.maxMana > 0 ? (state.mana / state.maxMana * 100) : 0;
-        $card.find('.bar-mana .bot-card-bar-fill').css('width', manaPct + '%');
-
-        // Position
-        $card.find('.bot-card-pos').text(
-            'Map ' + state.mapId + ' (' + state.x.toFixed(0) + ', ' + state.y.toFixed(0) + ')'
-        );
-
-        // Level
-        var raceStr = RACE_NAMES[state.race] || '?';
-        $card.find('.bot-card-level').text('L' + state.level + ' ' + raceStr);
-
-        // Task state
-        var taskText = state.taskState || 'IDLE';
-        var taskClass = 'bot-card-task';
-        if (state.inCombat || taskText === 'COMBAT') taskClass += ' task-combat';
-        else if (taskText === 'MOVING' || taskText === 'MOVE_TO') taskClass += ' task-moving';
-        else taskClass += ' task-idle';
-
-        if (state.isDead) taskText = 'DEAD';
-        if (state.inCombat) taskText = 'COMBAT';
-
-        $card.find('.bot-card-task').text(taskText).attr('class', taskClass);
-
-        // Card state classes
-        $card.toggleClass('combat', state.inCombat);
-        $card.toggleClass('dead', state.isDead);
+        $card.toggleClass('disconnected', isDisc);
+        $card.toggleClass('selected', selectedGuid === guid);
     }
+
+    // ===================== DETAIL PANEL =====================
+
+    function renderDetail() {
+        if (!selectedGuid) {
+            $('#detailEmpty').show();
+            return;
+        }
+        $('#detailEmpty').hide();
+
+        var s = botStates[selectedGuid];
+        var brain = botBrains[selectedGuid];
+        if (!s) return;
+
+        var html = '';
+
+        // --- Bot Header ---
+        var className = CLASS_NAMES[s.classId] || '?';
+        var raceName = RACE_NAMES[s.race] || '?';
+        var hpPct = s.maxHealth > 0 ? Math.round(s.health / s.maxHealth * 100) : 0;
+        var mpPct = s.maxMana > 0 ? Math.round(s.mana / s.maxMana * 100) : 0;
+
+        html += '<div class="bt-section"><div class="bt-section-body">' +
+            '<div class="d-flex align-items-center justify-content-between mb-2">' +
+            '<div><span style="font-size:16px;font-weight:700;">' + esc(s.name) + '</span> ' +
+            '<span class="bt-class-badge ' + (CLASS_CSS[s.classId] || '') + '">' + className + '</span></div>' +
+            '<div style="font-size:12px;color:var(--text-muted);">L' + s.level + ' ' + raceName + ' — Map ' + s.mapId + ' (' + s.x.toFixed(0) + ', ' + s.y.toFixed(0) + ')</div>' +
+            '</div>' +
+            '<div class="d-flex gap-3" style="font-size:12px;">' +
+            '<div><span style="color:#9ece6a;">HP ' + hpPct + '%</span></div>' +
+            '<div><span style="color:#7aa2f7;">MP ' + mpPct + '%</span></div>' +
+            (s.inCombat ? '<div><span style="color:#f7768e;font-weight:600;">IN COMBAT</span></div>' : '') +
+            (s.isDead ? '<div><span style="color:#f7768e;font-weight:600;">DEAD</span></div>' : '') +
+            '</div>' +
+            '</div></div>';
+
+        // --- Personality Section ---
+        if (brain && brain.personality) {
+            var p = brain.personality;
+            html += '<div class="bt-section"><div class="bt-section-header"><span><i class="fa-solid fa-fingerprint" style="color:var(--accent);margin-right:6px;"></i>Personality</span>' +
+                '<span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-muted);">' +
+                p.chatStyle + ' / ' + p.temperament + ' — tick base ' + p.tickBase.toFixed(1) + 's</span></div>';
+            html += '<div class="bt-section-body">';
+
+            var traits = ['patience', 'greed', 'curiosity', 'sociability', 'aggression', 'efficiency', 'cautiousness', 'indecisiveness', 'spontaneity'];
+            for (var i = 0; i < traits.length; i++) {
+                var t = traits[i];
+                var val = p[t];
+                var meta = TRAIT_META[t] || { icon: 'fa-circle', color: '#888' };
+                var pct = Math.round(val * 100);
+                html += '<div class="bt-trait">' +
+                    '<span class="bt-trait-icon"><i class="fa-solid ' + meta.icon + '" style="color:' + meta.color + ';"></i></span>' +
+                    '<span class="bt-trait-label">' + capitalize(t) + '</span>' +
+                    '<div class="bt-trait-bar-track"><div class="bt-trait-bar-fill" style="width:' + pct + '%;background:' + meta.color + ';"></div></div>' +
+                    '<span class="bt-trait-val">' + pct + '</span>' +
+                    '</div>';
+            }
+
+            // Quirks
+            if (p.quirks && p.quirks.length > 0) {
+                html += '<div style="margin-top:10px;">';
+                for (var qi = 0; qi < p.quirks.length; qi++) {
+                    var q = p.quirks[qi];
+                    html += '<span class="bt-quirk" title="' + esc(q.description || '') + '"><i class="fa-solid fa-star" style="font-size:9px;"></i> ' + esc(q.name) + '</span>';
+                }
+                html += '</div>';
+            } else {
+                html += '<div style="margin-top:8px;font-size:11px;color:var(--text-muted);">No quirks</div>';
+            }
+
+            html += '</div></div>';
+        }
+
+        // --- Last Decision / Weights ---
+        html += '<div class="bt-section"><div class="bt-section-header"><span><i class="fa-solid fa-scale-balanced" style="color:var(--accent);margin-right:6px;"></i>Decision Weights</span></div>';
+        html += '<div class="bt-section-body"><div class="bt-weights" id="weightsGrid">';
+        if (brain && brain.lastDecision && brain.lastDecision.weights) {
+            html += renderWeightsHtml(brain.lastDecision.weights);
+        } else {
+            html += '<div style="font-size:12px;color:var(--text-muted);grid-column:1/-1;">Waiting for first decision tick...</div>';
+        }
+        html += '</div></div></div>';
+
+        // --- Economy ---
+        var copper = brain && brain.copper ? brain.copper : 0;
+        var gold = Math.floor(copper / 10000);
+        var silver = Math.floor((copper % 10000) / 100);
+        var copperRem = copper % 100;
+        var invCount = brain && brain.inventoryCount ? brain.inventoryCount : 0;
+
+        html += '<div class="bt-section"><div class="bt-section-header"><span><i class="fa-solid fa-coins" style="color:#e0af68;margin-right:6px;"></i>Shadow Economy</span></div>';
+        html += '<div class="bt-section-body"><div class="bt-econ-grid">';
+        html += '<div class="bt-econ-item"><div class="bt-econ-val" style="color:#e0af68;">' + gold + 'g ' + silver + 's ' + copperRem + 'c</div><div class="bt-econ-label">Gold Balance</div></div>';
+        html += '<div class="bt-econ-item"><div class="bt-econ-val">' + invCount + '</div><div class="bt-econ-label">Inventory Items</div></div>';
+        html += '<div class="bt-econ-item"><div class="bt-econ-val">' + (brain && brain.hasUnlearnedSpells ? '<span style="color:#f7768e;">Yes</span>' : '<span style="color:#9ece6a;">No</span>') + '</div><div class="bt-econ-label">Needs Training</div></div>';
+        html += '</div></div></div>';
+
+        // --- Activity Timeline ---
+        html += '<div class="bt-section"><div class="bt-section-header"><span><i class="fa-solid fa-clock-rotate-left" style="color:var(--accent);margin-right:6px;"></i>Activity Timeline</span></div>';
+        html += '<div class="bt-section-body"><div class="bt-timeline" id="timeline"></div></div></div>';
+
+        $('#detailPanel').html(html);
+        renderTimeline(selectedGuid);
+    }
+
+    function renderWeightsHtml(weights) {
+        var html = '';
+        var maxW = 0;
+        var keys = Object.keys(weights);
+        for (var i = 0; i < keys.length; i++) if (weights[keys[i]] > maxW) maxW = weights[keys[i]];
+        if (maxW === 0) maxW = 1;
+
+        keys.sort(function (a, b) { return weights[b] - weights[a]; });
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            var v = weights[k];
+            var pct = Math.round(v / maxW * 100);
+            html += '<div class="bt-weight-row">' +
+                '<span class="bt-weight-label">' + k + '</span>' +
+                '<div class="bt-weight-bar-track"><div class="bt-weight-bar-fill" style="width:' + pct + '%;"></div></div>' +
+                '<span class="bt-weight-val">' + v.toFixed(2) + '</span>' +
+                '</div>';
+        }
+        return html;
+    }
+
+    function renderWeights(weights) {
+        var $grid = $('#weightsGrid');
+        if ($grid.length === 0) return;
+        $grid.html(renderWeightsHtml(weights));
+    }
+
+    function renderTimeline(guid) {
+        var $tl = $('#timeline');
+        if ($tl.length === 0) return;
+
+        var entries = decisionLog[guid];
+        if (!entries || entries.length === 0) {
+            $tl.html('<div style="color:#5f6b7a;">No decisions recorded yet.</div>');
+            return;
+        }
+
+        var html = '';
+        // Show last 30
+        var start = Math.max(0, entries.length - 30);
+        for (var i = start; i < entries.length; i++) {
+            var e = entries[i];
+            var cls = e.activityChanged ? 'bt-tl-switch' : 'bt-tl-stay';
+            var ts = new Date(e.timestamp).toLocaleTimeString();
+            html += '<div class="' + cls + '">[' + ts + '] ' + esc(e.decision) + '</div>';
+        }
+        $tl.html(html);
+        $tl[0].scrollTop = $tl[0].scrollHeight;
+    }
+
+    // Per-bot timeline append (for events not from BotDecision)
+    function tlAppend(guid, text, cls) {
+        if (selectedGuid !== guid) return;
+        var $tl = $('#timeline');
+        if ($tl.length === 0) return;
+        var ts = new Date().toLocaleTimeString();
+        $tl.append('<div class="' + (cls || 'bt-tl-event') + '">[' + ts + '] ' + esc(text) + '</div>');
+        while ($tl.children().length > maxTimelineEntries) $tl.children(':first').remove();
+        $tl[0].scrollTop = $tl[0].scrollHeight;
+    }
+
+    // ===================== STATS =====================
 
     function updateStats() {
         var guids = Object.keys(botStates);
-        var connectedCount = 0, combatCount = 0, deadCount = 0;
+        var tracked = 0;
         for (var i = 0; i < guids.length; i++) {
-            var s = botStates[guids[i]];
-            if (s.taskState !== 'DISCONNECTED') connectedCount++;
-            if (s.inCombat) combatCount++;
-            if (s.isDead) deadCount++;
+            if (botStates[guids[i]].taskState !== 'DISCONNECTED') tracked++;
         }
-        $('#countConnected').text(connectedCount);
-        $('#countCombat').text(combatCount);
-        $('#countDead').text(deadCount);
+        $('#statTracked').text(tracked);
+        $('#statBrains').text(Object.keys(botBrains).length);
+
+        var elapsed = (Date.now() - dpmStartTime) / 60000; // minutes
+        var dpm = elapsed > 0 ? Math.round(decisionCount / elapsed) : 0;
+        $('#statDpm').text(dpm);
     }
 
     function updateBotDropdown() {
         var $sel = $('#cmdBotSelect');
         var current = $sel.val();
         $sel.find('option:not(:first)').remove();
-
         var guids = Object.keys(botStates).sort(function (a, b) {
             return (botStates[a].name || '').localeCompare(botStates[b].name || '');
         });
@@ -254,21 +406,48 @@ $(function () {
             if (s.taskState === 'DISCONNECTED') continue;
             $sel.append('<option value="' + s.guid + '">' + s.name + ' (L' + s.level + ')</option>');
         }
-
         if (current) $sel.val(current);
     }
 
+    // ===================== ENGINE TOGGLE =====================
+
+    $('#engineToggle').on('click', function () {
+        engineEnabled = !engineEnabled;
+        $(this).toggleClass('active', engineEnabled);
+        $(this).find('.bt-engine-label').text(engineEnabled ? 'Engine On' : 'Engine Off');
+
+        // POST to controller to toggle
+        $.post('/Bots/ToggleBrain', { enabled: engineEnabled });
+    });
+
+    // ===================== ROSTER SELECTION =====================
+
+    $(document).on('click', '.bt-roster-card', function () {
+        var guid = parseInt($(this).data('guid'));
+        selectedGuid = guid;
+        $('.bt-roster-card').removeClass('selected');
+        $(this).addClass('selected');
+
+        // Fetch brain data if we don't have it
+        if (!botBrains[guid]) {
+            $.getJSON('/Bots/BrainState/' + guid, function (data) {
+                if (data && data.guid) {
+                    botBrains[guid] = data;
+                }
+                renderDetail();
+            }).fail(function () {
+                renderDetail();
+            });
+        } else {
+            renderDetail();
+        }
+    });
+
     // ===================== COMMAND BAR =====================
 
-    // Toggle param sections based on command type
     $('#cmdType').on('change', function () {
         var type = $(this).val();
-        $('#cmdParamsMoveTo').hide();
-        $('#cmdParamsSay').hide();
-        $('#cmdParamsQuest').hide();
-        $('#cmdParamsSpell').hide();
-        $('#cmdParamsTarget').hide();
-
+        $('#cmdParamsMoveTo, #cmdParamsSay, #cmdParamsQuest, #cmdParamsSpell, #cmdParamsTarget').hide();
         switch (type) {
             case 'move_to': $('#cmdParamsMoveTo').show(); break;
             case 'say': case 'yell': $('#cmdParamsSay').show(); break;
@@ -278,113 +457,78 @@ $(function () {
         }
     });
 
-    // Send command
     $('#btnSendCmd').on('click', function () {
-        if (!connected) { logAppend('Not connected to BotBridge.', 'log-err'); return; }
-
+        if (!connected) return;
         var guid = parseInt($('#cmdBotSelect').val());
         var cmdType = $('#cmdType').val();
 
-        if (!guid && cmdType !== 'move_to' && cmdType !== 'say' && cmdType !== 'yell') {
-            logAppend('Select a specific bot for this command.', 'log-err');
-            return;
-        }
-
         switch (cmdType) {
             case 'move_to':
-                var mapId = parseInt($('#cmdMapId').val()) || 0;
-                var x = parseFloat($('#cmdX').val()) || 0;
-                var y = parseFloat($('#cmdY').val()) || 0;
-                var z = parseFloat($('#cmdZ').val()) || 0;
-                if (guid === 0) {
-                    connection.invoke('SendMoveToAll', mapId, x, y, z).catch(logErr);
-                } else {
-                    connection.invoke('SendMoveTo', guid, mapId, x, y, z).catch(logErr);
-                }
+                var m = parseInt($('#cmdMapId').val()) || 0, x = parseFloat($('#cmdX').val()) || 0;
+                var y = parseFloat($('#cmdY').val()) || 0, z = parseFloat($('#cmdZ').val()) || 0;
+                if (guid === 0) connection.invoke('SendMoveToAll', m, x, y, z).catch(logErr);
+                else connection.invoke('SendMoveTo', guid, m, x, y, z).catch(logErr);
                 break;
-
-            case 'say':
-            case 'yell':
+            case 'say': case 'yell':
                 var text = $('#cmdText').val().trim();
-                if (!text) { logAppend('Enter text to say.', 'log-err'); return; }
+                if (!text) return;
                 var chatType = (cmdType === 'yell') ? 6 : 0;
                 if (guid === 0) {
-                    var allGuids = Object.keys(botStates);
-                    for (var gi = 0; gi < allGuids.length; gi++) {
-                        if (botStates[allGuids[gi]].taskState !== 'DISCONNECTED')
-                            connection.invoke('SendSayText', parseInt(allGuids[gi]), text, chatType).catch(logErr);
-                    }
-                } else {
-                    connection.invoke('SendSayText', guid, text, chatType).catch(logErr);
-                }
+                    Object.keys(botStates).forEach(function (g) {
+                        if (botStates[g].taskState !== 'DISCONNECTED')
+                            connection.invoke('SendSayText', parseInt(g), text, chatType).catch(logErr);
+                    });
+                } else connection.invoke('SendSayText', guid, text, chatType).catch(logErr);
                 $('#cmdText').val('');
                 break;
-
             case 'accept_quest':
                 var qid = parseInt($('#cmdQuestId').val()) || 0;
-                if (!qid) { logAppend('Enter a quest ID.', 'log-err'); return; }
-                connection.invoke('SendAcceptQuest', guid, qid).catch(logErr);
+                if (qid && guid) connection.invoke('SendAcceptQuest', guid, qid).catch(logErr);
                 break;
-
             case 'complete_quest':
                 var qid = parseInt($('#cmdQuestId').val()) || 0;
-                if (!qid) { logAppend('Enter a quest ID.', 'log-err'); return; }
-                connection.invoke('SendCompleteQuest', guid, qid).catch(logErr);
+                if (qid && guid) connection.invoke('SendCompleteQuest', guid, qid).catch(logErr);
                 break;
-
             case 'abandon_quest':
                 var qid = parseInt($('#cmdQuestId').val()) || 0;
-                if (!qid) { logAppend('Enter a quest ID.', 'log-err'); return; }
-                connection.invoke('SendAbandonQuest', guid, qid).catch(logErr);
+                if (qid && guid) connection.invoke('SendAbandonQuest', guid, qid).catch(logErr);
                 break;
-
             case 'learn_spell':
                 var sid = parseInt($('#cmdSpellId').val()) || 0;
-                if (!sid) { logAppend('Enter a spell ID.', 'log-err'); return; }
-                connection.invoke('SendLearnSpell', guid, sid).catch(logErr);
+                if (sid && guid) connection.invoke('SendLearnSpell', guid, sid).catch(logErr);
                 break;
-
             case 'attack_target':
-                var tguid = parseInt($('#cmdTargetGuid').val()) || 0;
-                if (!tguid) { logAppend('Enter a target GUID.', 'log-err'); return; }
-                connection.invoke('SendAttackTarget', guid, tguid).catch(logErr);
+                var tg = parseInt($('#cmdTargetGuid').val()) || 0;
+                if (tg && guid) connection.invoke('SendAttackTarget', guid, tg).catch(logErr);
                 break;
-
             case 'interact_npc':
-                var nguid = parseInt($('#cmdTargetGuid').val()) || 0;
-                if (!nguid) { logAppend('Enter an NPC GUID.', 'log-err'); return; }
-                connection.invoke('SendInteractNpc', guid, nguid).catch(logErr);
+                var ng = parseInt($('#cmdTargetGuid').val()) || 0;
+                if (ng && guid) connection.invoke('SendInteractNpc', guid, ng).catch(logErr);
                 break;
         }
-
-        function logErr(err) { logAppend('Send failed: ' + err.toString(), 'log-err'); }
+        function logErr(err) { console.error('Cmd send failed:', err); }
     });
 
-    // Enter key in text input triggers main Send button
     $('#cmdText').on('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); $('#btnSendCmd').click(); }
     });
 
-    // ===================== EVENT LOG =====================
+    // ===================== HELPERS =====================
 
-    function logAppend(text, cls) {
-        var el = document.getElementById('eventLog');
-        var ts = new Date().toLocaleTimeString();
-        var div = document.createElement('div');
-        div.className = cls || 'log-sys';
-        div.textContent = '[' + ts + '] ' + text;
-        el.appendChild(div);
-        while (el.children.length > maxLogLines) el.removeChild(el.children[0]);
-        el.scrollTop = el.scrollHeight;
+    function esc(s) {
+        if (!s) return '';
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
     }
 
-    $('#btnClearLog').on('click', function () {
-        $('#eventLog').empty();
-        logAppend('Log cleared.', 'log-sys');
-    });
+    function capitalize(s) {
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    }
 
     // ===================== INIT =====================
     initConnection();
-    logAppend('BotBridge UI initialized. Connecting to SignalR hub...', 'log-sys');
 
+    // DPM counter refresh
+    setInterval(updateStats, 5000);
 });

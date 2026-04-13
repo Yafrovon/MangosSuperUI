@@ -220,6 +220,44 @@
                 </div>
             </div>
 
+            <!-- Backup & Restore -->
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fa-solid fa-hard-drive" style="color: var(--accent);"></i>
+                    Backup & Restore
+                </div>
+                <div class="card-body">
+                    <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px;">
+                        Paths used by the <a href="/Backup" style="color: var(--accent);">Backups</a> page.
+                        Database backups use <code>mysqldump</code> and are stored as gzipped SQL.
+                        Core Source backups tar the source tree for version snapshots while developing.
+                    </p>
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="cmd-label">
+                                Backup Storage Directory
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Where backup folders are stored. Each backup creates a timestamped subfolder containing dump files and a manifest.json."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgBackupDir" placeholder="/home/wowvmangos/backups" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                VMaNGOS Source Path
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Path to the C++ source tree (src/). Included in Core Source backups. Leave empty to skip source in core backups."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgSourcePath" placeholder="/home/wowvmangos/vmangos/src" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                VMaNGOS SQL Path
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Path to the SQL migrations directory. Included in Core Source backups alongside the source tree."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgSqlPath" placeholder="/home/wowvmangos/vmangos/sql" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Kestrel -->
             <div class="card mb-4">
                 <div class="card-header d-flex align-items-center gap-2">
@@ -277,10 +315,10 @@
             color: var(--text-secondary);
         }
 
-        .dbc-count-chip .count-val {
-            font-weight: 600;
-            color: var(--text-primary);
-        }
+            .dbc-count-chip .count-val {
+                font-weight: 600;
+                color: var(--text-primary);
+            }
     </style>
 }
 

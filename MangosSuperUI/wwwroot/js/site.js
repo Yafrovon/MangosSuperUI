@@ -77,7 +77,7 @@
         groups: ['operations', 'server', 'content', 'downloads', 'bots', 'data'],
         items: {
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
-            server: ['activity', 'serverlogs', 'livelogs', 'config'],
+            server: ['activity', 'serverlogs', 'livelogs', 'config', 'backup'],
             content: ['worldmap', 'items', 'spells', 'gameobjects', 'loottuner', 'instances', 'lootifier'],
             downloads: ['downloads-page'],
             bots: ['bots-dashboard'],
@@ -157,7 +157,47 @@
                 if (li) ul.appendChild(li);
             });
         });
+
+        // Apply hidden groups
+        applySidebarVisibility();
     }
+
+
+    // =========================================================
+    //  2B. SIDEBAR VISIBILITY — hide/show groups
+    // =========================================================
+
+    var VISIBILITY_STORAGE_KEY = 'msui_sidebar_hidden';
+
+    function getHiddenGroups() {
+        try {
+            return JSON.parse(localStorage.getItem(VISIBILITY_STORAGE_KEY)) || [];
+        } catch { return []; }
+    }
+
+    function saveHiddenGroups(hidden) {
+        localStorage.setItem(VISIBILITY_STORAGE_KEY, JSON.stringify(hidden));
+    }
+
+    function applySidebarVisibility() {
+        var container = document.getElementById('sidebarGroups');
+        if (!container) return;
+        var hidden = getHiddenGroups();
+        var activeGroup = container.getAttribute('data-active-group') || '';
+
+        container.querySelectorAll('.sidebar-section').forEach(function (sec) {
+            var groupKey = sec.getAttribute('data-group');
+            // Never hide the group containing the active page
+            if (hidden.indexOf(groupKey) !== -1 && groupKey !== activeGroup) {
+                sec.style.display = 'none';
+            } else {
+                sec.style.display = '';
+            }
+        });
+    }
+
+    // Apply visibility immediately (before DOMContentLoaded completes fully)
+    applySidebarVisibility();
 
 
     // =========================================================
@@ -252,6 +292,7 @@
         btnOpen.addEventListener('click', function () {
             overlay.classList.add('open');
             populateReorderList();
+            populateVisibilityList();
             populateThemePickers();
         });
 
@@ -315,6 +356,7 @@
             serverlogs: { icon: 'fa-file-lines', label: 'Server Logs' },
             livelogs: { icon: 'fa-satellite-dish', label: 'Live Logs' },
             config: { icon: 'fa-sliders', label: 'Config Editor' },
+            backup: { icon: 'fa-hard-drive', label: 'Backups' },
             worldmap: { icon: 'fa-map-location-dot', label: 'World Map' },
             items: { icon: 'fa-box-open', label: 'Items' },
             spells: { icon: 'fa-wand-magic-sparkles', label: 'Spells' },
@@ -466,6 +508,77 @@
         });
         saveSidebarOrder(newOrder);
         applySidebarOrder(); // Live-update the actual sidebar
+    }
+
+
+    // =========================================================
+    //  4B. CUSTOMIZE MODAL — Visibility Tab
+    // =========================================================
+
+    function populateVisibilityList() {
+        var list = document.getElementById('visibilityList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        var container = document.getElementById('sidebarGroups');
+        var activeGroup = container ? (container.getAttribute('data-active-group') || '') : '';
+        var hidden = getHiddenGroups();
+        var order = getSidebarOrder();
+
+        var groupNames = {
+            operations: 'Operations',
+            server: 'Server',
+            content: 'Content',
+            downloads: 'Downloads & Uploads',
+            bots: 'AI Bots',
+            data: 'Data'
+        };
+
+        var groupIcons = {
+            operations: 'fa-gauge',
+            server: 'fa-server',
+            content: 'fa-box-open',
+            downloads: 'fa-arrow-down-to-line',
+            bots: 'fa-robot',
+            data: 'fa-database'
+        };
+
+        order.groups.forEach(function (groupKey) {
+            var isHidden = hidden.indexOf(groupKey) !== -1;
+            var isActive = groupKey === activeGroup;
+            var name = groupNames[groupKey] || groupKey;
+            var icon = groupIcons[groupKey] || 'fa-folder';
+
+            var row = document.createElement('div');
+            row.className = 'visibility-row' + (isHidden ? ' hidden-group' : '');
+            row.innerHTML =
+                '<div class="visibility-info">' +
+                '<i class="fa-solid ' + icon + '" style="color: var(--accent); font-size: 13px; width: 18px; text-align: center;"></i>' +
+                '<span>' + name + '</span>' +
+                (isActive ? '<span class="visibility-active-badge">current</span>' : '') +
+                '</div>' +
+                '<label class="visibility-toggle">' +
+                '<input type="checkbox" ' + (!isHidden ? 'checked' : '') + ' ' + (isActive ? 'disabled' : '') +
+                ' data-vis-group="' + groupKey + '" />' +
+                '<span class="visibility-slider"></span>' +
+                '</label>';
+
+            row.querySelector('input').addEventListener('change', function () {
+                var gk = this.getAttribute('data-vis-group');
+                var h = getHiddenGroups();
+                if (this.checked) {
+                    h = h.filter(function (g) { return g !== gk; });
+                } else {
+                    if (h.indexOf(gk) === -1) h.push(gk);
+                }
+                saveHiddenGroups(h);
+                applySidebarVisibility();
+                // Update row styling
+                row.classList.toggle('hidden-group', !this.checked);
+            });
+
+            list.appendChild(row);
+        });
     }
 
 

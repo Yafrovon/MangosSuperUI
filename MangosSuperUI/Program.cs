@@ -1,10 +1,15 @@
-using MangosSuperUI.Services;
+﻿using MangosSuperUI.Services;
 using MangosSuperUI.Models;
 using MangosSuperUI.Hubs;
 using Microsoft.AspNetCore.StaticFiles;
 using System.Diagnostics.Metrics;
+using MangosSuperUI.BotLogic.Core;
+using MangosSuperUI.BotLogic.Data;
+using MangosSuperUI.BotLogic.Tracking;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSystemd();  // ← sends watchdog heartbeats + handles SIGTERM gracefully
 
 // ---------- Additional Config Source ----------
 builder.Configuration.AddJsonFile("server-config.json", optional: true, reloadOnChange: true);
@@ -26,6 +31,29 @@ builder.Services.AddSingleton<DbcService>();
 builder.Services.AddSingleton<HeightMapService>();
 builder.Services.AddSingleton<BotBridgeService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BotBridgeService>());
+builder.Services.AddSingleton<OllamaChatService>();
+
+// ---------- BotLogic: Behavioral Engine ----------
+
+// Tracking (in-memory, singleton)
+builder.Services.AddSingleton<BotStateTracker>();
+    builder.Services.AddSingleton<BotActivityLog>();
+    builder.Services.AddSingleton<BotRelationships>();
+
+    // Data loaders
+    builder.Services.AddSingleton<QuirkLoader>();
+    builder.Services.AddSingleton<SpellProgressionLoader>();
+    builder.Services.AddSingleton<ZoneDataLoader>();
+    builder.Services.AddSingleton<LevelingGuideLoader>();
+    builder.Services.AddSingleton<BotBrainDbInit>();
+
+    // Core engine
+    builder.Services.AddSingleton<LiveStateModifiers>();
+
+    // Brain orchestrator (BackgroundService)
+    builder.Services.AddSingleton<BotBrainService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<BotBrainService>());
+
 
 // ---------- MVC + SignalR ----------
 builder.Services.AddControllersWithViews();
@@ -35,7 +63,7 @@ var app = builder.Build();
 
 // ---------- Database Bootstrap ----------
 // Ensures vmangos_admin DB + tables exist before any request can hit AuditService.
-// Never throws � logs errors and sets AdminDbReady = false for dashboard to display.
+// Never throws — logs errors and sets AdminDbReady = false for dashboard to display.
 var dbInit = app.Services.GetRequiredService<DbInitializationService>();
 await dbInit.InitializeAsync();
 

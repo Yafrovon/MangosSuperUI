@@ -4,6 +4,7 @@ $(function () {
 
     var currentPage = 1;
     var totalPages = 1;
+    var currentPageSize = parseInt(localStorage.getItem('msui_items_pageSize')) || 50;
     var currentIcons = {};
     var currentDetailEntry = null;
     var currentDetailItem = null;
@@ -95,7 +96,7 @@ $(function () {
             qualityFilter: $('#filterQuality').val() || undefined,
             inventoryTypeFilter: $('#filterSlot').val() || undefined,
             page: currentPage,
-            pageSize: 50
+            pageSize: currentPageSize
         };
         Object.keys(params).forEach(function (k) { if (params[k] === undefined || params[k] === '') delete params[k]; });
 
@@ -138,9 +139,18 @@ $(function () {
 
             if (data.totalPages > 1) {
                 $('#paginationBar').show();
-                $('#pageInfo').text('Page ' + data.page + ' of ' + data.totalPages);
+                $('#pageJumpInput').val(data.page).attr('max', data.totalPages);
+                $('#pageTotalLabel').text(data.totalPages);
+                $('#btnFirstPage').prop('disabled', data.page <= 1);
                 $('#btnPrevPage').prop('disabled', data.page <= 1);
                 $('#btnNextPage').prop('disabled', data.page >= data.totalPages);
+                $('#btnLastPage').prop('disabled', data.page >= data.totalPages);
+            } else if (data.items.length > 0) {
+                // Single page — still show bar for page size selector access
+                $('#paginationBar').show();
+                $('#pageJumpInput').val(1).attr('max', 1);
+                $('#pageTotalLabel').text('1');
+                $('#btnFirstPage, #btnPrevPage, #btnNextPage, #btnLastPage').prop('disabled', true);
             } else {
                 $('#paginationBar').hide();
             }
@@ -968,8 +978,28 @@ $(function () {
     $('#filterClass, #filterQuality, #filterSlot').on('change', function () { doSearch(1); });
 
     // Pagination
+    $('#btnFirstPage').on('click', function () { doSearch(1); });
     $('#btnPrevPage').on('click', function () { if (currentPage > 1) doSearch(currentPage - 1); });
     $('#btnNextPage').on('click', function () { if (currentPage < totalPages) doSearch(currentPage + 1); });
+    $('#btnLastPage').on('click', function () { doSearch(totalPages); });
+    $('#pageJumpInput').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+            var p = parseInt($(this).val()) || 1;
+            p = Math.max(1, Math.min(p, totalPages));
+            doSearch(p);
+        }
+    });
+    $('#pageJumpInput').on('blur', function () {
+        var p = parseInt($(this).val()) || 1;
+        p = Math.max(1, Math.min(p, totalPages));
+        if (p !== currentPage) doSearch(p);
+    });
+    $('#pageSizeSelect').val(currentPageSize);
+    $('#pageSizeSelect').on('change', function () {
+        currentPageSize = parseInt($(this).val()) || 50;
+        try { localStorage.setItem('msui_items_pageSize', currentPageSize); } catch (e) { }
+        doSearch(1);
+    });
 
     // Item list click → detail
     $(document).on('click', '.item-row', function () {

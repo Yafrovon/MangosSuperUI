@@ -1,4 +1,4 @@
-@{
+﻿@{
     var currentController = ViewContext.RouteData.Values["controller"]?.ToString() ?? "";
     var currentAction = ViewContext.RouteData.Values["action"]?.ToString() ?? "";
 
@@ -13,7 +13,7 @@
     string activeGroup = currentController.ToLower() switch
     {
         "home" or "console" or "players" or "accounts" or "realm" => "operations",
-        "activity" or "serverlogs" or "livelogs" or "config" => "server",
+        "activity" or "serverlogs" or "livelogs" or "config" or "backup" => "server",
         "worldmap" or "items" or "spells" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
         "database" or "functiongraph" => "data",
         "downloads" => "downloads",
@@ -112,6 +112,12 @@
                         Config Editor
                     </a>
                 </li>
+                <li class="sidebar-nav-item" data-nav-key="backup">
+                    <a asp-controller="Backup" asp-action="Index" class="@NavClass("Backup")">
+                        <i class="fa-solid fa-hard-drive"></i>
+                        Backups
+                    </a>
+                </li>
             </ul>
         </div>
 
@@ -167,22 +173,6 @@
             </ul>
         </div>
 
-        <!-- Downloads & Uploads -->
-        <div class="sidebar-section" data-group="downloads">
-            <div class="sidebar-section-title" data-toggle-group="downloads">
-                <span>Downloads & Uploads</span>
-                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
-            </div>
-            <ul class="sidebar-nav sidebar-nav-collapsible">
-                <li class="sidebar-nav-item" data-nav-key="downloads-page">
-                    <a asp-controller="Downloads" asp-action="Index" class="@NavClass("Downloads")">
-                        <i class="fa-solid fa-arrow-down-to-line"></i>
-                        Downloads
-                    </a>
-                </li>
-            </ul>
-        </div>
-
         <!-- Bots -->
         <div class="sidebar-section" data-group="bots">
             <div class="sidebar-section-title" data-toggle-group="bots">
@@ -221,7 +211,26 @@
             </ul>
         </div>
 
+
+        <!-- Downloads & Uploads -->
+        <div class="sidebar-section" data-group="downloads">
+            <div class="sidebar-section-title" data-toggle-group="downloads">
+                <span>Downloads & Uploads</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
+                <li class="sidebar-nav-item" data-nav-key="downloads-page">
+                    <a asp-controller="Downloads" asp-action="Index" class="@NavClass("Downloads")">
+                        <i class="fa-solid fa-arrow-down-to-line"></i>
+                        Downloads
+                    </a>
+                </li>
+            </ul>
+        </div>
+
     </div>
+
+
 
     <!-- Footer -->
     <div class="sidebar-footer">
@@ -253,6 +262,7 @@
         <!-- Tabs -->
         <div class="customize-tabs">
             <button class="customize-tab active" data-tab="order"><i class="fa-solid fa-arrows-up-down"></i> Order</button>
+            <button class="customize-tab" data-tab="visibility"><i class="fa-solid fa-eye"></i> Visibility</button>
             <button class="customize-tab" data-tab="theme"><i class="fa-solid fa-droplet"></i> Theme</button>
         </div>
 
@@ -260,6 +270,14 @@
         <div class="customize-body customize-tab-content active" data-tab-content="order">
             <p class="customize-hint">Drag groups or items within groups to reorder. Changes apply instantly.</p>
             <div class="reorder-list" id="reorderGroupList">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Tab: Visibility -->
+        <div class="customize-body customize-tab-content" data-tab-content="visibility">
+            <p class="customize-hint">Toggle sections on or off. Hidden sections won't appear in the sidebar. The section containing the current page is always visible.</p>
+            <div id="visibilityList">
                 <!-- Populated by JS -->
             </div>
         </div>
@@ -364,3 +382,90 @@
         </div>
     </div>
 </div>
+
+<style>
+    /* ── Visibility Tab ── */
+    .visibility-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-light);
+        transition: opacity 0.2s;
+    }
+
+        .visibility-row:last-child {
+            border-bottom: none;
+        }
+
+        .visibility-row.hidden-group {
+            opacity: 0.45;
+        }
+
+    .visibility-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13.5px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+
+    .visibility-active-badge {
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 1px 6px;
+        border-radius: 3px;
+        background: rgba(59,130,196,0.15);
+        color: var(--accent);
+    }
+
+    .visibility-toggle {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        flex-shrink: 0;
+    }
+
+        .visibility-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+    .visibility-slider {
+        position: absolute;
+        inset: 0;
+        border-radius: 10px;
+        background: var(--border-medium);
+        transition: background 0.2s;
+        cursor: pointer;
+    }
+
+        .visibility-slider::before {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            left: 2px;
+            top: 2px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.2s;
+        }
+
+    .visibility-toggle input:checked + .visibility-slider {
+        background: var(--accent);
+    }
+
+        .visibility-toggle input:checked + .visibility-slider::before {
+            transform: translateX(16px);
+        }
+
+    .visibility-toggle input:disabled + .visibility-slider {
+        opacity: 0.5;
+        cursor: default;
+    }
+</style>

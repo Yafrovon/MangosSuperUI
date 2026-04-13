@@ -11,6 +11,9 @@ public class VmangosSettings
     public string LogsDir { get; set; } = "";
     public string DbcPath { get; set; } = "/home/wowvmangos/vmangos/run/data/5875/dbc";
     public string MapsDataPath { get; set; } = "/home/wowvmangos/vmangos/run/data/maps";
+    public string BackupDirectory { get; set; } = "/home/wowvmangos/backups";
+    public string VmangosSourcePath { get; set; } = "/home/wowvmangos/vmangos/src";
+    public string VmangosSqlPath { get; set; } = "/home/wowvmangos/vmangos/sql";
 }
 
 public class RemoteAccessSettings

@@ -1,0 +1,213 @@
+@{
+    ViewData["Title"] = "Backups";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div>
+                <h1>Backups</h1>
+                <p>Create, browse, and restore server backups</p>
+            </div>
+        </div>
+
+        <div class="content-body">
+
+            <!-- ── Create Backup Panel ── -->
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <span><i class="fa-solid fa-plus" style="color: var(--accent);"></i> New Backup</span>
+                    <div id="liveStats" class="text-muted" style="font-size: 11.5px;"></div>
+                </div>
+                <div class="card-body">
+                    <!-- Group toggles -->
+                    <div class="bk-group-row">
+                        <label class="bk-group-toggle active" data-group="world">
+                            <input type="checkbox" checked />
+                            <div class="bk-group-icon"><i class="fa-solid fa-earth-americas"></i></div>
+                            <div class="bk-group-info">
+                                <div class="bk-group-name">Game World</div>
+                                <div class="bk-group-desc">mangos + vmangos_admin</div>
+                            </div>
+                        </label>
+                        <label class="bk-group-toggle active" data-group="players">
+                            <input type="checkbox" checked />
+                            <div class="bk-group-icon"><i class="fa-solid fa-users"></i></div>
+                            <div class="bk-group-info">
+                                <div class="bk-group-name">Characters</div>
+                                <div class="bk-group-desc">characters + realmd</div>
+                            </div>
+                        </label>
+                        <label class="bk-group-toggle active" data-group="core">
+                            <input type="checkbox" checked />
+                            <div class="bk-group-icon"><i class="fa-solid fa-code"></i></div>
+                            <div class="bk-group-info">
+                                <div class="bk-group-name">Core Source</div>
+                                <div class="bk-group-desc">src/ + sql/ + mangosd.conf</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <!-- Label input + action -->
+                    <div class="bk-action-row">
+                        <input type="text" class="form-input" id="backupLabel" placeholder="Optional note — e.g. Before Lootifier batch on Deadmines" style="flex: 1;" />
+                        <button class="btn-accent" id="btnCreateBackup" style="white-space: nowrap;">
+                            <i class="fa-solid fa-hard-drive"></i> Create Backup
+                        </button>
+                    </div>
+
+                    <!-- Progress indicator -->
+                    <div id="backupProgress" style="display: none;">
+                        <div class="bk-progress-bar">
+                            <div class="bk-progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="bk-progress-text" id="progressText">Backing up...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Live Stats Row ── -->
+            <div class="bk-stats-row" id="statsRow">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- ── Backup History ── -->
+            <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--accent);"></i> Backup History</span>
+                    <span class="text-muted" style="font-size: 12px;" id="backupCount"></span>
+                </div>
+                <div class="card-body p-0" id="backupList">
+                    <div class="text-center p-4 text-muted">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Loading backups...
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- ── Restore Confirmation Modal ── -->
+<div class="modal fade" id="restoreModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border);">
+            <div class="modal-header" style="border-color: var(--status-warning); background: rgba(255,170,0,0.08);">
+                <h5 class="modal-title" style="font-size: 15px; font-weight: 600; color: var(--status-warning);">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Confirm Restore
+                </h5>
+            </div>
+            <div class="modal-body" style="font-size: 13.5px;">
+                <p>You are about to restore <strong id="restoreGroupName"></strong> from backup <strong id="restoreBackupName"></strong>.</p>
+                <p>This will <strong>replace all current data</strong> in the affected databases. A safety snapshot will be taken automatically before the restore.</p>
+                <p id="restoreServerNote" style="color: var(--status-warning); font-size: 12.5px;">
+                    <i class="fa-solid fa-circle-info" style="font-size: 10px;"></i>
+                    The server (mangosd) will be stopped and restarted during this process.
+                </p>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-light); gap: 8px;">
+                <button class="btn-sm btn-outline-warning" id="btnConfirmRestore">
+                    <i class="fa-solid fa-rotate-left"></i> Restore
+                </button>
+                <button class="btn-sm btn-outline-subtle" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Delete Confirmation Modal ── -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border);">
+            <div class="modal-header" style="border-color: var(--status-error); background: rgba(220,53,69,0.06);">
+                <h5 class="modal-title" style="font-size: 15px; font-weight: 600; color: var(--status-error);">
+                    <i class="fa-solid fa-trash"></i> Delete Backup
+                </h5>
+            </div>
+            <div class="modal-body" style="font-size: 13.5px;">
+                <p>Permanently delete backup <strong id="deleteBackupName"></strong>?</p>
+                <p class="text-muted" style="font-size: 12px; margin-bottom: 0;">This cannot be undone.</p>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-light); gap: 8px;">
+                <button class="btn-sm" id="btnConfirmDelete" style="color: white; background: var(--status-error); border: none; border-radius: var(--radius-sm); padding: 5px 14px; cursor: pointer;">
+                    <i class="fa-solid fa-trash"></i> Delete
+                </button>
+                <button class="btn-sm btn-outline-subtle" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <style>
+        /* ── Group toggle cards ── */
+        .bk-group-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .bk-group-toggle { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 2px solid var(--border-light); border-radius: var(--radius-md); cursor: pointer; transition: all var(--transition-fast); flex: 1; min-width: 200px; background: var(--bg-body); }
+        .bk-group-toggle:hover { border-color: var(--accent); }
+        .bk-group-toggle.active { border-color: var(--accent); background: rgba(59,130,196,0.06); }
+        .bk-group-toggle input { display: none; }
+        .bk-group-icon { width: 40px; height: 40px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; background: var(--bg-input); color: var(--text-muted); transition: all var(--transition-fast); }
+        .bk-group-toggle.active .bk-group-icon { background: var(--accent); color: white; }
+        .bk-group-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+        .bk-group-desc { font-size: 11.5px; color: var(--text-muted); }
+
+        /* ── Action row ── */
+        .bk-action-row { display: flex; gap: 10px; align-items: center; }
+
+        /* ── Progress bar ── */
+        .bk-progress-bar { margin-top: 14px; height: 6px; border-radius: 3px; background: var(--border-light); overflow: hidden; }
+        .bk-progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 3px; transition: width 0.4s ease; }
+        .bk-progress-fill.indeterminate { width: 100%; animation: bkPulse 1.5s ease-in-out infinite; }
+        @@keyframes bkPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+        .bk-progress-text { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+        /* ── Stats row ── */
+        .bk-stats-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .bk-stat-card { flex: 1; min-width: 140px; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius-md); }
+        .bk-stat-value { font-size: 22px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+        .bk-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
+
+        /* ── Backup card ── */
+        .bk-card { padding: 16px 20px; border-bottom: 1px solid var(--border-light); transition: background var(--transition-fast); }
+        .bk-card:last-child { border-bottom: none; }
+        .bk-card:hover { background: var(--bg-card-alt); }
+        .bk-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+        .bk-card-time { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+        .bk-card-date { font-size: 11.5px; color: var(--text-muted); margin-left: 8px; }
+        .bk-card-label { font-size: 13px; color: var(--accent); font-style: italic; margin-bottom: 6px; cursor: pointer; }
+        .bk-card-label:hover { text-decoration: underline; }
+        .bk-card-label:empty { display: none; }
+        .bk-card-groups { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+        .bk-group-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+        .bk-group-badge.world { background: rgba(59,130,196,0.12); color: #3b82c4; }
+        .bk-group-badge.players { background: rgba(34,197,94,0.12); color: #22c55e; }
+        .bk-group-badge.core { background: rgba(168,85,247,0.12); color: #a855f7; }
+        .bk-card-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
+        .bk-card-stat { display: flex; align-items: center; gap: 4px; }
+        .bk-card-stat i { font-size: 10px; }
+        .bk-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+        .bk-card-size { font-size: 11px; color: var(--text-muted); }
+        .bk-auto-label { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: rgba(255,170,0,0.12); color: var(--status-warning); font-weight: 600; margin-left: 6px; }
+
+        /* ── Empty state ── */
+        .bk-empty { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+        .bk-empty i { font-size: 32px; margin-bottom: 12px; display: block; opacity: 0.4; }
+
+        /* ── Toast ── */
+        .bk-toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; padding: 12px 20px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; animation: bkToastIn 0.3s ease-out; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+        .bk-toast.success { background: var(--status-online); color: white; }
+        .bk-toast.error { background: var(--status-error); color: white; }
+        .bk-toast.info { background: var(--accent); color: white; }
+        @@keyframes bkToastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ── Buttons ── */
+        .btn-outline-warning { background: none; border: 1px solid var(--status-warning); color: var(--status-warning); border-radius: var(--radius-sm); padding: 4px 12px; font-size: 12.5px; cursor: pointer; transition: all var(--transition-fast); }
+        .btn-outline-warning:hover { background: rgba(255,170,0,0.12); }
+    </style>
+}
+
+@section Scripts {
+    <script src="~/js/backup.js" asp-append-version="true"></script>
+}

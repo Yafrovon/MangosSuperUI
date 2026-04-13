@@ -36,6 +36,11 @@ $(function () {
             // Maps Data
             $('#cfgMapsDataPath').val(s.vmangos.mapsDataPath);
 
+            // Backup
+            $('#cfgBackupDir').val(s.vmangos.backupDirectory);
+            $('#cfgSourcePath').val(s.vmangos.vmangosSourcePath);
+            $('#cfgSqlPath').val(s.vmangos.vmangosSqlPath);
+
             // Kestrel
             $('#cfgKestrelUrl').val(s.kestrel.url);
 
@@ -155,7 +160,10 @@ $(function () {
                 mangosdConfPath: $('#cfgMangosdConfPath').val() || '',
                 logsDir: $('#cfgLogsDir').val() || '',
                 dbcPath: $('#cfgDbcPath').val() || '',
-                mapsDataPath: $('#cfgMapsDataPath').val() || ''
+                mapsDataPath: $('#cfgMapsDataPath').val() || '',
+                backupDirectory: $('#cfgBackupDir').val() || '',
+                vmangosSourcePath: $('#cfgSourcePath').val() || '',
+                vmangosSqlPath: $('#cfgSqlPath').val() || ''
             },
             kestrel: {
                 url: $('#cfgKestrelUrl').val()

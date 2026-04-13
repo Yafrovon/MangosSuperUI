@@ -198,49 +198,74 @@
                         opacity: 1;
                     }
 
-            .db-grid td {
-                padding: 6px 10px;
-                border-bottom: 1px solid var(--border-light);
-                color: var(--text-primary);
-                max-width: 240px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                cursor: default;
+            /* Column resize handle */
+            .db-grid th {
+                position: relative;
             }
 
-            .db-grid tbody tr:hover {
-                background: var(--bg-card-alt);
+        .col-resize-handle {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 6px;
+            cursor: col-resize;
+            z-index: 3;
+        }
+
+            .col-resize-handle:hover,
+            .col-resizing .col-resize-handle {
+                background: var(--accent);
+                opacity: 0.4;
             }
 
-            .db-grid tbody tr.selected {
-                background: var(--accent-light);
+        body.col-resizing {
+            cursor: col-resize !important;
+            user-select: none !important;
+        }
+
+        .db-grid td {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border-light);
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            cursor: default;
+        }
+
+        .db-grid tbody tr:hover {
+            background: var(--bg-card-alt);
+        }
+
+        .db-grid tbody tr.selected {
+            background: var(--accent-light);
+        }
+
+        .db-grid td.null-val {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        /* Inline editing */
+        .db-grid td.editing {
+            padding: 2px 4px;
+            overflow: visible;
+        }
+
+            .db-grid td.editing input {
+                width: 100%;
+                padding: 4px 6px;
+                border: 1px solid var(--accent);
+                border-radius: 3px;
+                font-size: 12.5px;
+                font-family: inherit;
+                box-shadow: 0 0 0 2px var(--accent-light);
             }
 
-            .db-grid td.null-val {
-                color: var(--text-muted);
-                font-style: italic;
-            }
-
-            /* Inline editing */
-            .db-grid td.editing {
-                padding: 2px 4px;
-                overflow: visible;
-            }
-
-                .db-grid td.editing input {
-                    width: 100%;
-                    padding: 4px 6px;
-                    border: 1px solid var(--accent);
-                    border-radius: 3px;
-                    font-size: 12.5px;
-                    font-family: inherit;
-                    box-shadow: 0 0 0 2px var(--accent-light);
+                .db-grid td.editing input:focus {
+                    outline: none;
                 }
-
-                    .db-grid td.editing input:focus {
-                        outline: none;
-                    }
 
         /* Pagination */
         #pagination {
@@ -277,6 +302,56 @@
                     opacity: 0.4;
                     cursor: default;
                 }
+
+        .db-page-jump {
+            width: 48px;
+            text-align: center;
+            background: var(--bg-input);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            padding: 4px 4px;
+            font-size: 12px;
+            -moz-appearance: textfield;
+        }
+
+            .db-page-jump::-webkit-outer-spin-button,
+            .db-page-jump::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+
+            .db-page-jump:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
+
+        .db-page-sep {
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 0 2px;
+        }
+
+        .db-page-size-sep {
+            color: var(--border);
+            font-size: 16px;
+            margin: 0 4px;
+        }
+
+        .db-page-size-select {
+            background: var(--bg-input);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            padding: 4px 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+            .db-page-size-select:focus {
+                border-color: var(--accent);
+                outline: none;
+            }
 
         /* Relationship panel */
         #relPanel {

@@ -62,7 +62,10 @@ public class SettingsController : Controller
                 MangosdConfPath = _config["Vmangos:MangosdConfPath"] ?? "",
                 LogsDir = _config["Vmangos:LogsDir"] ?? "",
                 DbcPath = _config["Vmangos:DbcPath"] ?? "/home/wowvmangos/vmangos/run/data/5875/dbc",
-                MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "/home/wowvmangos/vmangos/run/data/maps"
+                MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "/home/wowvmangos/vmangos/run/data/maps",
+                BackupDirectory = _config["Vmangos:BackupDirectory"] ?? "/home/wowvmangos/backups",
+                VmangosSourcePath = _config["Vmangos:VmangosSourcePath"] ?? "/home/wowvmangos/vmangos/src",
+                VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? "/home/wowvmangos/vmangos/sql"
             },
             Kestrel = new KestrelConfig
             {
@@ -189,6 +192,9 @@ public class VmangosConfig
     public string LogsDir { get; set; } = "";
     public string DbcPath { get; set; } = "/home/wowvmangos/vmangos/run/data/5875/dbc";
     public string MapsDataPath { get; set; } = "/home/wowvmangos/vmangos/run/data/maps";
+    public string BackupDirectory { get; set; } = "/home/wowvmangos/backups";
+    public string VmangosSourcePath { get; set; } = "/home/wowvmangos/vmangos/src";
+    public string VmangosSqlPath { get; set; } = "/home/wowvmangos/vmangos/sql";
 }
 
 public class KestrelConfig

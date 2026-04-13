@@ -1,12 +1,13 @@
 @{
-    ViewData["Title"] = "Bots";
+    ViewData["Title"] = "Bot Tuner";
 }
-
 
 @section Styles {
     <style>
-        /* ====== Header Stats ====== */
-        .bot-stat {
+        /* ====== Bot Tuner ====== */
+
+        /* --- Header Stats --- */
+        .bt-stat {
             font-size: 13px;
             font-weight: 500;
             color: var(--text-secondary);
@@ -15,141 +16,414 @@
             gap: 5px;
         }
 
-            .bot-stat i {
+            .bt-stat i {
                 font-size: 12px;
                 color: var(--text-muted);
             }
 
-        /* ====== Bot Grid ====== */
-        .bot-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 12px;
+        .bt-stat-val {
+            font-weight: 700;
         }
 
-        .bot-grid-empty {
-            grid-column: 1 / -1;
+        /* --- Engine Toggle --- */
+        .bt-engine-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-light);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            user-select: none;
+        }
+
+            .bt-engine-toggle.active {
+                border-color: var(--status-online);
+                background: rgba(34,197,94,0.08);
+            }
+
+            .bt-engine-toggle .bt-engine-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: var(--status-offline);
+                transition: background var(--transition-fast);
+            }
+
+            .bt-engine-toggle.active .bt-engine-dot {
+                background: var(--status-online);
+            }
+
+            .bt-engine-toggle .bt-engine-label {
+                font-size: 12px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                color: var(--text-muted);
+            }
+
+            .bt-engine-toggle.active .bt-engine-label {
+                color: var(--status-online);
+            }
+
+        /* --- Layout --- */
+        .bt-layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 16px;
+            height: calc(100vh - 140px);
+        }
+
+        /* --- Bot Roster (Left) --- */
+        .bt-roster {
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .bt-roster-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color var(--transition-fast), background var(--transition-fast);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+            .bt-roster-card:hover {
+                border-color: var(--accent);
+            }
+
+            .bt-roster-card.selected {
+                border-color: var(--accent);
+                background: var(--accent-light);
+            }
+
+            .bt-roster-card.disconnected {
+                opacity: 0.45;
+            }
+
+        .bt-roster-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+            .bt-roster-dot.alive {
+                background: #9ece6a;
+            }
+
+            .bt-roster-dot.dead {
+                background: #f7768e;
+            }
+
+            .bt-roster-dot.offline {
+                background: var(--text-muted);
+            }
+
+        .bt-roster-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .bt-roster-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .bt-roster-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .bt-roster-activity {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        .bt-act-idle {
+            background: rgba(141,150,160,0.12);
+            color: var(--text-muted);
+        }
+
+        .bt-act-questing {
+            background: rgba(122,162,247,0.12);
+            color: #7aa2f7;
+        }
+
+        .bt-act-grinding {
+            background: rgba(247,118,142,0.12);
+            color: #f7768e;
+        }
+
+        .bt-act-exploring {
+            background: rgba(42,195,222,0.12);
+            color: #2ac3de;
+        }
+
+        .bt-act-socializing {
+            background: rgba(187,154,247,0.12);
+            color: #bb9af7;
+        }
+
+        .bt-act-vendoring, .bt-act-auctionhouse {
+            background: rgba(224,175,104,0.12);
+            color: #e0af68;
+        }
+
+        .bt-act-eating {
+            background: rgba(158,206,106,0.12);
+            color: #9ece6a;
+        }
+
+        .bt-act-training, .bt-act-travelingtotrainer {
+            background: rgba(255,158,100,0.12);
+            color: #ff9e64;
+        }
+
+        /* --- Detail Panel (Right) --- */
+        .bt-detail {
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .bt-detail-empty {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 60px 20px;
+            height: 100%;
+            color: var(--text-muted);
             text-align: center;
         }
 
-        /* ====== Bot Card ====== */
-        .bot-card {
+            .bt-detail-empty i {
+                font-size: 48px;
+                margin-bottom: 12px;
+            }
+
+        .bt-section {
             background: var(--bg-card);
             border: 1px solid var(--border-light);
             border-radius: var(--radius-md);
-            padding: 14px;
-            transition: border-color var(--transition-fast);
-            cursor: pointer;
-            position: relative;
+            margin-bottom: 12px;
         }
 
-            .bot-card:hover {
-                border-color: var(--accent);
-            }
-
-            .bot-card.combat {
-                border-left: 3px solid #f7768e;
-            }
-
-            .bot-card.dead {
-                opacity: 0.55;
-            }
-
-        .bot-card-header {
+        .bt-section-header {
+            padding: 10px 14px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-light);
             display: flex;
             align-items: center;
             justify-content: space-between;
+        }
+
+        .bt-section-body {
+            padding: 14px;
+        }
+
+        /* --- Personality Trait Bars --- */
+        .bt-trait {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             margin-bottom: 8px;
         }
 
-        .bot-card-name {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--text-primary);
+            .bt-trait:last-child {
+                margin-bottom: 0;
+            }
+
+        .bt-trait-icon {
+            width: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            flex-shrink: 0;
         }
 
-        .bot-card-class {
-            font-size: 11px;
+        .bt-trait-label {
+            width: 90px;
+            font-size: 12px;
             font-weight: 500;
-            padding: 2px 7px;
-            border-radius: 3px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
+            color: var(--text-secondary);
+            flex-shrink: 0;
         }
 
-        .bot-card-bar {
-            height: 4px;
-            border-radius: 2px;
+        .bt-trait-bar-track {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
             background: var(--bg-card-alt);
-            margin-bottom: 4px;
+            position: relative;
             overflow: hidden;
         }
 
-        .bot-card-bar-fill {
+        .bt-trait-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+
+        .bt-trait-val {
+            width: 34px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        /* --- Quirk Badges --- */
+        .bt-quirk {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            background: var(--accent-subtle);
+            color: var(--accent);
+            margin: 2px;
+        }
+
+        /* --- Activity Timeline --- */
+        .bt-timeline {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11.5px;
+            line-height: 1.7;
+            background: #0f1319;
+            color: #c8d0da;
+            padding: 10px 12px;
+            border-radius: var(--radius-md);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .bt-tl-switch {
+            color: #7aa2f7;
+        }
+
+        .bt-tl-stay {
+            color: #5f6b7a;
+        }
+
+        .bt-tl-event {
+            color: #e0af68;
+        }
+
+        .bt-tl-error {
+            color: #f7768e;
+        }
+
+        /* --- Weight Breakdown --- */
+        .bt-weights {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 12px;
+        }
+
+        .bt-weight-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .bt-weight-label {
+            flex: 1;
+            color: var(--text-secondary);
+        }
+
+        .bt-weight-bar-track {
+            width: 60px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--bg-card-alt);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .bt-weight-bar-fill {
             height: 100%;
             border-radius: 2px;
+            background: var(--accent);
             transition: width 0.3s ease;
         }
 
-        .bar-health .bot-card-bar-fill {
-            background: #9ece6a;
-        }
-
-        .bar-mana .bot-card-bar-fill {
-            background: #7aa2f7;
-        }
-
-        .bot-card-info {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-top: 6px;
-        }
-
-        .bot-card-task {
-            font-size: 10.5px;
+        .bt-weight-val {
+            width: 30px;
+            font-size: 10px;
             font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-top: 6px;
             color: var(--text-muted);
+            text-align: right;
+            flex-shrink: 0;
         }
 
-            .bot-card-task.task-combat {
-                color: #f7768e;
-            }
-
-            .bot-card-task.task-moving {
-                color: #e0af68;
-            }
-
-            .bot-card-task.task-idle {
-                color: var(--text-muted);
-            }
-
-        .bot-card-status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 4px;
+        /* --- Economy Summary --- */
+        .bt-econ-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
         }
 
-        .dot-connected {
-            background: #9ece6a;
+        .bt-econ-item {
+            text-align: center;
+            padding: 8px;
+            background: var(--bg-card-alt);
+            border-radius: var(--radius-sm);
         }
 
-        .dot-disconnected {
-            background: #f7768e;
+        .bt-econ-val {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
         }
 
-        /* ====== WoW Class Colors ====== */
+        .bt-econ-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        /* --- Command Bar --- */
+        .bt-cmd-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            margin-bottom: 12px;
+        }
+
+        .bt-cmd-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        /* --- WoW Class Colors --- */
         .class-warrior {
             background: #C69B6D22;
             color: #C79C6E;
@@ -195,151 +469,128 @@
             color: #FF7D0A;
         }
 
-        /* ====== Event Log ====== */
-        .bot-event-log {
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            background: #0f1319;
-            color: #c8d0da;
-            padding: 12px;
-            border-radius: var(--radius-md);
-            max-height: 220px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-all;
+        .bt-class-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
 
-        .log-event {
-            color: #e0af68;
+        /* --- Scrollbar Styling --- */
+        .bt-roster::-webkit-scrollbar,
+        .bt-detail::-webkit-scrollbar,
+        .bt-timeline::-webkit-scrollbar {
+            width: 4px;
         }
 
-        .log-chat {
-            color: #bb9af7;
+        .bt-roster::-webkit-scrollbar-thumb,
+        .bt-detail::-webkit-scrollbar-thumb {
+            background: var(--border-light);
+            border-radius: 2px;
         }
 
-        .log-sys {
-            color: #9ece6a;
-        }
-
-        .log-err {
-            color: #f7768e;
-        }
-
-        .log-state {
-            color: #7aa2f7;
+        .bt-timeline::-webkit-scrollbar-thumb {
+            background: #2a3341;
+            border-radius: 2px;
         }
     </style>
 }
-
 
 <div class="app-shell">
     <partial name="_Sidebar" />
 
     <div class="main-content">
-        <div class="content-header">
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <h1>AI Playerbots</h1>
-                    <p>BotBridge live dashboard — TCP port 3444</p>
+        <div class="content-header d-flex align-items-start justify-content-between">
+            <div>
+                <h1><i class="fa-solid fa-brain" style="color: var(--accent);"></i> Bot Tuner</h1>
+                <p>Behavioral engine dashboard — personality, decisions, and economy</p>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+                <span class="bt-stat" title="Tracked bots">
+                    <i class="fa-solid fa-robot"></i> <span class="bt-stat-val" id="statTracked">0</span>
+                </span>
+                <span class="bt-stat" title="Active brains">
+                    <i class="fa-solid fa-brain"></i> <span class="bt-stat-val" id="statBrains">0</span>
+                </span>
+                <span class="bt-stat" title="Decisions/min">
+                    <i class="fa-solid fa-gauge-high"></i> <span class="bt-stat-val" id="statDpm">0</span>
+                </span>
+                <div class="bt-engine-toggle" id="engineToggle" title="Toggle brain engine">
+                    <span class="bt-engine-dot"></span>
+                    <span class="bt-engine-label">Engine Off</span>
                 </div>
-                <div class="d-flex align-items-center gap-3">
-                    <span class="bot-stat" id="statConnected" title="Connected bots">
-                        <i class="fa-solid fa-link"></i> <span id="countConnected">0</span>
-                    </span>
-                    <span class="bot-stat" id="statCombat" title="In combat">
-                        <i class="fa-solid fa-crosshairs"></i> <span id="countCombat">0</span>
-                    </span>
-                    <span class="bot-stat" id="statDead" title="Dead">
-                        <i class="fa-solid fa-skull"></i> <span id="countDead">0</span>
-                    </span>
-                    <span class="status-dot offline" id="bridgeStatus"></span>
-                    <span id="bridgeStatusText" style="font-weight: 500; font-size: 13px;">Connecting...</span>
-                </div>
+                <span class="status-dot offline" id="bridgeStatus"></span>
+                <span id="bridgeStatusText" style="font-weight:500;font-size:13px;">Connecting...</span>
             </div>
         </div>
 
         <div class="content-body">
 
-            <!-- Command Bar -->
-            <div class="cmd-section">
-                <div class="cmd-card">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <div class="cmd-section-title">Send Command to Bot</div>
-                            <div class="d-flex gap-2">
-                                <select class="form-input" id="cmdBotSelect" style="width: 200px;">
-                                    <option value="0">-- All Bots --</option>
-                                </select>
-                                <select class="form-input" id="cmdType" style="width: 160px;">
-                                    <option value="move_to">Move To</option>
-                                    <option value="say">Say</option>
-                                    <option value="yell">Yell</option>
-                                    <option value="accept_quest">Accept Quest</option>
-                                    <option value="complete_quest">Complete Quest</option>
-                                    <option value="abandon_quest">Abandon Quest</option>
-                                    <option value="learn_spell">Learn Spell</option>
-                                    <option value="attack_target">Attack Target</option>
-                                    <option value="interact_npc">Interact NPC</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="cmd-section-title">Parameters</div>
-                            <div class="d-flex gap-2" id="cmdParamsMoveTo">
-                                <input type="number" class="form-input" id="cmdMapId" placeholder="MapID" value="0" style="width: 80px;" />
-                                <input type="number" class="form-input" id="cmdX" placeholder="X" step="0.1" style="width: 100px;" />
-                                <input type="number" class="form-input" id="cmdY" placeholder="Y" step="0.1" style="width: 100px;" />
-                                <input type="number" class="form-input" id="cmdZ" placeholder="Z" step="0.1" style="width: 100px;" />
-                            </div>
-                            <div class="d-flex gap-2" id="cmdParamsSay" style="display: none;">
-                                <input type="text" class="form-input flex-grow-1" id="cmdText" placeholder="Text to say..." />
-                            </div>
-                            <div class="d-flex gap-2" id="cmdParamsQuest" style="display: none;">
-                                <input type="number" class="form-input" id="cmdQuestId" placeholder="Quest ID" style="width: 140px;" />
-                            </div>
-                            <div class="d-flex gap-2" id="cmdParamsSpell" style="display: none;">
-                                <input type="number" class="form-input" id="cmdSpellId" placeholder="Spell ID" style="width: 140px;" />
-                            </div>
-                            <div class="d-flex gap-2" id="cmdParamsTarget" style="display: none;">
-                                <input type="number" class="form-input" id="cmdTargetGuid" placeholder="Target GUID" style="width: 140px;" />
-                            </div>
-                            <div class="mt-2">
-                                <button class="btn-accent" id="btnSendCmd"><i class="fa-solid fa-paper-plane"></i> Send</button>
-                            </div>
-                        </div>
+            <!-- Command Bar (global) -->
+            <div class="bt-cmd-bar">
+                <div class="bt-cmd-row">
+                    <select class="form-input" id="cmdBotSelect" style="width:180px;">
+                        <option value="0">-- All Bots --</option>
+                    </select>
+                    <select class="form-input" id="cmdType" style="width:140px;">
+                        <option value="move_to">Move To</option>
+                        <option value="say">Say</option>
+                        <option value="yell">Yell</option>
+                        <option value="accept_quest">Accept Quest</option>
+                        <option value="complete_quest">Complete Quest</option>
+                        <option value="abandon_quest">Abandon Quest</option>
+                        <option value="learn_spell">Learn Spell</option>
+                        <option value="attack_target">Attack Target</option>
+                        <option value="interact_npc">Interact NPC</option>
+                    </select>
+                    <div id="cmdParamsMoveTo" class="d-flex gap-2">
+                        <input type="number" class="form-input" id="cmdMapId" placeholder="Map" value="0" style="width:65px;" />
+                        <input type="number" class="form-input" id="cmdX" placeholder="X" step="0.1" style="width:85px;" />
+                        <input type="number" class="form-input" id="cmdY" placeholder="Y" step="0.1" style="width:85px;" />
+                        <input type="number" class="form-input" id="cmdZ" placeholder="Z" step="0.1" style="width:85px;" />
+                    </div>
+                    <div id="cmdParamsSay" class="d-flex gap-2" style="display:none;">
+                        <input type="text" class="form-input" id="cmdText" placeholder="Text to say..." style="width:240px;" />
+                    </div>
+                    <div id="cmdParamsQuest" class="d-flex gap-2" style="display:none;">
+                        <input type="number" class="form-input" id="cmdQuestId" placeholder="Quest ID" style="width:120px;" />
+                    </div>
+                    <div id="cmdParamsSpell" class="d-flex gap-2" style="display:none;">
+                        <input type="number" class="form-input" id="cmdSpellId" placeholder="Spell ID" style="width:120px;" />
+                    </div>
+                    <div id="cmdParamsTarget" class="d-flex gap-2" style="display:none;">
+                        <input type="number" class="form-input" id="cmdTargetGuid" placeholder="Target GUID" style="width:120px;" />
+                    </div>
+                    <button class="btn-accent" id="btnSendCmd"><i class="fa-solid fa-paper-plane"></i> Send</button>
+                </div>
+            </div>
+
+            <!-- Main Layout -->
+            <div class="bt-layout">
+                <!-- Left: Bot Roster -->
+                <div class="bt-roster" id="botRoster">
+                    <div class="bt-detail-empty" id="rosterEmpty">
+                        <i class="fa-solid fa-robot"></i>
+                        <div style="font-size:14px;">No bots connected</div>
+                        <div style="font-size:12px;margin-top:4px;">Waiting for AiBotAI on TCP 3444...</div>
+                    </div>
+                </div>
+
+                <!-- Right: Detail Panel -->
+                <div class="bt-detail" id="detailPanel">
+                    <div class="bt-detail-empty" id="detailEmpty">
+                        <i class="fa-solid fa-brain"></i>
+                        <div style="font-size:14px;">Select a bot to inspect</div>
+                        <div style="font-size:12px;margin-top:4px;">Personality traits, decision weights, activity timeline</div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Bot Grid -->
-        <div class="cmd-section">
-            <div class="cmd-section-title">Connected Bots</div>
-            <div id="botGrid" class="bot-grid">
-                <div class="bot-grid-empty" id="botGridEmpty">
-                    <i class="fa-solid fa-robot" style="font-size: 48px; color: var(--text-muted); margin-bottom: 12px;"></i>
-                    <div style="color: var(--text-muted); font-size: 14px;">No bots connected</div>
-                    <div style="color: var(--text-muted); font-size: 12px; margin-top: 4px;">
-                        Waiting for AiBotAI instances to connect on TCP 3444...
-                    </div>
-                </div>
-            </div>
         </div>
-
-        <!-- Event Log -->
-        <div class="cmd-section">
-            <div class="d-flex align-items-center justify-content-between mb-1">
-                <div class="cmd-section-title" style="margin-bottom: 0;">Event Log</div>
-                <button class="btn-outline-subtle" id="btnClearLog" style="padding: 2px 8px; font-size: 11px;">Clear</button>
-            </div>
-            <div class="bot-event-log" id="eventLog"></div>
-        </div>
-
     </div>
 </div>
-</div>
-
 
 @section Scripts {
     <script src="~/js/bots.js" asp-append-version="true"></script>

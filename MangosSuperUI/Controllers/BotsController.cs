@@ -6,10 +6,12 @@ namespace MangosSuperUI.Controllers;
 public class BotsController : Controller
 {
     private readonly BotBridgeService _bridge;
+    private readonly BotBrainService _brain;
 
-    public BotsController(BotBridgeService bridge)
+    public BotsController(BotBridgeService bridge, BotBrainService brain)
     {
         _bridge = bridge;
+        _brain = brain;
     }
 
     public IActionResult Index()
@@ -18,11 +20,7 @@ public class BotsController : Controller
     }
 
     // ==================== REST API ====================
-    // These supplement the SignalR hub for non-realtime queries.
 
-    /// <summary>
-    /// GET /Bots/Api/States — snapshot of all bot states as JSON.
-    /// </summary>
     [HttpGet]
     public IActionResult States()
     {
@@ -35,23 +33,15 @@ public class BotsController : Controller
         });
     }
 
-    /// <summary>
-    /// GET /Bots/Api/State/{guid} — single bot state.
-    /// </summary>
     [HttpGet]
     public IActionResult State(int id)
     {
         var state = _bridge.GetBotState(id);
         if (state == null)
             return NotFound(new { error = $"Bot {id} not found" });
-
         return Json(state);
     }
 
-    /// <summary>
-    /// POST /Bots/Api/MoveTo — send MOVE_TO command.
-    /// Body: { guid, mapId, x, y, z }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> MoveTo([FromBody] MoveToRequest req)
     {
@@ -59,10 +49,6 @@ public class BotsController : Controller
         return Json(new { success = true });
     }
 
-    /// <summary>
-    /// POST /Bots/Api/SayText — make bot say text.
-    /// Body: { guid, text, chatType }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> SayText([FromBody] SayTextRequest req)
     {
@@ -72,10 +58,6 @@ public class BotsController : Controller
 
     // --- Phase 2.5 REST endpoints ---
 
-    /// <summary>
-    /// POST /Bots/AcceptQuest — bot accepts a quest.
-    /// Body: { guid, questId }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> AcceptQuest([FromBody] QuestRequest req)
     {
@@ -83,10 +65,6 @@ public class BotsController : Controller
         return Json(new { success = true, command = "ACCEPT_QUEST", req.Guid, req.QuestId });
     }
 
-    /// <summary>
-    /// POST /Bots/CompleteQuest — bot completes/turns in a quest.
-    /// Body: { guid, questId }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> CompleteQuest([FromBody] QuestRequest req)
     {
@@ -94,10 +72,6 @@ public class BotsController : Controller
         return Json(new { success = true, command = "COMPLETE_QUEST", req.Guid, req.QuestId });
     }
 
-    /// <summary>
-    /// POST /Bots/AbandonQuest — bot abandons a quest.
-    /// Body: { guid, questId }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> AbandonQuest([FromBody] QuestRequest req)
     {
@@ -105,10 +79,6 @@ public class BotsController : Controller
         return Json(new { success = true, command = "ABANDON_QUEST", req.Guid, req.QuestId });
     }
 
-    /// <summary>
-    /// POST /Bots/LearnSpell — bot learns a spell.
-    /// Body: { guid, spellId }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> LearnSpell([FromBody] LearnSpellRequest req)
     {
@@ -116,10 +86,6 @@ public class BotsController : Controller
         return Json(new { success = true, command = "LEARN_SPELL", req.Guid, req.SpellId });
     }
 
-    /// <summary>
-    /// POST /Bots/AttackTarget — bot attacks a creature.
-    /// Body: { guid, targetGuid }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> AttackTarget([FromBody] TargetRequest req)
     {
@@ -127,19 +93,68 @@ public class BotsController : Controller
         return Json(new { success = true, command = "ATTACK_TARGET", req.Guid, req.TargetGuid });
     }
 
-    /// <summary>
-    /// POST /Bots/InteractNpc — bot interacts with NPC.
-    /// Body: { guid, npcGuid }
-    /// </summary>
     [HttpPost]
     public async Task<IActionResult> InteractNpc([FromBody] TargetRequest req)
     {
         await _bridge.SendInteractNpcAsync(req.Guid, req.TargetGuid);
         return Json(new { success = true, command = "INTERACT_NPC", req.Guid, req.TargetGuid });
     }
+
+    [HttpPost]
+    public async Task<IActionResult> SetTaskGrind([FromBody] SetTaskGrindRequest req)
+    {
+        await _bridge.SendSetTaskGrindAsync(req.Guid, req.X, req.Y, req.Z, req.Radius, req.CreatureEntry, req.KillCount);
+        return Json(new { success = true, command = "SET_TASK_GRIND", req.Guid });
+    }
+
+    // ==================== BotBrain API ====================
+
+    /// <summary>
+    /// POST /Bots/ToggleBrain — enable/disable the behavioral engine.
+    /// </summary>
+    [HttpPost]
+    public IActionResult ToggleBrain(bool enabled)
+    {
+        _brain.BrainEnabled = enabled;
+        return Json(new { success = true, enabled = _brain.BrainEnabled });
+    }
+
+    /// <summary>
+    /// GET /Bots/BrainState/{guid} — get brain summary for a specific bot.
+    /// </summary>
+    [HttpGet("Bots/BrainState/{guid}")]
+    public IActionResult BrainState(int guid)
+    {
+        var summary = _brain.GetBotBrainSummary(guid);
+        if (summary == null)
+            return Json(new { guid, error = "No brain data for this bot" });
+        return Json(summary);
+    }
+
+    /// <summary>
+    /// GET /Bots/BrainStatus — overall brain engine status.
+    /// </summary>
+    [HttpGet]
+    public IActionResult BrainStatus()
+    {
+        return Json(new
+        {
+            enabled = _brain.BrainEnabled,
+            activeBots = _brain.ActiveBotCount,
+            bots = _brain.AllBots.Values.Select(b => new
+            {
+                guid = b.Guid,
+                name = b.Name,
+                level = b.Level,
+                activity = b.CurrentActivity.Type.ToString(),
+                copper = b.CopperBalance,
+                quirks = b.Personality.Quirks.Select(q => q.Name)
+            })
+        });
+    }
 }
 
-// ==================== Request DTOs ====================
+// ==================== Request DTOs (unchanged) ====================
 
 public class MoveToRequest
 {
@@ -157,8 +172,6 @@ public class SayTextRequest
     public int ChatType { get; set; }
 }
 
-// --- Phase 2.5 request DTOs ---
-
 public class QuestRequest
 {
     public int Guid { get; set; }
@@ -175,4 +188,15 @@ public class TargetRequest
 {
     public int Guid { get; set; }
     public int TargetGuid { get; set; }
+}
+
+public class SetTaskGrindRequest
+{
+    public int Guid { get; set; }
+    public float X { get; set; }
+    public float Y { get; set; }
+    public float Z { get; set; }
+    public float Radius { get; set; } = 60f;
+    public int CreatureEntry { get; set; }
+    public int KillCount { get; set; }
 }

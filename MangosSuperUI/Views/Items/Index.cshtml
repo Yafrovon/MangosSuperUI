@@ -100,10 +100,23 @@
                             <div class="text-center p-4 text-muted">Search to browse items</div>
                         </div>
                         <!-- Pagination -->
-                        <div class="card-footer d-flex align-items-center justify-content-between" id="paginationBar" style="display: none !important;">
-                            <button class="btn-outline-subtle btn-sm" id="btnPrevPage"><i class="fa-solid fa-chevron-left"></i> Prev</button>
-                            <span style="font-size: 12.5px; color: var(--text-secondary);" id="pageInfo"></span>
-                            <button class="btn-outline-subtle btn-sm" id="btnNextPage">Next <i class="fa-solid fa-chevron-right"></i></button>
+                        <div class="card-footer d-flex align-items-center justify-content-center gap-2" id="paginationBar" style="display: none !important;">
+                            <button class="btn-outline-subtle btn-sm" id="btnFirstPage" title="First page"><i class="fa-solid fa-angles-left"></i></button>
+                            <button class="btn-outline-subtle btn-sm" id="btnPrevPage" title="Previous page"><i class="fa-solid fa-chevron-left"></i></button>
+                            <div class="page-jump-group">
+                                <input type="number" id="pageJumpInput" class="page-jump-input" min="1" title="Jump to page" />
+                                <span class="page-jump-sep">of</span>
+                                <span class="page-jump-total" id="pageTotalLabel">1</span>
+                            </div>
+                            <button class="btn-outline-subtle btn-sm" id="btnNextPage" title="Next page"><i class="fa-solid fa-chevron-right"></i></button>
+                            <button class="btn-outline-subtle btn-sm" id="btnLastPage" title="Last page"><i class="fa-solid fa-angles-right"></i></button>
+                            <span class="page-size-sep">|</span>
+                            <select class="page-size-select" id="pageSizeSelect" title="Items per page">
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                                <option value="500">500</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -362,6 +375,17 @@
         .loot-chance-wrap { position: relative; }
         .loot-effective-hint { position: absolute; bottom: -13px; left: 0; right: 0; text-align: right; font-size: 9px; color: var(--text-muted); white-space: nowrap; }
         .loot-group-badge { font-size: 8px; padding: 0 4px; border-radius: 4px; background: rgba(255,170,0,0.12); color: var(--status-warning); font-weight: 700; vertical-align: middle; margin-left: 4px; }
+
+        /* ── Page Jump ── */
+        .page-jump-group { display: flex; align-items: center; gap: 6px; }
+        .page-jump-input { width: 52px; text-align: center; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 3px 4px; font-size: 12.5px; -moz-appearance: textfield; }
+        .page-jump-input::-webkit-outer-spin-button, .page-jump-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .page-jump-input:focus { border-color: var(--accent); outline: none; }
+        .page-jump-sep { font-size: 12px; color: var(--text-muted); }
+        .page-jump-total { font-size: 12.5px; color: var(--text-secondary); font-weight: 500; }
+        .page-size-sep { color: var(--border); font-size: 16px; margin: 0 2px; }
+        .page-size-select { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 3px 6px; font-size: 12px; cursor: pointer; }
+        .page-size-select:focus { border-color: var(--accent); outline: none; }
     </style>
 }
 

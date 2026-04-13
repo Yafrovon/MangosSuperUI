@@ -1,0 +1,87 @@
+{
+  "traits": [
+    {
+      "id": "patience",
+      "name": "Patience",
+      "description": "High = sticks with tasks longer, lower boredom escalation rate",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-hourglass-half",
+      "color": "#9ece6a"
+    },
+    {
+      "id": "greed",
+      "name": "Greed",
+      "description": "High = prioritizes gold, AH visits, vendor trips",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-coins",
+      "color": "#e0af68"
+    },
+    {
+      "id": "curiosity",
+      "name": "Curiosity",
+      "description": "High = explores, picks up side quests, wanders off-path",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-compass",
+      "color": "#7aa2f7"
+    },
+    {
+      "id": "sociability",
+      "name": "Sociability",
+      "description": "High = hangs out in towns, chats more, uses emotes",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-comments",
+      "color": "#bb9af7"
+    },
+    {
+      "id": "aggression",
+      "name": "Aggression",
+      "description": "High = engages more mobs, wider aggro range, less fleeing",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-crosshairs",
+      "color": "#f7768e"
+    },
+    {
+      "id": "efficiency",
+      "name": "Efficiency",
+      "description": "High = follows leveling guide closely, minimal detours",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-bolt",
+      "color": "#ff9e64"
+    },
+    {
+      "id": "cautiousness",
+      "name": "Cautiousness",
+      "description": "High = avoids orange/red mobs, eats at higher HP%",
+      "mean": 0.5,
+      "stdDev": 0.18,
+      "icon": "fa-shield-halved",
+      "color": "#73daca"
+    },
+    {
+      "id": "indecisiveness",
+      "name": "Indecisiveness",
+      "description": "High = shorter tick interval, re-evaluates decisions more often",
+      "mean": 0.4,
+      "stdDev": 0.15,
+      "icon": "fa-shuffle",
+      "color": "#c0caf5"
+    },
+    {
+      "id": "spontaneity",
+      "name": "Spontaneity",
+      "description": "High = 'change' options get a flat bonus on every tick",
+      "mean": 0.4,
+      "stdDev": 0.15,
+      "icon": "fa-dice",
+      "color": "#2ac3de"
+    }
+  ],
+  "chatStyles": ["terse", "chatty", "leetspeak", "rp", "newbie", "veteran", "casual"],
+  "temperaments": ["friendly", "grumpy", "helpful", "sarcastic", "quiet"]
+}

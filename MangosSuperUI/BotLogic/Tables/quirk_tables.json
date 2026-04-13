@@ -1,0 +1,76 @@
+{
+  "quirks": [
+    {
+      "id": "ah_addict",
+      "name": "AH Addict",
+      "description": "Visits the AH twice as often. Sometimes goes to AH with nothing to sell.",
+      "modifiers": { "Economy.AHVisitWeight": 2.0, "Economy.EmptyAHVisitChance": 0.15 }
+    },
+    {
+      "id": "chatty_kathy",
+      "name": "Chatty Kathy",
+      "description": "Initiates conversations with nearby players unprompted.",
+      "modifiers": { "Social.InitiateChatChance": 0.3, "Social.TownLoiterWeight": 1.5 }
+    },
+    {
+      "id": "completionist",
+      "name": "Completionist",
+      "description": "Never abandons a quest. Picks up every available quest in a hub.",
+      "modifiers": { "Questing.AbandonChance": 0.0, "Questing.PickUpAllAvailable": true }
+    },
+    {
+      "id": "scaredy_cat",
+      "name": "Scaredy Cat",
+      "description": "Flees at 40% HP instead of 20%. Avoids mobs more than 1 level above.",
+      "modifiers": { "Combat.FleeThreshold": 0.4, "Combat.MaxLevelDelta": 1 }
+    },
+    {
+      "id": "grinder",
+      "name": "Born Grinder",
+      "description": "Prefers grinding to questing. Higher weight to stay in grind spots.",
+      "modifiers": { "Questing.GrindPreference": 1.8, "Questing.QuestWeight": 0.6 }
+    },
+    {
+      "id": "afker",
+      "name": "AFK Andy",
+      "description": "Occasionally stops and does nothing for 1-5 minutes.",
+      "modifiers": { "Core.AFKChance": 0.05, "Core.AFKDurationMinutes": [1, 5] }
+    },
+    {
+      "id": "speed_demon",
+      "name": "Speed Demon",
+      "description": "Minimal loitering. Short vendor visits. Skips optional quests.",
+      "modifiers": { "Efficiency": 0.95, "Social.TownLoiterWeight": 0.2 }
+    },
+    {
+      "id": "explorer",
+      "name": "Wanderlust",
+      "description": "Sometimes walks to a random point in the zone just to look around.",
+      "modifiers": { "Exploration.RandomWanderChance": 0.2, "Exploration.WanderRadius": 200 }
+    },
+    {
+      "id": "vendor_hoarder",
+      "name": "Pack Rat",
+      "description": "Delays vendor visits. Accumulates more items before selling.",
+      "modifiers": { "Economy.VendorThreshold": 2.0, "Economy.VendorUrgency": 0.3 }
+    },
+    {
+      "id": "social_butterfly",
+      "name": "Social Butterfly",
+      "description": "Seeks out other bots/players. Uses /wave, /hello emotes near others.",
+      "modifiers": { "Social.ProximityEmoteChance": 0.4, "Social.SeekPlayersWeight": 1.5 }
+    },
+    {
+      "id": "leeroy",
+      "name": "Leeroy Jenkins",
+      "description": "Pulls extra mobs. Engages orange-level targets. Rarely flees.",
+      "modifiers": { "Combat.FleeThreshold": 0.08, "Combat.MaxLevelDelta": 4, "Aggression": 0.95 }
+    },
+    {
+      "id": "mount_collector",
+      "name": "Saver",
+      "description": "Hoards gold aggressively. Rarely buys from AH. Plans for level 40 mount.",
+      "modifiers": { "Economy.AHBuyWeight": 0.2, "Economy.GoldHoardingMultiplier": 1.5 }
+    }
+  ]
+}

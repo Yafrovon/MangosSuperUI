@@ -161,7 +161,7 @@ $(function () {
     }
 
     pollStatus();
-    setInterval(pollStatus, 10000);
+    setInterval(pollStatus, 20000);
 
     // ===================== DATABASE HEALTH (once on load) =====================
     function loadDbHealth() {

@@ -1,0 +1,14 @@
+{
+  "horde": {
+    "orc": ["Thrukk", "Gashnak", "Morkash", "Drakgor", "Zugtar", "Kargesh", "Brokfang", "Urglak", "Nazgrim", "Grommash", "Mankrik", "Saurfang", "Krogg", "Durogg", "Loktar", "Gornak", "Murgash", "Thokk", "Ragetotem", "Bloodhowl"],
+    "undead": ["Darkveil", "Rotsworth", "Bonechill", "Gravemind", "Plagueheart", "Dreadmore", "Ashford", "Coldthorn", "Witherton", "Blackmarsh", "Sepulcher", "Gloomweaver", "Corpsegrinder", "Nightshade", "Tombstalker", "Deathwhisper", "Blightcaller", "Shadowmend", "Grimhollow", "Pallid"],
+    "tauren": ["Thunderhoof", "Stonehide", "Earthwalker", "Spiritwind", "Sungraze", "Plainstrider", "Cloudchaser", "Rivermane", "Dawnrunner", "Stormhorn", "Wildmane", "Skychaser", "Totemguard", "Mistrunner", "Swifthooves", "Highbluff", "Redstone", "Bravebull", "Longstride", "Gentlehoof"],
+    "troll": ["Zuljan", "Darkspear", "Jintara", "Volkar", "Rashaki", "Zanzil", "Mojamba", "Tikalan", "Shazara", "Hexfang", "Jukambi", "Zarthak", "Raptari", "Shadowtusk", "Bloodfang", "Zuljin", "Hexxar", "Voodashi", "Mantiki", "Spiritclaw"]
+  },
+  "alliance": {
+    "human": ["Aldric", "Brantley", "Cedric", "Dunwick", "Elsworth", "Fairbanks", "Greystone", "Hartwell", "Irvington", "Jameston", "Kingsford", "Langston", "Merriwell", "Northcott", "Oakridge", "Pemberton", "Ravencrest", "Stoutmantle", "Thornbury", "Westfall"],
+    "dwarf": ["Ironbeard", "Stonemantle", "Copperkettle", "Thunderbrew", "Deepforge", "Hammerfall", "Bronzebeard", "Anvildark", "Coalfist", "Darkbarrel", "Flintstone", "Goldknuckle", "Hearthglow", "Ironhammer", "Kegsworth", "Moldbreaker", "Oreseeker", "Stoutbrew", "Steelpick", "Tunnelward"],
+    "nightelf": ["Shadowleaf", "Starbreeze", "Moonshadow", "Whisperwind", "Dawnstrider", "Nightbloom", "Silverthorn", "Moonwhisper", "Dreamweaver", "Starsong", "Owlfeather", "Spiritdancer", "Wildrunner", "Faeriefire", "Gladewalker", "Moonpetal", "Rainsinger", "Swiftarrow", "Thornmantle", "Willowshade"],
+    "gnome": ["Sparkwhistle", "Cogsworth", "Boltsworth", "Gizmotronic", "Sprocketeer", "Tinkmaster", "Wrenchwright", "Fusecutter", "Gearturn", "Brassbell", "Copperclank", "Diodezap", "Flickswitch", "Gyroscope", "Megavolt", "Nutdriver", "Pulsecrank", "Rivetpop", "Staticfuzz", "Widgetwhirl"]
+  }
+}

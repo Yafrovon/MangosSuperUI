@@ -4,6 +4,7 @@ $(function () {
 
     var currentPage = 1;
     var totalPages = 1;
+    var currentPageSize = parseInt(localStorage.getItem('msui_go_pageSize')) || 50;
     var currentModels = {};
     var currentDetailEntry = null;
     var currentDetailObj = null;
@@ -288,7 +289,7 @@ $(function () {
             typeFilter: $('#filterGoType').val() || undefined,
             customOnly: $('#chkCustomOnly').is(':checked') || undefined,
             page: currentPage,
-            pageSize: 50
+            pageSize: currentPageSize
         };
         Object.keys(params).forEach(function (k) { if (params[k] === undefined || params[k] === '' || params[k] === false) delete params[k]; });
 
@@ -328,9 +329,17 @@ $(function () {
 
             if (data.totalPages > 1) {
                 $('#goPaginationBar').show();
-                $('#goPageInfo').text('Page ' + data.page + ' of ' + data.totalPages);
+                $('#goPageJump').val(data.page).attr('max', data.totalPages);
+                $('#goPageTotal').text(data.totalPages);
+                $('#btnGoFirstPage').prop('disabled', data.page <= 1);
                 $('#btnGoPrevPage').prop('disabled', data.page <= 1);
                 $('#btnGoNextPage').prop('disabled', data.page >= data.totalPages);
+                $('#btnGoLastPage').prop('disabled', data.page >= data.totalPages);
+            } else if (data.objects.length > 0) {
+                $('#goPaginationBar').show();
+                $('#goPageJump').val(1).attr('max', 1);
+                $('#goPageTotal').text('1');
+                $('#btnGoFirstPage, #btnGoPrevPage, #btnGoNextPage, #btnGoLastPage').prop('disabled', true);
             } else {
                 $('#goPaginationBar').hide();
             }
@@ -821,8 +830,26 @@ $(function () {
     $('#btnSearchGo').on('click', function () { doSearch(1); });
     $('#goSearch').on('keydown', function (e) { if (e.key === 'Enter') doSearch(1); });
     $('#filterGoType').on('change', function () { doSearch(1); });
+    $('#btnGoFirstPage').on('click', function () { doSearch(1); });
     $('#btnGoPrevPage').on('click', function () { if (currentPage > 1) doSearch(currentPage - 1); });
     $('#btnGoNextPage').on('click', function () { if (currentPage < totalPages) doSearch(currentPage + 1); });
+    $('#btnGoLastPage').on('click', function () { doSearch(totalPages); });
+    $('#goPageJump').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+            var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, totalPages));
+            doSearch(p);
+        }
+    });
+    $('#goPageJump').on('blur', function () {
+        var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, totalPages));
+        if (p !== currentPage) doSearch(p);
+    });
+    $('#goPageSize').val(currentPageSize);
+    $('#goPageSize').on('change', function () {
+        currentPageSize = parseInt($(this).val()) || 50;
+        try { localStorage.setItem('msui_go_pageSize', currentPageSize); } catch (e) { }
+        doSearch(1);
+    });
 
     $(document).on('click', '.go-row', function () {
         if (editMode) return;

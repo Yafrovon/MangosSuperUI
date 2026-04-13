@@ -7,7 +7,8 @@ $(function () {
     var currentDb = null;
     var currentTable = null;
     var currentPage = 1;
-    var pageSize = 50;
+    var pageSize = parseInt(localStorage.getItem('msui_db_pageSize')) || 50;
+    var lastTotalPages = 1;
     var currentSort = null;
     var currentSortDir = 'asc';
     var currentFilterCol = null;
@@ -214,6 +215,7 @@ $(function () {
                 + '<span class="raw-name">' + esc(colName) + '</span>'
                 + '<span class="human-name">' + esc(hName || colName) + '</span>'
                 + sortIcon
+                + '<span class="col-resize-handle"></span>'
                 + '</th>';
         }
         html += '</tr></thead><tbody>';
@@ -241,6 +243,7 @@ $(function () {
 
         html += '</tbody></table>';
         $('#dataGrid').html(html);
+        applyColumnWidths();
     }
 
     // ===================== RENDER INSERT FORM =====================
@@ -344,21 +347,37 @@ $(function () {
     // ===================== RENDER PAGINATION =====================
 
     function renderPagination(data) {
-        if (!data || data.totalPages <= 1) {
-            $('#pagination').html('<span>' + (data ? data.totalRows.toLocaleString() : 0) + ' rows</span><div></div>');
+        lastTotalPages = data ? data.totalPages : 1;
+
+        if (!data || data.totalRows === 0) {
+            $('#pagination').html('<span>0 rows</span><div></div>');
             return;
         }
 
-        var html = '<span>Showing ' + ((data.page - 1) * data.pageSize + 1) + '–'
-            + Math.min(data.page * data.pageSize, data.totalRows) + ' of '
-            + data.totalRows.toLocaleString() + ' rows</span>';
+        var html = '';
+        if (data.totalPages > 1) {
+            html += '<span>Showing ' + ((data.page - 1) * data.pageSize + 1) + '–'
+                + Math.min(data.page * data.pageSize, data.totalRows) + ' of '
+                + data.totalRows.toLocaleString() + ' rows</span>';
+        } else {
+            html += '<span>' + data.totalRows.toLocaleString() + ' rows</span>';
+        }
 
         html += '<div class="db-page-btns">';
-        html += '<button id="btnPageFirst" ' + (data.page <= 1 ? 'disabled' : '') + '><i class="fa-solid fa-angles-left"></i></button>';
-        html += '<button id="btnPagePrev" ' + (data.page <= 1 ? 'disabled' : '') + '><i class="fa-solid fa-chevron-left"></i></button>';
-        html += '<span style="padding: 5px 10px; font-size: 12px;">' + data.page + ' / ' + data.totalPages + '</span>';
-        html += '<button id="btnPageNext" ' + (data.page >= data.totalPages ? 'disabled' : '') + '><i class="fa-solid fa-chevron-right"></i></button>';
-        html += '<button id="btnPageLast" ' + (data.page >= data.totalPages ? 'disabled' : '') + '><i class="fa-solid fa-angles-right"></i></button>';
+        if (data.totalPages > 1) {
+            html += '<button id="btnPageFirst" ' + (data.page <= 1 ? 'disabled' : '') + '><i class="fa-solid fa-angles-left"></i></button>';
+            html += '<button id="btnPagePrev" ' + (data.page <= 1 ? 'disabled' : '') + '><i class="fa-solid fa-chevron-left"></i></button>';
+            html += '<input type="number" id="dbPageJump" class="db-page-jump" value="' + data.page + '" min="1" max="' + data.totalPages + '" title="Jump to page" />';
+            html += '<span class="db-page-sep">of ' + data.totalPages + '</span>';
+            html += '<button id="btnPageNext" ' + (data.page >= data.totalPages ? 'disabled' : '') + '><i class="fa-solid fa-chevron-right"></i></button>';
+            html += '<button id="btnPageLast" ' + (data.page >= data.totalPages ? 'disabled' : '') + '><i class="fa-solid fa-angles-right"></i></button>';
+        }
+        html += '<span class="db-page-size-sep">|</span>';
+        html += '<select id="dbPageSize" class="db-page-size-select" title="Rows per page">';
+        [50, 100, 200, 500].forEach(function (n) {
+            html += '<option value="' + n + '"' + (pageSize === n ? ' selected' : '') + '>' + n + '</option>';
+        });
+        html += '</select>';
         html += '</div>';
 
         $('#pagination').html(html);
@@ -409,7 +428,10 @@ $(function () {
 
     // ===================== SORTING =====================
 
-    $(document).on('click', '.db-grid th[data-col]', function () {
+    var _justResized = false;
+    $(document).on('click', '.db-grid th[data-col]', function (e) {
+        // Don't sort if the click originated from the resize handle
+        if (_justResized || $(e.target).hasClass('col-resize-handle')) return;
         var col = $(this).data('col');
         if (currentSort === col) {
             currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
@@ -1445,10 +1467,24 @@ $(function () {
     $(document).on('click', '#btnPagePrev', function () { if (currentPage > 1) { currentPage--; loadData(); } });
     $(document).on('click', '#btnPageNext', function () { currentPage++; loadData(); });
     $(document).on('click', '#btnPageLast', function () {
-        // We need totalPages — stored from last render
-        var totalPagesText = $('#pagination .db-page-btns span').text();
-        var parts = totalPagesText.split('/');
-        if (parts.length === 2) currentPage = parseInt(parts[1].trim()) || 1;
+        currentPage = lastTotalPages;
+        loadData();
+    });
+    $(document).on('keydown', '#dbPageJump', function (e) {
+        if (e.key === 'Enter') {
+            var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, lastTotalPages));
+            currentPage = p;
+            loadData();
+        }
+    });
+    $(document).on('blur', '#dbPageJump', function () {
+        var p = Math.max(1, Math.min(parseInt($(this).val()) || 1, lastTotalPages));
+        if (p !== currentPage) { currentPage = p; loadData(); }
+    });
+    $(document).on('change', '#dbPageSize', function () {
+        pageSize = parseInt($(this).val()) || 50;
+        try { localStorage.setItem('msui_db_pageSize', pageSize); } catch (e) { }
+        currentPage = 1;
         loadData();
     });
 
@@ -1679,6 +1715,91 @@ $(function () {
         $('body').append(el);
         setTimeout(function () { el.fadeOut(300, function () { el.remove(); }); }, 3000);
     }
+
+    // ===================== COLUMN RESIZE =====================
+
+    var colWidths = {}; // { "db.table": { "col1": 180, "col2": 300 } }
+    try { colWidths = JSON.parse(localStorage.getItem('msui_db_colWidths') || '{}'); } catch (e) { }
+
+    function colWidthKey() {
+        return currentDb + '.' + currentTable;
+    }
+
+    function applyColumnWidths() {
+        var table = $('.db-grid');
+        if (!table.length) return;
+
+        var saved = colWidths[colWidthKey()] || {};
+        var hasSaved = Object.keys(saved).length > 0;
+
+        // Switch to fixed layout only when we have saved widths
+        if (hasSaved) {
+            table.css('table-layout', 'fixed');
+            table.find('thead th[data-col]').each(function () {
+                var col = $(this).data('col');
+                if (saved[col]) {
+                    $(this).css('width', saved[col] + 'px');
+                }
+            });
+        } else {
+            table.css('table-layout', 'auto');
+        }
+    }
+
+    function saveColumnWidths() {
+        var key = colWidthKey();
+        var widths = {};
+        $('.db-grid thead th[data-col]').each(function () {
+            widths[$(this).data('col')] = $(this).outerWidth();
+        });
+        colWidths[key] = widths;
+        try { localStorage.setItem('msui_db_colWidths', JSON.stringify(colWidths)); } catch (e) { }
+    }
+
+    // Drag-to-resize via mousedown on the resize handle
+    (function () {
+        var resizing = false;
+        var resizeTh = null;
+        var startX = 0;
+        var startW = 0;
+
+        $(document).on('mousedown', '.col-resize-handle', function (e) {
+            e.preventDefault();
+            e.stopPropagation(); // Don't trigger sort
+            resizing = true;
+            resizeTh = $(this).closest('th');
+            startX = e.pageX;
+            startW = resizeTh.outerWidth();
+
+            // Snapshot all current column widths and switch to fixed layout
+            var table = $('.db-grid');
+            table.css('table-layout', 'fixed');
+            table.find('thead th[data-col]').each(function () {
+                $(this).css('width', $(this).outerWidth() + 'px');
+            });
+            // Also set the row-number column
+            table.find('thead th:first-child').css('width', table.find('thead th:first-child').outerWidth() + 'px');
+
+            $('body').addClass('col-resizing');
+        });
+
+        $(document).on('mousemove', function (e) {
+            if (!resizing || !resizeTh) return;
+            var diff = e.pageX - startX;
+            var newW = Math.max(40, startW + diff);
+            resizeTh.css('width', newW + 'px');
+        });
+
+        $(document).on('mouseup', function () {
+            if (!resizing) return;
+            resizing = false;
+            resizeTh = null;
+            $('body').removeClass('col-resizing');
+            saveColumnWidths();
+            _justResized = true;
+            setTimeout(function () { _justResized = false; }, 50);
+        });
+    })();
 
     // ===================== INIT =====================
 

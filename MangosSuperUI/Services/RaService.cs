@@ -12,6 +12,14 @@ public class RaService : IDisposable
     private readonly RemoteAccessSettings _settings;
     private readonly ILogger<RaService> _logger;
     private bool _authenticated;
+    private Timer? _keepAliveTimer;
+    private DateTime _lastCommandUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// How often the keepalive timer fires (seconds).
+    /// Must be well under mangosd's RA idle timeout (~60s).
+    /// </summary>
+    private const int KeepAliveIntervalSec = 25;
 
     public bool IsConnected => _client?.Connected == true && _authenticated;
 
@@ -33,6 +41,7 @@ public class RaService : IDisposable
             await _stream.FlushAsync(ct);
 
             var raw = await ReadResponseAsync(ct);
+            _lastCommandUtc = DateTime.UtcNow;
             return CleanResponse(raw);
         }
         catch (Exception ex)
@@ -81,12 +90,68 @@ public class RaService : IDisposable
         await ReadResponseAsync(ct);
 
         _authenticated = true;
+        _lastCommandUtc = DateTime.UtcNow;
         _logger.LogInformation("RA connection established and authenticated");
+
+        // Start keepalive timer to prevent mangosd from closing the idle connection
+        StartKeepAlive();
+    }
+
+    /// <summary>
+    /// Starts (or restarts) a timer that sends a lightweight command to keep
+    /// the RA socket alive. Only fires if no real command has been sent recently.
+    /// </summary>
+    private void StartKeepAlive()
+    {
+        _keepAliveTimer?.Dispose();
+        _keepAliveTimer = new Timer(KeepAliveTick, null,
+            TimeSpan.FromSeconds(KeepAliveIntervalSec),
+            TimeSpan.FromSeconds(KeepAliveIntervalSec));
+    }
+
+    private async void KeepAliveTick(object? state)
+    {
+        // Skip if a real command was sent recently
+        var elapsed = DateTime.UtcNow - _lastCommandUtc;
+        if (elapsed.TotalSeconds < KeepAliveIntervalSec - 2)
+            return;
+
+        // Try to acquire semaphore without blocking — if something else is
+        // using the connection right now, it's already alive, skip this tick.
+        if (!await _semaphore.WaitAsync(0))
+            return;
+
+        try
+        {
+            if (!IsConnected || _stream == null)
+                return;
+
+            // Send a newline — mangosd RA treats it as a no-op but resets
+            // the idle timer. Much cheaper than a full ".server info".
+            var ping = Encoding.UTF8.GetBytes("\n");
+            await _stream.WriteAsync(ping);
+            await _stream.FlushAsync();
+
+            // Drain any prompt/echo that comes back (the mangos> prompt)
+            await ReadResponseAsync(default);
+            _lastCommandUtc = DateTime.UtcNow;
+
+            _logger.LogDebug("RA keepalive sent");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "RA keepalive failed — connection will reconnect on next command");
+            Disconnect();
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
     }
 
     /// <summary>
     /// Reads from the stream until no more data arrives within the idle timeout.
-    /// VMaNGOS RA has no prompt � we detect end-of-response by silence.
+    /// VMaNGOS RA has no prompt — we detect end-of-response by silence.
     /// </summary>
     private async Task<string> ReadResponseAsync(CancellationToken ct)
     {
@@ -113,7 +178,7 @@ public class RaService : IDisposable
             }
             catch (OperationCanceledException) when (!overallCts.Token.IsCancellationRequested)
             {
-                // Idle timeout � no more data coming, response is complete
+                // Idle timeout — no more data coming, response is complete
                 break;
             }
             catch (OperationCanceledException)
@@ -151,6 +216,8 @@ public class RaService : IDisposable
     private void Disconnect()
     {
         _authenticated = false;
+        _keepAliveTimer?.Dispose();
+        _keepAliveTimer = null;
         try { _stream?.Dispose(); } catch { }
         try { _client?.Dispose(); } catch { }
         _stream = null;
