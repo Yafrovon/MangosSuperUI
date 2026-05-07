@@ -36,6 +36,11 @@ $(function () {
             // Maps Data
             $('#cfgMapsDataPath').val(s.vmangos.mapsDataPath);
 
+            // Spell Creator Paths
+            $('#cfgClientM2Path').val(s.vmangos.clientM2Path);
+            $('#cfgClientDataPath').val(s.vmangos.clientDataPath);
+            $('#cfgPatchOutputPath').val(s.vmangos.patchOutputPath);
+
             // Backup
             $('#cfgBackupDir').val(s.vmangos.backupDirectory);
             $('#cfgSourcePath').val(s.vmangos.vmangosSourcePath);
@@ -43,6 +48,23 @@ $(function () {
 
             // Kestrel
             $('#cfgKestrelUrl').val(s.kestrel.url);
+
+            // AI Services
+            if (s.spellCreator) {
+                // ComfyUI nodes
+                renderComfyNodes(s.spellCreator.comfyUI ? s.spellCreator.comfyUI.nodes : []);
+                $('#cfgClipModel2').val(s.spellCreator.comfyUI ? s.spellCreator.comfyUI.clipModel2 : '');
+
+                // Ollama
+                if (s.spellCreator.ollama) {
+                    $('#cfgOllamaUrl').val(s.spellCreator.ollama.baseUrl);
+                    $('#cfgOllamaModel').val(s.spellCreator.ollama.model);
+                }
+
+                // Vanilla BLP paths
+                $('#cfgRawBlpPath').val(s.spellCreator.rawBlpPath || '');
+                $('#cfgSpellDataPath').val(s.spellCreator.dataPath || '');
+            }
 
             // Status
             if (data.overrideExists) {
@@ -56,27 +78,145 @@ $(function () {
             }
         });
 
-        // Also load DBC status
+        // Also load DBC status + ComfyUI pool status
         loadDbcStatus();
+        loadComfyStatus();
+    }
+
+    // ===================== COMFYUI NODE MANAGEMENT =====================
+
+    function renderComfyNodes(nodes) {
+        var $container = $('#comfyNodesContainer');
+        $container.empty();
+
+        if (!nodes || nodes.length === 0) {
+            nodes = [{ name: '', baseUrl: '' }];
+        }
+
+        nodes.forEach(function (node, idx) {
+            $container.append(buildNodeRow(node.name, node.baseUrl, idx));
+        });
+    }
+
+    function buildNodeRow(name, url, idx) {
+        return '<div class="comfy-node-row" data-node-idx="' + idx + '">' +
+            '<input type="text" class="form-input node-name-input" placeholder="Name" value="' + escapeAttr(name) + '" />' +
+            '<input type="text" class="form-input node-url-input" placeholder="http://192.168.0.244:8188" value="' + escapeAttr(url) + '" />' +
+            '<span class="node-status-dot" title="Unknown" style="background: var(--text-muted);"></span>' +
+            '<button class="btn-remove-node" title="Remove node"><i class="fa-solid fa-xmark"></i></button>' +
+            '</div>';
+    }
+
+    // Add node button
+    $('#btnAddComfyNode').on('click', function () {
+        var idx = $('#comfyNodesContainer .comfy-node-row').length;
+        $('#comfyNodesContainer').append(buildNodeRow('', '', idx));
+    });
+
+    // Remove node button (delegated)
+    $('#comfyNodesContainer').on('click', '.btn-remove-node', function () {
+        var $rows = $('#comfyNodesContainer .comfy-node-row');
+        if ($rows.length <= 1) {
+            showMessage('error', 'At least one ComfyUI node is required.');
+            return;
+        }
+        $(this).closest('.comfy-node-row').remove();
+    });
+
+    // Collect node data from UI
+    function getComfyNodesFromUI() {
+        var nodes = [];
+        $('#comfyNodesContainer .comfy-node-row').each(function () {
+            var name = $(this).find('.node-name-input').val().trim();
+            var url = $(this).find('.node-url-input').val().trim();
+            if (url) {
+                nodes.push({ name: name || ('node' + (nodes.length + 1)), baseUrl: url });
+            }
+        });
+        return nodes;
+    }
+
+    // ===================== COMFYUI POOL STATUS =====================
+
+    function loadComfyStatus() {
+        $.getJSON('/Settings/ComfyPoolStatus', function (data) {
+            var $panel = $('#comfyStatusPanel');
+            var $row = $('#comfyStatusRow');
+
+            if (data && data.length > 0) {
+                var chips = '';
+                data.forEach(function (node) {
+                    var color = node.online
+                        ? (node.busy ? 'var(--status-warning)' : 'var(--status-online)')
+                        : 'var(--status-error)';
+                    var label = node.online
+                        ? (node.busy ? 'Busy (' + node.running + ' running, ' + node.pending + ' queued)' : 'Idle')
+                        : (node.error ? 'Offline: ' + node.error : 'Offline');
+
+                    chips += '<span class="dbc-count-chip">' +
+                        '<span class="node-status-dot" style="background: ' + color + ';"></span> ' +
+                        escapeHtml(node.name) + ': <span class="count-val">' + escapeHtml(label) + '</span></span> ';
+                });
+
+                $row.html(
+                    '<i class="fa-solid fa-circle-check" style="font-size: 13px; color: var(--status-online);"></i>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">ComfyUI node pool</span>' +
+                    '<div class="d-flex flex-wrap gap-2 mt-2">' + chips + '</div>'
+                );
+
+                var allOnline = data.every(function (n) { return n.online; });
+                $panel.css('border-left', '3px solid ' + (allOnline ? 'var(--status-online)' : 'var(--status-warning)'));
+
+                // Also update the dots next to each node row
+                data.forEach(function (node) {
+                    $('#comfyNodesContainer .comfy-node-row').each(function () {
+                        var rowUrl = $(this).find('.node-url-input').val().trim().replace(/\/+$/, '');
+                        var nodeUrl = (node.baseUrl || '').replace(/\/+$/, '');
+                        if (rowUrl && nodeUrl && rowUrl === nodeUrl) {
+                            var dotColor = node.online
+                                ? (node.busy ? 'var(--status-warning)' : 'var(--status-online)')
+                                : 'var(--status-error)';
+                            var dotTitle = node.online
+                                ? (node.busy ? 'Busy' : 'Idle')
+                                : 'Offline';
+                            $(this).find('.node-status-dot')
+                                .css('background', dotColor)
+                                .attr('title', dotTitle);
+                        }
+                    });
+                });
+            } else {
+                $row.html(
+                    '<i class="fa-solid fa-circle-xmark" style="font-size: 13px; color: var(--text-muted);"></i>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">No ComfyUI nodes configured</span>'
+                );
+                $panel.css('border-left', '3px solid var(--text-muted)');
+            }
+        }).fail(function () {
+            $('#comfyStatusRow').html(
+                '<i class="fa-solid fa-circle-xmark" style="font-size: 13px; color: var(--status-error);"></i>' +
+                '<span style="font-size: 12.5px; color: var(--text-secondary);">Could not reach ComfyUI status endpoint</span>'
+            );
+            $('#comfyStatusPanel').css('border-left', '3px solid var(--status-error)');
+        });
     }
 
     // ===================== DBC STATUS =====================
+
     function loadDbcStatus() {
         $.getJSON('/Dbc/Status', function (data) {
             var $panel = $('#dbcStatusPanel');
             var $row = $('#dbcStatusRow');
 
-            if (data.isLoaded) {
+            if (data.loaded) {
                 var chips = '';
-                if (data.counts) {
-                    $.each(data.counts, function (name, count) {
-                        chips += '<span class="dbc-count-chip">' + escapeHtml(name) +
-                            ': <span class="count-val">' + count.toLocaleString() + '</span></span> ';
-                    });
+                for (var dbcName in data.counts) {
+                    chips += '<span class="dbc-count-chip">' + escapeHtml(dbcName) +
+                        ': <span class="count-val">' + data.counts[dbcName] + '</span></span> ';
                 }
                 $row.html(
                     '<i class="fa-solid fa-circle-check" style="font-size: 13px; color: var(--status-online);"></i>' +
-                    '<span style="font-size: 12.5px; color: var(--text-secondary);">DBC files loaded from <code>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">DBC loaded from <code>' +
                     escapeHtml(data.dbcPath) + '</code></span>' +
                     '<div class="d-flex flex-wrap gap-2 mt-2">' + chips + '</div>'
                 );
@@ -161,9 +301,24 @@ $(function () {
                 logsDir: $('#cfgLogsDir').val() || '',
                 dbcPath: $('#cfgDbcPath').val() || '',
                 mapsDataPath: $('#cfgMapsDataPath').val() || '',
+                clientM2Path: $('#cfgClientM2Path').val() || '',
+                clientDataPath: $('#cfgClientDataPath').val() || '',
+                patchOutputPath: $('#cfgPatchOutputPath').val() || '',
                 backupDirectory: $('#cfgBackupDir').val() || '',
                 vmangosSourcePath: $('#cfgSourcePath').val() || '',
                 vmangosSqlPath: $('#cfgSqlPath').val() || ''
+            },
+            spellCreator: {
+                comfyUI: {
+                    nodes: getComfyNodesFromUI(),
+                    clipModel2: $('#cfgClipModel2').val() || ''
+                },
+                ollama: {
+                    baseUrl: $('#cfgOllamaUrl').val() || '',
+                    model: $('#cfgOllamaModel').val() || ''
+                },
+                rawBlpPath: $('#cfgRawBlpPath').val() || '',
+                dataPath: $('#cfgSpellDataPath').val() || ''
             },
             kestrel: {
                 url: $('#cfgKestrelUrl').val()
@@ -237,6 +392,10 @@ $(function () {
         var div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function escapeAttr(text) {
+        return (text || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // ===================== INIT =====================

@@ -7,10 +7,15 @@ namespace MangosSuperUI.BotLogic.Domains;
 /// C# controls engagement decisions and post-combat behavior.
 /// On enter: sends SET_TASK GRIND to C++ so the bot autonomously patrols + kills.
 /// On exit: the orchestrator (BotBrainService) sends SET_TASK IDLE to clear the grind.
+///
+/// Session 8: Vendoring weight uses state.FreeSlots thresholds instead of flat 0.1.
+/// Same fix as QuestingDomain Session 7 — ShadowInventory.Count was deprecated.
 /// </summary>
 public class CombatDomain : IBotDomain
 {
     public ActivityType[] OwnedActivities => new[] { ActivityType.Grinding };
+
+    public bool IsOperational => true;
 
     public Dictionary<ActivityType, float> EvaluateTransitions(BotIdentity bot, BotStateSnapshot state)
     {
@@ -40,8 +45,27 @@ public class CombatDomain : IBotDomain
 
         weights[ActivityType.Grinding] = stayWeight;
         weights[ActivityType.Questing] = 0.3f;
-        weights[ActivityType.Vendoring] = 0.1f;
         weights[ActivityType.Exploring] = 0.05f;
+
+        // --- Vendoring weight: FreeSlots thresholds (Session 8 fix) ---
+        // Previously flat 0.1 — bots would never proactively vendor from combat.
+        // These weights are NOT suppressed by combat lock since we already checked
+        // InCombat above and returned early.
+        //
+        // Session 9 fix: Don't push vendoring if bags are nearly empty (nothing to sell).
+        uint usedSlots = state.TotalSlots - state.FreeSlots;
+        if (usedSlots <= 2)
+        {
+            weights[ActivityType.Vendoring] = 0f;
+        }
+        else if (state.FreeSlots == 0)
+            weights[ActivityType.Vendoring] = 12.0f; // override everything — can't loot
+        else if (state.FreeSlots <= 3)
+            weights[ActivityType.Vendoring] = 7.0f;
+        else if (state.FreeSlots <= 6)
+            weights[ActivityType.Vendoring] = 2.0f;
+        else
+            weights[ActivityType.Vendoring] = 0.1f;
 
         return weights;
     }

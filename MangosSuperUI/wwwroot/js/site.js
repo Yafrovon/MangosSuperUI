@@ -74,14 +74,16 @@
 
     // Default group order + item order within each group
     var DEFAULT_ORDER = {
-        groups: ['operations', 'server', 'content', 'downloads', 'bots', 'data'],
+        groups: ['operations', 'server', 'spells', 'world', 'content', 'bots', 'data', 'downloads'],
         items: {
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
             server: ['activity', 'serverlogs', 'livelogs', 'config', 'backup'],
-            content: ['worldmap', 'items', 'spells', 'gameobjects', 'loottuner', 'instances', 'lootifier'],
-            downloads: ['downloads-page'],
+            spells: ['spells', 'patch', 'visuallab'],
+            world: ['worldmap', 'worldviewer'],
+            content: ['items', 'gameobjects', 'loottuner', 'instances', 'lootifier'],
             bots: ['bots-dashboard'],
-            data: ['database', 'functiongraph']
+            data: ['database', 'sourcemap'],
+            downloads: ['downloads-page']
         }
     };
 
@@ -340,9 +342,11 @@
         var groupNames = {
             operations: 'Operations',
             server: 'Server',
+            spells: 'Spells',
             content: 'Content',
-            downloads: 'Downloads & Uploads',
-            data: 'Data'
+            bots: 'AI Bots',
+            data: 'Data',
+            downloads: 'Downloads & Uploads'
         };
 
         // Item display info (key -> {icon, label})
@@ -359,14 +363,17 @@
             backup: { icon: 'fa-hard-drive', label: 'Backups' },
             worldmap: { icon: 'fa-map-location-dot', label: 'World Map' },
             items: { icon: 'fa-box-open', label: 'Items' },
-            spells: { icon: 'fa-wand-magic-sparkles', label: 'Spells' },
+            spells: { icon: 'fa-book-open', label: 'Spell Editor' },
+            patch: { icon: 'fa-wand-sparkles', label: 'Spell Creator' },
+            visuallab: { icon: 'fa-cube', label: 'Spell Visualizer' },
             gameobjects: { icon: 'fa-cubes', label: 'Game Objects' },
             loottuner: { icon: 'fa-dice-d20', label: 'Loot Tuner' },
             instances: { icon: 'fa-dungeon', label: 'Instance Loot' },
             lootifier: { icon: 'fa-dragon', label: 'ARPG Lootifier' },
             'downloads-page': { icon: 'fa-arrow-down-to-line', label: 'Downloads' },
+            'bots-dashboard': { icon: 'fa-robot', label: 'AI Bots' },
             database: { icon: 'fa-database', label: 'Database Explorer' },
-            functiongraph: { icon: 'fa-project-diagram', label: 'Function Graph' }
+            sourcemap: { icon: 'fa-sitemap', label: 'Source Map' }
         };
 
         order.groups.forEach(function (groupKey) {
@@ -528,19 +535,21 @@
         var groupNames = {
             operations: 'Operations',
             server: 'Server',
+            spells: 'Spells',
             content: 'Content',
-            downloads: 'Downloads & Uploads',
             bots: 'AI Bots',
-            data: 'Data'
+            data: 'Data',
+            downloads: 'Downloads & Uploads'
         };
 
         var groupIcons = {
             operations: 'fa-gauge',
             server: 'fa-server',
+            spells: 'fa-wand-sparkles',
             content: 'fa-box-open',
-            downloads: 'fa-arrow-down-to-line',
             bots: 'fa-robot',
-            data: 'fa-database'
+            data: 'fa-database',
+            downloads: 'fa-arrow-down-to-line'
         };
 
         order.groups.forEach(function (groupKey) {

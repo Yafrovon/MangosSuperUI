@@ -130,17 +130,34 @@ $(function () {
     });
 
     // ===================== STATUS POLLING =====================
+    var firstPollDone = false;
+
     function pollStatus() {
         $.getJSON('/Home/Status', function (data) {
             // mangosd process
             var mRunning = data.mangosd && data.mangosd.isRunning;
             $('#mangosdStatus').removeClass('online offline').addClass(mRunning ? 'online' : 'offline');
-            $('#mangosdText').text(mRunning ? 'Running (PID ' + data.mangosd.pid + ')' : 'Offline');
+            var mText = 'Offline';
+            if (mRunning) {
+                mText = 'Running (PID ' + data.mangosd.pid + ')';
+                // Show resolved name if different from what you'd expect
+                if (data.mangosd.processName) {
+                    mText += ' · ' + data.mangosd.processName;
+                }
+            }
+            $('#mangosdText').text(mText);
 
             // realmd process
             var rRunning = data.realmd && data.realmd.isRunning;
             $('#realmdStatus').removeClass('online offline').addClass(rRunning ? 'online' : 'offline');
-            $('#realmdText').text(rRunning ? 'Running (PID ' + data.realmd.pid + ')' : 'Offline');
+            var rText = 'Offline';
+            if (rRunning) {
+                rText = 'Running (PID ' + data.realmd.pid + ')';
+                if (data.realmd.processName) {
+                    rText += ' · ' + data.realmd.processName;
+                }
+            }
+            $('#realmdText').text(rText);
 
             // RA
             $('#raStatus').removeClass('online offline error').addClass(data.raConnected ? 'online' : 'offline');
@@ -157,6 +174,16 @@ $(function () {
             $('#totalCharacters').text(data.totalCharacters != null ? data.totalCharacters : '—');
             $('#gmAccounts').text(data.gmAccounts != null ? data.gmAccounts : '—');
             $('#bannedAccounts').text(data.bannedAccounts != null ? data.bannedAccounts : '—');
+
+            // On first poll, check if things look broken → auto-run diagnose
+            if (!firstPollDone) {
+                firstPollDone = true;
+                var allDown = !mRunning && !rRunning && !data.raConnected;
+                if (allDown) {
+                    // Probably first run or misconfigured — auto-diagnose
+                    runDiagnose(true);
+                }
+            }
         });
     }
 
@@ -235,6 +262,94 @@ $(function () {
     }
 
     loadDbHealth();
+
+    // ===================== DIAGNOSE =====================
+
+    $('#btnDiagnose').on('click', function () { runDiagnose(false); });
+
+    function runDiagnose(isAutoRun) {
+        var $btn = $('#btnDiagnose');
+        var $panel = $('#diagPanel');
+        var $body = $('#diagBody');
+
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Diagnosing...');
+        $panel.slideDown(200);
+        $body.html('<div style="color: var(--text-muted); font-size: 12.5px;"><i class="fa-solid fa-spinner fa-spin"></i> Running diagnostics...</div>');
+
+        $.getJSON('/Home/Diagnose', function (data) {
+            var html = '';
+
+            // Show first-run banner if detected
+            if (data.summary.isFirstRun) {
+                $('#setupBanner').slideDown(200);
+            }
+
+            // Group checks by category
+            var categoryOrder = ['config', 'process', 'ra', 'database', 'paths', 'assets'];
+            var categoryLabels = {
+                config: 'Configuration',
+                process: 'Processes',
+                ra: 'Remote Access',
+                database: 'Databases',
+                paths: 'Server Paths',
+                assets: 'Static Assets'
+            };
+
+            for (var ci = 0; ci < categoryOrder.length; ci++) {
+                var cat = categoryOrder[ci];
+                var catChecks = data.checks.filter(function (c) { return c.category === cat; });
+                if (catChecks.length === 0) continue;
+
+                html += '<div style="font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-top: 12px; margin-bottom: 4px;">';
+                html += escapeHtml(categoryLabels[cat] || cat);
+                html += '</div>';
+
+                for (var i = 0; i < catChecks.length; i++) {
+                    html += renderCheck(catChecks[i]);
+                }
+            }
+
+            $body.html(html);
+
+            // Summary badge
+            var s = data.summary;
+            var summaryText = s.ok + ' ok';
+            if (s.warnings > 0) summaryText += ', ' + s.warnings + ' warning' + (s.warnings > 1 ? 's' : '');
+            if (s.errors > 0) summaryText += ', ' + s.errors + ' error' + (s.errors > 1 ? 's' : '');
+            $('#diagSummary').text('(' + summaryText + ')');
+
+            // Border color
+            var borderColor = s.errors > 0 ? 'var(--status-error)'
+                : s.warnings > 0 ? 'var(--status-warning)'
+                    : 'var(--status-online)';
+            $panel.css('border-left-color', borderColor);
+
+        }).fail(function () {
+            $body.html('<div style="color: var(--status-error); font-size: 12.5px;"><i class="fa-solid fa-circle-xmark"></i> Diagnostics endpoint unreachable</div>');
+        }).always(function () {
+            $btn.prop('disabled', false).html('<i class="fa-solid fa-stethoscope"></i> Diagnose');
+        });
+    }
+
+    function renderCheck(check) {
+        var iconMap = {
+            ok: '<i class="fa-solid fa-circle-check" style="color: var(--status-online);"></i>',
+            warning: '<i class="fa-solid fa-triangle-exclamation" style="color: var(--status-warning);"></i>',
+            error: '<i class="fa-solid fa-circle-xmark" style="color: var(--status-error);"></i>',
+            info: '<i class="fa-solid fa-circle-info" style="color: var(--text-muted);"></i>'
+        };
+
+        var html = '<div class="diag-check">';
+        html += '<div class="diag-icon">' + (iconMap[check.status] || iconMap.info) + '</div>';
+        html += '<div class="diag-content">';
+        html += '<div class="diag-name">' + escapeHtml(check.name) + '</div>';
+        html += '<div class="diag-detail">' + escapeHtml(check.detail) + '</div>';
+        if (check.fix) {
+            html += '<div class="diag-fix">' + escapeHtml(check.fix) + '</div>';
+        }
+        html += '</div></div>';
+        return html;
+    }
 
     // ===================== UTILITY =====================
     function escapeHtml(text) {

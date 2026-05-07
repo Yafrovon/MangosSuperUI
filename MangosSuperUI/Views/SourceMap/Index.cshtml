@@ -1,0 +1,1544 @@
+@{
+    ViewData["Title"] = "Source Map";
+}
+
+@section Styles {
+    <style>
+        /* ---- Source Map Explorer Scoped Styles ---- */
+        /* Evolved from Function Graph — adds type/enum cards, body preview, trace export */
+
+        #smSidebar {
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sm-sidebar-search {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-sidebar-search input {
+                width: 100%;
+                padding: 7px 10px 7px 32px;
+                border: 1px solid var(--border-light);
+                border-radius: var(--radius-md);
+                font-size: 12.5px;
+                color: var(--text-primary);
+                background: var(--bg-card-alt) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%238d96a0' viewBox='0 0 512 512'%3E%3Cpath d='M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208z'/%3E%3C/svg%3E") no-repeat 10px center;
+                background-size: 13px;
+                transition: border-color var(--transition-fast);
+            }
+
+                .sm-sidebar-search input:focus {
+                    outline: none;
+                    border-color: var(--accent);
+                }
+
+        .sm-sidebar-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-sidebar-tabs button {
+                flex: 1;
+                padding: 8px 4px;
+                font-size: 10.5px;
+                font-weight: 600;
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: all var(--transition-fast);
+            }
+
+                .sm-sidebar-tabs button:hover {
+                    color: var(--text-secondary);
+                }
+
+                .sm-sidebar-tabs button.active {
+                    color: var(--accent);
+                    border-bottom-color: var(--accent);
+                }
+
+        .sm-sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+
+        .sm-group-header {
+            padding: 10px 14px 5px;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+            .sm-group-header:hover {
+                color: var(--text-secondary);
+            }
+
+            .sm-group-header .count {
+                font-weight: 500;
+                font-size: 10px;
+            }
+
+        .sm-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 14px 5px 22px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background var(--transition-fast), color var(--transition-fast);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+            .sm-item:hover {
+                background: var(--bg-card-alt);
+                color: var(--text-primary);
+            }
+
+            .sm-item.active {
+                background: var(--accent-light);
+                color: var(--accent);
+                font-weight: 600;
+            }
+
+            .sm-item .sm-badge {
+                flex-shrink: 0;
+                margin-left: 6px;
+                min-width: 20px;
+                height: 18px;
+                padding: 0 5px;
+                border-radius: 9px;
+                font-size: 10px;
+                font-weight: 700;
+                line-height: 18px;
+                text-align: center;
+                color: #fff;
+            }
+
+            .sm-item .sm-meta-right {
+                flex-shrink: 0;
+                margin-left: 4px;
+                font-size: 10px;
+                color: var(--text-muted);
+            }
+
+        .sm-kind-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-right: 4px;
+        }
+
+        .sm-kind-symbol {
+            background: #3b82f633;
+            color: #3b82f6;
+        }
+
+        .sm-kind-type {
+            background: #8b5cf633;
+            color: #8b5cf6;
+        }
+
+        .sm-kind-enum {
+            background: #f59e0b33;
+            color: #f59e0b;
+        }
+
+        .sm-kind-file {
+            background: #22c55e33;
+            color: #22c55e;
+        }
+
+        /* Depth badge colors — reused from Function Graph */
+        .depth-0 {
+            background: #64748b;
+        }
+
+        .depth-1 {
+            background: #22c55e;
+        }
+
+        .depth-2 {
+            background: #06b6d4;
+        }
+
+        .depth-3 {
+            background: #3b82f6;
+        }
+
+        .depth-4 {
+            background: #8b5cf6;
+        }
+
+        .depth-5 {
+            background: #ec4899;
+        }
+
+        .depth-6 {
+            background: #f59e0b;
+        }
+
+        .depth-7 {
+            background: #ef4444;
+        }
+
+        /* Toolbar */
+        .sm-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            flex-wrap: wrap;
+        }
+
+            .sm-toolbar .sm-breadcrumbs {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 12.5px;
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+            }
+
+            .sm-toolbar .sm-crumb {
+                color: var(--text-muted);
+                cursor: pointer;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 200px;
+            }
+
+                .sm-toolbar .sm-crumb:hover {
+                    color: var(--accent);
+                }
+
+                .sm-toolbar .sm-crumb.current {
+                    color: var(--text-primary);
+                    font-weight: 600;
+                    cursor: default;
+                }
+
+            .sm-toolbar .sm-crumb-sep {
+                color: var(--text-muted);
+                font-size: 10px;
+            }
+
+            .sm-toolbar button {
+                padding: 6px 12px;
+                border: 1px solid var(--border-light);
+                border-radius: var(--radius-md);
+                background: var(--bg-card);
+                color: var(--text-secondary);
+                font-size: 12.5px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                transition: all var(--transition-fast);
+                white-space: nowrap;
+            }
+
+                .sm-toolbar button:hover {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                }
+
+                .sm-toolbar button.active {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                    background: var(--accent-light);
+                }
+
+        /* Stats bar */
+        .sm-stats-bar {
+            display: flex;
+            gap: 16px;
+            padding: 8px 16px;
+            font-size: 11.5px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-stats-bar strong {
+                color: var(--text-primary);
+                font-weight: 600;
+            }
+
+        /* View tabs under toolbar */
+        .sm-view-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 0 16px 8px;
+        }
+
+            .sm-view-tabs button {
+                padding: 5px 12px;
+                font-size: 11.5px;
+                font-weight: 600;
+                border: 1px solid var(--border-light);
+                border-radius: var(--radius-md);
+                background: none;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: all var(--transition-fast);
+            }
+
+                .sm-view-tabs button:hover {
+                    color: var(--text-secondary);
+                    border-color: var(--text-muted);
+                }
+
+                .sm-view-tabs button.active {
+                    color: var(--accent);
+                    border-color: var(--accent);
+                    background: var(--accent-light);
+                }
+
+        /* Graph container */
+        #smGraphView {
+            position: relative;
+            overflow: hidden;
+            cursor: grab;
+            background: radial-gradient(circle at 1px 1px, var(--border-light) 0.5px, transparent 0.5px);
+            background-size: 24px 24px;
+        }
+
+            #smGraphView.grabbing {
+                cursor: grabbing;
+            }
+
+        #smGraphSvg {
+            display: block;
+            transform-origin: 0 0;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Body preview panel */
+        .sm-body-preview {
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+            .sm-body-preview .sm-body-header {
+                padding: 10px 14px;
+                border-bottom: 1px solid var(--border-light);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+        .sm-body-header .sm-body-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .sm-body-header .sm-body-file {
+            font-size: 10.5px;
+            color: var(--text-muted);
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+
+        .sm-body-preview pre {
+            flex: 1;
+            overflow: auto;
+            margin: 0;
+            padding: 12px 14px;
+            font-size: 11.5px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            line-height: 1.55;
+            color: var(--text-primary);
+            background: var(--bg-card-alt);
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        /* Trace export panel */
+        .sm-trace-panel {
+            padding: 14px;
+        }
+
+            .sm-trace-panel .sm-trace-controls {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                flex-wrap: wrap;
+                margin-bottom: 12px;
+            }
+
+            .sm-trace-panel label {
+                font-size: 11.5px;
+                color: var(--text-secondary);
+                font-weight: 600;
+            }
+
+            .sm-trace-panel input[type="number"] {
+                width: 56px;
+                padding: 5px 8px;
+                border: 1px solid var(--border-light);
+                border-radius: var(--radius-sm);
+                font-size: 12px;
+                color: var(--text-primary);
+                background: var(--bg-card-alt);
+                text-align: center;
+            }
+
+            .sm-trace-panel .sm-trace-check {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 11.5px;
+                color: var(--text-secondary);
+            }
+
+            .sm-trace-panel .sm-trace-stats {
+                display: flex;
+                gap: 16px;
+                font-size: 11px;
+                color: var(--text-muted);
+                margin: 8px 0;
+            }
+
+        .sm-trace-stats strong {
+            color: var(--text-primary);
+        }
+
+        .sm-trace-output {
+            max-height: 400px;
+            overflow: auto;
+            margin-top: 10px;
+            padding: 12px;
+            font-size: 11px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            line-height: 1.5;
+            color: var(--text-primary);
+            background: var(--bg-card-alt);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-light);
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        /* Detail panel (right side) */
+        #smDetailPanel {
+            display: none;
+            overflow-y: auto;
+        }
+
+            #smDetailPanel.visible {
+                display: block;
+            }
+
+        .sm-detail-header {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-detail-header h3 {
+                font-size: 14px;
+                font-weight: 700;
+                margin: 0 0 2px 0;
+                color: var(--text-primary);
+                word-break: break-all;
+            }
+
+            .sm-detail-header .sm-detail-file {
+                font-size: 11.5px;
+                color: var(--text-muted);
+                font-family: 'Consolas', 'Courier New', monospace;
+            }
+
+            .sm-detail-header .sm-detail-sig {
+                font-size: 11px;
+                color: var(--text-secondary);
+                font-family: 'Consolas', 'Courier New', monospace;
+                margin-top: 6px;
+                padding: 6px 8px;
+                background: var(--bg-card-alt);
+                border-radius: var(--radius-sm);
+                word-break: break-all;
+                line-height: 1.5;
+            }
+
+        .sm-detail-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1px;
+            background: var(--border-light);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-detail-stats .sm-stat-cell {
+                padding: 10px 12px;
+                background: var(--bg-card);
+                text-align: center;
+            }
+
+        .sm-stat-cell .sm-stat-val {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .sm-stat-cell .sm-stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-top: 2px;
+        }
+
+        .sm-detail-section {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-detail-section h4 {
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin: 0 0 8px 0;
+            }
+
+        .sm-detail-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+            .sm-detail-list li {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 0;
+                font-size: 12px;
+                color: var(--text-secondary);
+                cursor: pointer;
+                transition: color var(--transition-fast);
+            }
+
+                .sm-detail-list li:hover {
+                    color: var(--accent);
+                }
+
+                .sm-detail-list li .sm-dir-icon {
+                    font-size: 9px;
+                    width: 14px;
+                    text-align: center;
+                    flex-shrink: 0;
+                }
+
+        .sm-dir-icon.outgoing {
+            color: #3b82f6;
+        }
+
+        .sm-dir-icon.incoming {
+            color: #22c55e;
+        }
+
+        .sm-dir-icon.both {
+            color: #f59e0b;
+        }
+
+        /* Type/enum pill badges */
+        .sm-type-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            margin: 2px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            background: var(--bg-card-alt);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-light);
+        }
+
+            .sm-type-pill:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+        /* SVG node styles (same as Function Graph) */
+        .sm-node-bg {
+            fill: var(--bg-card);
+            stroke: var(--border-medium);
+            stroke-width: 1;
+            rx: 8;
+            ry: 8;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.06));
+            transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
+        }
+
+        .sm-node:hover .sm-node-bg {
+            stroke: var(--accent);
+            stroke-width: 2;
+            cursor: pointer;
+        }
+
+        .sm-node.center .sm-node-bg {
+            stroke: var(--accent);
+            stroke-width: 2.5;
+        }
+
+        .sm-node-header {
+            rx: 8;
+            ry: 8;
+        }
+
+        .sm-node-title {
+            font-size: 12px;
+            font-weight: 700;
+            fill: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .sm-node-meta {
+            font-size: 9.5px;
+            fill: rgba(255,255,255,0.7);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .sm-node-class {
+            font-size: 10px;
+            fill: var(--text-muted);
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+
+        .sm-node-file {
+            font-size: 9px;
+            fill: var(--text-muted);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .sm-badge-circle {
+            stroke: none;
+        }
+
+        .sm-badge-text {
+            fill: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            text-anchor: middle;
+            dominant-baseline: central;
+            pointer-events: none;
+        }
+
+        /* Edges */
+        .sm-edge {
+            fill: none;
+            stroke: var(--border-medium);
+            stroke-width: 1.2;
+            opacity: 0.6;
+        }
+
+            .sm-edge.outgoing {
+                stroke: #3b82f6;
+                opacity: 0.4;
+            }
+
+            .sm-edge.incoming {
+                stroke: #22c55e;
+                opacity: 0.4;
+            }
+
+            .sm-edge.both {
+                stroke: #f59e0b;
+                opacity: 0.5;
+            }
+
+        .sm-edge-arrow {
+            fill: var(--border-medium);
+        }
+
+            .sm-edge-arrow.outgoing {
+                fill: #3b82f6;
+                opacity: 0.5;
+            }
+
+            .sm-edge-arrow.incoming {
+                fill: #22c55e;
+                opacity: 0.5;
+            }
+
+            .sm-edge-arrow.both {
+                fill: #f59e0b;
+                opacity: 0.6;
+            }
+
+        /* Zoom controls */
+        .sm-controls {
+            position: absolute;
+            bottom: 14px;
+            right: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 5;
+        }
+
+            .sm-controls button {
+                width: 32px;
+                height: 32px;
+                border: 1px solid var(--border-light);
+                border-radius: var(--radius-md);
+                background: var(--bg-card);
+                color: var(--text-secondary);
+                font-size: 14px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: var(--shadow-sm);
+                transition: all var(--transition-fast);
+                padding: 0;
+            }
+
+                .sm-controls button:hover {
+                    border-color: var(--accent);
+                    color: var(--accent);
+                }
+
+        /* Legend */
+        .sm-legend {
+            position: absolute;
+            bottom: 14px;
+            left: 14px;
+            display: flex;
+            gap: 12px;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            background: var(--bg-card);
+            padding: 6px 12px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-light);
+            box-shadow: var(--shadow-sm);
+            z-index: 5;
+        }
+
+        .sm-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .sm-legend-swatch {
+            width: 16px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+            .sm-legend-swatch.outgoing {
+                background: #3b82f6;
+            }
+
+            .sm-legend-swatch.incoming {
+                background: #22c55e;
+            }
+
+            .sm-legend-swatch.both {
+                background: #f59e0b;
+            }
+
+        /* Mode toggle */
+        .sm-mode-btn {
+            background: var(--bg-card);
+            color: var(--text-muted);
+        }
+
+            .sm-mode-btn.active {
+                background: var(--accent);
+                color: #fff;
+            }
+
+            .sm-mode-btn:hover:not(.active) {
+                background: var(--bg-card-alt);
+                color: var(--text-secondary);
+            }
+
+        /* Topic explorer results */
+        .sm-topic-section {
+            margin-bottom: 20px;
+        }
+
+        .sm-topic-section-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-light);
+            margin-bottom: 6px;
+        }
+
+        .sm-topic-sym {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background 0.12s;
+        }
+
+            .sm-topic-sym:hover {
+                background: var(--bg-card-alt);
+                color: var(--text-primary);
+            }
+
+            .sm-topic-sym .sm-topic-id {
+                flex: 1;
+                font-weight: 600;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .sm-topic-sym .sm-topic-stats {
+                flex-shrink: 0;
+                font-size: 10.5px;
+                color: var(--text-muted);
+            }
+
+            .sm-topic-sym .sm-topic-file {
+                flex-shrink: 0;
+                font-size: 10px;
+                color: var(--text-muted);
+                font-family: 'Consolas', 'Courier New', monospace;
+                max-width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+        .sm-topic-flow {
+            padding: 4px 10px;
+            font-size: 11.5px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .sm-topic-copy-bar {
+            display: flex;
+            gap: 8px;
+            padding: 12px 0;
+            border-top: 1px solid var(--border-light);
+            margin-top: 12px;
+        }
+
+        /* Reindex banner */
+        .sm-reindex-banner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            background: var(--accent-light);
+            border-bottom: 1px solid var(--accent);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+            .sm-reindex-banner .sm-reindex-progress {
+                flex: 1;
+                height: 4px;
+                background: var(--border-light);
+                border-radius: 2px;
+                overflow: hidden;
+            }
+
+        .sm-reindex-progress .sm-reindex-bar {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        /* Empty state */
+        .sm-empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 40px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+            .sm-empty-state i {
+                font-size: 48px;
+                opacity: 0.3;
+                margin-bottom: 12px;
+            }
+
+            .sm-empty-state h2 {
+                font-size: 16px;
+                color: var(--text-secondary);
+                font-weight: 600;
+                margin: 0 0 6px 0;
+            }
+
+            .sm-empty-state p {
+                font-size: 13px;
+                max-width: 400px;
+                line-height: 1.6;
+            }
+
+        /* ── Deep Dive Modal ── */
+        .sm-dd-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: smDdFadeIn 0.15s ease;
+        }
+
+        @@keyframes smDdFadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        .sm-dd-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-lg, 12px);
+            width: 90vw;
+            max-width: 960px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: smDdSlideUp 0.2s ease;
+        }
+
+        @@keyframes smDdSlideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .sm-dd-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .sm-dd-header h3 {
+                margin: 0;
+                font-size: 15px;
+                color: var(--text-primary);
+            }
+
+                .sm-dd-header h3 i {
+                    color: var(--accent);
+                    margin-right: 6px;
+                }
+
+        .sm-dd-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+        }
+
+            .sm-dd-close:hover {
+                color: var(--text-primary);
+                background: var(--bg-card-alt);
+            }
+
+        .sm-dd-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-light);
+            padding: 0 20px;
+        }
+
+            .sm-dd-tabs button {
+                padding: 10px 16px;
+                font-size: 12px;
+                font-weight: 600;
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: all 0.15s;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+                .sm-dd-tabs button:hover {
+                    color: var(--text-secondary);
+                }
+
+                .sm-dd-tabs button.active {
+                    color: var(--accent);
+                    border-bottom-color: var(--accent);
+                }
+
+            .sm-dd-tabs .sm-dd-tab-count {
+                font-size: 10px;
+                font-weight: 700;
+                background: var(--accent-light);
+                color: var(--accent);
+                padding: 1px 6px;
+                border-radius: 8px;
+            }
+
+        .sm-dd-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+
+        .sm-dd-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            border-top: 1px solid var(--border-light);
+            gap: 12px;
+        }
+
+            .sm-dd-footer .sm-dd-selection-info {
+                font-size: 11.5px;
+                color: var(--text-muted);
+            }
+
+                .sm-dd-footer .sm-dd-selection-info strong {
+                    color: var(--text-primary);
+                }
+
+            .sm-dd-footer .sm-dd-actions {
+                display: flex;
+                gap: 8px;
+            }
+
+        /* Selectable items */
+        .sm-dd-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 10px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background 0.1s;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+            .sm-dd-item:hover {
+                background: var(--bg-card-alt);
+            }
+
+            .sm-dd-item.selected {
+                background: var(--accent-light);
+            }
+
+            .sm-dd-item input[type="checkbox"] {
+                flex-shrink: 0;
+                width: 15px;
+                height: 15px;
+                accent-color: var(--accent);
+                cursor: pointer;
+            }
+
+        .sm-dd-item-name {
+            flex: 1;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11.5px;
+        }
+
+        .sm-dd-item-meta {
+            flex-shrink: 0;
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        /* Group headers in the modal */
+        .sm-dd-group {
+            margin-bottom: 14px;
+        }
+
+        .sm-dd-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-light);
+            margin-bottom: 4px;
+        }
+
+            .sm-dd-group-header .sm-dd-select-all {
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--accent);
+                cursor: pointer;
+                text-transform: none;
+                letter-spacing: 0;
+            }
+
+                .sm-dd-group-header .sm-dd-select-all:hover {
+                    text-decoration: underline;
+                }
+
+        /* Progress / generating state */
+        .sm-dd-generating {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+            .sm-dd-generating i {
+                font-size: 24px;
+                margin-bottom: 10px;
+            }
+
+        /* Result preview */
+        .sm-dd-result-preview {
+            max-height: 300px;
+            overflow: auto;
+            padding: 12px;
+            font-size: 11px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            line-height: 1.5;
+            color: var(--text-primary);
+            background: var(--bg-card-alt);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-light);
+            white-space: pre;
+            tab-size: 4;
+        }
+        /* Deep Dive modal */
+        .sm-dd-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sm-dd-modal {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg, 12px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 800px;
+            max-width: 95vw;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sm-dd-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .sm-dd-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+        }
+
+            .sm-dd-close:hover {
+                color: var(--text-primary);
+                background: var(--bg-card-alt);
+            }
+
+        .sm-dd-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-light);
+            padding: 0 20px;
+        }
+
+        .sm-dd-tab {
+            padding: 10px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+
+            .sm-dd-tab:hover {
+                color: var(--text-secondary);
+            }
+
+            .sm-dd-tab.active {
+                color: var(--accent);
+                border-bottom-color: var(--accent);
+            }
+
+        .sm-dd-tab-count {
+            background: var(--bg-card-alt);
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .sm-dd-tab.active .sm-dd-tab-count {
+            background: var(--accent-light);
+            color: var(--accent);
+        }
+
+        .sm-dd-content {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sm-dd-select-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border-light);
+            background: var(--bg-card-alt);
+        }
+
+        .sm-dd-check-all {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+            .sm-dd-check-all input {
+                cursor: pointer;
+            }
+
+        .sm-dd-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .sm-dd-list {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 360px;
+            padding: 4px 0;
+        }
+
+        .sm-dd-group-header {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 20px 4px;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }
+
+        .sm-dd-group-count {
+            font-weight: 500;
+            font-size: 10px;
+        }
+
+        .sm-dd-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 20px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+
+            .sm-dd-item:hover {
+                background: var(--bg-card-alt);
+            }
+
+            .sm-dd-item input[type="checkbox"] {
+                cursor: pointer;
+                flex-shrink: 0;
+            }
+
+        .sm-dd-item-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        .sm-dd-item-meta {
+            flex-shrink: 0;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: 'Consolas', monospace;
+        }
+
+        .sm-dd-item-file {
+            flex-shrink: 0;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: 'Consolas', monospace;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sm-dd-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            border-top: 1px solid var(--border-light);
+            background: var(--bg-card-alt);
+        }
+
+        .sm-dd-selection-summary {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .sm-dd-output {
+            max-height: 200px;
+            overflow: auto;
+            margin: 0 20px 12px;
+            padding: 10px;
+            font-size: 10.5px;
+            font-family: 'Consolas', monospace;
+            line-height: 1.45;
+            color: var(--text-primary);
+            background: var(--bg-card-alt);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-light);
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        .sm-dd-stats {
+            padding: 6px 20px 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+            .sm-dd-stats strong {
+                color: var(--text-primary);
+            }
+    </style>
+}
+
+<!-- Same shell pattern as Database Explorer -->
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div>
+                <h1><i class="fa-solid fa-sitemap" style="color: var(--accent);"></i> Source Map</h1>
+                <p>VMaNGOS C++ engine index — <span id="smTotalSymbols">—</span> symbols, <span id="smTotalTypes">—</span> types, <span id="smTotalFiles">—</span> files</p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <div id="smModeToggle" style="display: flex; border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden;">
+                    <button class="sm-mode-btn active" data-mode="map" style="padding: 5px 12px; font-size: 11.5px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s;">Map</button>
+                    <button class="sm-mode-btn" data-mode="topic" style="padding: 5px 12px; font-size: 11.5px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s;">Topic Explorer</button>
+                    <button class="sm-mode-btn" data-mode="smart" style="padding: 5px 12px; font-size: 11.5px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s;">Smart Search</button>
+                </div>
+                <span id="smIndexStatus" style="font-size: 11px; color: var(--text-muted);"></span>
+                <button id="smBtnReindex" class="btn btn-sm" title="Re-scan C++ source tree"><i class="fa-solid fa-arrows-rotate"></i> Reindex</button>
+            </div>
+        </div>
+
+        <!-- Reindex progress banner (hidden by default) -->
+        <div id="smReindexBanner" class="sm-reindex-banner" style="display: none;">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <span id="smReindexPhase">Scanning...</span>
+            <div class="sm-reindex-progress"><div id="smReindexBar" class="sm-reindex-bar" style="width: 0%;"></div></div>
+            <span id="smReindexPct">0%</span>
+        </div>
+
+        <!-- Topic Explorer Mode (hidden by default, replaces the 3-panel layout) -->
+        <div id="smTopicMode" style="display: none; padding: 16px;">
+            <div class="card" style="padding: 24px; max-width: 700px; margin: 0 auto;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <i class="fa-solid fa-magnifying-glass-chart" style="font-size: 36px; color: var(--accent); opacity: 0.6; margin-bottom: 8px;"></i>
+                    <h2 style="font-size: 18px; font-weight: 700; color: var(--text-primary); margin: 0 0 4px 0;">What can I help you find?</h2>
+                    <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Enter a topic, system, or keyword — e.g. "taxi", "loot", "quest reward", "combat pet"</p>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="smTopicInput" placeholder="e.g. taxi, movement generator, spell aura..." style="flex: 1; padding: 10px 14px; border: 2px solid var(--border-light); border-radius: var(--radius-md); font-size: 14px; color: var(--text-primary); background: var(--bg-card-alt); transition: border-color 0.15s;" />
+                    <button id="smTopicGo" class="btn" style="padding: 10px 20px; font-size: 14px; font-weight: 600;"><i class="fa-solid fa-bolt"></i> Explore</button>
+                </div>
+            </div>
+            <div id="smTopicResults" style="margin-top: 20px;"></div>
+        </div>
+
+        <!-- Smart Search Mode (hidden by default) -->
+        <div id="smSmartMode" style="display: none; padding: 16px;">
+            <div class="card" style="padding: 24px; max-width: 700px; margin: 0 auto;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 36px; color: #a855f7; opacity: 0.6; margin-bottom: 8px;"></i>
+                    <h2 style="font-size: 18px; font-weight: 700; color: var(--text-primary); margin: 0 0 4px 0;">Smart Search</h2>
+                    <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Paste a C++ expression — resolve <code>me->IsDead()</code> to the actual function</p>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="smSmartInput" placeholder="e.g. me->IsDead(), pVictim->GetHealth(), Unit::Update"
+                           style="flex:1; padding: 10px 14px; font-size: 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: Consolas, monospace;" />
+                    <button id="smSmartGo" class="btn" style="padding: 10px 20px; font-weight: 600;">
+                        <i class="fa-solid fa-bolt"></i> Resolve
+                    </button>
+                </div>
+                <div style="margin-top: 10px; font-size: 11.5px; color: var(--text-muted);">
+                    Supports: <code>variable->method()</code>, <code>Class::method</code>, <code>object.method()</code>, or bare <code>methodName</code>
+                </div>
+            </div>
+            <div id="smSmartResults" style="max-width: 700px; margin: 16px auto 0;"></div>
+        </div>
+
+        <div id="smMapMode" class="content-body" style="display: flex; gap: 16px; padding-top: 16px;">
+            <!-- Sidebar Browser -->
+            <div id="smSidebar" class="card" style="width: 280px; min-width: 280px; max-height: calc(100vh - 130px);">
+                <div class="sm-sidebar-search">
+                    <input type="text" id="smSearchInput" placeholder="Search symbols, types, enums, files..." />
+                </div>
+                <div class="sm-sidebar-tabs">
+                    <button class="active" data-tab="classes"><i class="fa-solid fa-cubes"></i> Classes</button>
+                    <button data-tab="files"><i class="fa-solid fa-folder"></i> Files</button>
+                    <button data-tab="types"><i class="fa-solid fa-shapes"></i> Types</button>
+                    <button data-tab="enums"><i class="fa-solid fa-list-ol"></i> Enums</button>
+                    <button data-tab="stats"><i class="fa-solid fa-chart-bar"></i> Stats</button>
+                </div>
+                <div class="sm-sidebar-list" id="smSidebarList">
+                    <div class="sm-empty-state" style="padding: 20px;">
+                        <i class="fa-solid fa-spinner fa-spin" style="font-size: 18px;"></i>
+                        <p>Loading index...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Area -->
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px;">
+                <!-- Toolbar -->
+                <div id="smToolbar" class="card" style="display: none;"></div>
+
+                <!-- Main Card -->
+                <div id="smMainCard" class="card" style="flex: 1; max-height: calc(100vh - 240px); display: flex; flex-direction: column; overflow: hidden;">
+                    <div id="smStatsBar" class="sm-stats-bar" style="display: none;"></div>
+
+                    <!-- View content (graph, body, trace) -->
+                    <div id="smGraphView" style="flex: 1; display: none; position: relative;">
+                        <div class="sm-controls">
+                            <button id="smZoomIn" title="Zoom in"><i class="fa-solid fa-plus"></i></button>
+                            <button id="smZoomOut" title="Zoom out"><i class="fa-solid fa-minus"></i></button>
+                            <button id="smZoomFit" title="Fit to view"><i class="fa-solid fa-expand"></i></button>
+                        </div>
+                        <div class="sm-legend">
+                            <div class="sm-legend-item"><div class="sm-legend-swatch outgoing"></div> Calls</div>
+                            <div class="sm-legend-item"><div class="sm-legend-swatch incoming"></div> Called by</div>
+                            <div class="sm-legend-item"><div class="sm-legend-swatch both"></div> Both</div>
+                        </div>
+                    </div>
+
+                    <div id="smBodyView" class="sm-body-preview" style="flex: 1; display: none;"></div>
+                    <div id="smTraceView" class="sm-trace-panel" style="flex: 1; display: none; overflow-y: auto;"></div>
+
+                    <!-- Welcome screen -->
+                    <div id="smWelcome" class="sm-empty-state">
+                        <i class="fa-solid fa-sitemap"></i>
+                        <h2>Source Map</h2>
+                        <p>Search for a function, class, or enum — or browse by class/file in the sidebar. Click any symbol to explore its call graph, view source, and export context traces.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detail Panel (right side) -->
+            <div id="smDetailPanel" class="card" style="width: 320px; min-width: 320px; display: none; max-height: calc(100vh - 130px); overflow-y: auto;"></div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/sourcemap.js" asp-append-version="true"></script>
+}

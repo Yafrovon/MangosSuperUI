@@ -39,6 +39,12 @@ public class DbcService
     public IReadOnlyDictionary<uint, SpellRangeEntry> SpellRanges { get; private set; }
         = new Dictionary<uint, SpellRangeEntry>();
 
+    /// <summary>spellId → SpellDbcEntry (lightweight, for source spell search fallback).
+    /// Parsed from Spell.dbc — covers ALL ~22k vanilla spells, unlike spell_template which
+    /// only has server-side overrides.</summary>
+    public IReadOnlyDictionary<uint, SpellDbcEntry> SpellEntries { get; private set; }
+        = new Dictionary<uint, SpellDbcEntry>();
+
     // ── Status / diagnostics ──────────────────────────────────────────────
 
     public bool IsLoaded { get; private set; }
@@ -136,6 +142,7 @@ public class DbcService
             SpellDurations = LoadSpellDuration(Path.Combine(DbcPath, "SpellDuration.dbc"));
             SpellCastTimes = LoadSpellCastTimes(Path.Combine(DbcPath, "SpellCastTimes.dbc"));
             SpellRanges = LoadSpellRange(Path.Combine(DbcPath, "SpellRange.dbc"));
+            SpellEntries = LoadSpellEntries(Path.Combine(DbcPath, "Spell.dbc"));
 
             IsLoaded = true;
             _logger.LogInformation("DbcService: Loaded successfully — {Counts}",
@@ -339,6 +346,59 @@ public class DbcService
         return dict;
     }
 
+    /// <summary>
+    /// Spell.dbc — 173 fields, 692 bytes per record (vanilla 1.12.1 build 5875).
+    /// Only parses the fields needed for source-spell search:
+    ///   [0]   ID
+    ///   [6]   Attributes (check HIDDEN bit 0x80)
+    ///   [25]  SpellLevel
+    ///   [115] SpellVisualID[0]
+    ///   [117] SpellIconID
+    ///   [120] Name_lang enUS (stringref)
+    ///   [129] Subtext_lang enUS (stringref)
+    /// </summary>
+    private Dictionary<uint, SpellDbcEntry> LoadSpellEntries(string filePath)
+    {
+        var dict = new Dictionary<uint, SpellDbcEntry>();
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("DbcService: File not found: {File}", filePath);
+            LoadedCounts["Spell"] = 0;
+            return dict;
+        }
+
+        var (records, stringBlock, recordSize) = ReadDbcFile(filePath);
+
+        for (int i = 0; i < records.Length / recordSize; i++)
+        {
+            int o = i * recordSize;
+            uint id = BitConverter.ToUInt32(records, o);
+            uint attributes = BitConverter.ToUInt32(records, o + 6 * 4);
+
+            // Skip hidden spells (attribute bit 0x80)
+            if ((attributes & 0x80) != 0) continue;
+
+            uint spellLevel = BitConverter.ToUInt32(records, o + 25 * 4);
+            uint spellVisual1 = BitConverter.ToUInt32(records, o + 115 * 4);
+            uint spellIconId = BitConverter.ToUInt32(records, o + 117 * 4);
+            uint nameOffset = BitConverter.ToUInt32(records, o + 120 * 4);
+            uint subtextOffset = BitConverter.ToUInt32(records, o + 129 * 4);
+            uint descOffset = BitConverter.ToUInt32(records, o + 138 * 4);
+
+            string name = ReadString(stringBlock, nameOffset);
+            if (string.IsNullOrEmpty(name)) continue;
+
+            string subtext = ReadString(stringBlock, subtextOffset);
+            string description = ReadString(stringBlock, descOffset);
+
+            dict[id] = new SpellDbcEntry(id, name, subtext, 0, spellVisual1, spellIconId, spellLevel, description);
+        }
+
+        LoadedCounts["Spell"] = dict.Count;
+        _logger.LogInformation("DbcService: Parsed {Count} Spell.dbc entries (non-hidden)", dict.Count);
+        return dict;
+    }
+
     // ── WDBC file reader ──────────────────────────────────────────────────
 
     /// <summary>
@@ -418,3 +478,19 @@ public record SpellRangeEntry(float RangeMin, float RangeMax, uint Flags, string
         ? $"{DisplayName} ({RangeMax:0} yd)"
         : $"{RangeMax:0} yd";
 }
+
+/// <summary>
+/// Lightweight spell entry parsed from Spell.dbc — used for source spell search
+/// when spell_template (SQL) doesn't have a row for a given vanilla spell.
+/// Only the fields needed by PatchController.SearchSource are parsed.
+/// </summary>
+public record SpellDbcEntry(
+    uint Entry,
+    string Name,
+    string NameSubtext,
+    uint School,
+    uint SpellVisual1,
+    uint SpellIconId,
+    uint SpellLevel,
+    string Description = ""
+);

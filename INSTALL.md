@@ -728,15 +728,9 @@ These assets are extracted from the WoW 1.12.1 client's MPQ archives using the *
 
 https://github.com/Yafrovon/MangosSuperUI_Extractor
 
-#### IMPORTANT: Icon filenames must be lowercase
+#### Filename casing
 
-MangosSuperUI's DBC service resolves icon filenames in **lowercase** (e.g. `/icons/inv_sword_04.png`). Linux filesystems are case-sensitive, so if your icon files have mixed-case names (e.g. `INV_Sword_04.png`), they won't load.
-
-After placing icons in `wwwroot/icons/`, rename them all to lowercase:
-```bash
-cd /opt/mangossuperui/wwwroot/icons
-for f in *; do mv "$f" "$(echo "$f" | tr '[:upper:]' '[:lower:]')" 2>/dev/null; done
-```
+The MangosSuperUI Extractor handles all filename casing automatically — icon filenames are output in lowercase, and minimap folder names preserve the original WoW map casing (e.g. `Azeroth/`, `Kalimdor/`). No manual renaming is needed after extraction.
 
 #### What works without assets?
 
@@ -869,18 +863,7 @@ scp -r "C:\path\to\extracted\minimap\*" YOUR_USERNAME@YOUR_SERVER_IP:/opt/mangos
 
 ---
 
-### Step 20: Fix Icon Filenames
-
-Icon filenames must be lowercase on Linux. After copying icons to the server, run:
-
-```bash
-cd /opt/mangossuperui/wwwroot/icons
-for f in *; do mv "$f" "$(echo "$f" | tr '[:upper:]' '[:lower:]')" 2>/dev/null; done
-```
-
----
-
-### Step 21: Verify Assets
+### Step 20: Verify Assets
 
 **Check file counts:**
 ```bash
@@ -954,6 +937,17 @@ No restart of MangosSuperUI is needed. Static files are served immediately.
 
 ### Settings changes don't take effect
 - Most settings apply immediately after clicking Save (database connections, RA credentials, paths). The **Kestrel listen URL** is the exception — changing the port requires a full service restart: `sudo systemctl restart mangossuperui`
+
+### World Map shows no Z-resolution / objects spawn at sea level
+- Verify the Maps Data path is set correctly in Settings and points to a directory containing `.map` files: `ls YOUR_MAPS_PATH/*.map | head`
+- If the minimap tiles display but Z-resolution doesn't work, check the minimap folder names have proper casing (e.g. `Azeroth/`, `Kalimdor/`, not `azeroth/`, `kalimdor/`). The HeightMapService matches these folder names against the map data. If your folders are lowercase, rename them to match the original WoW map names:
+  ```bash
+  cd /opt/mangossuperui/wwwroot/minimap
+  mv azeroth Azeroth
+  mv kalimdor Kalimdor
+  # ... etc. for each map directory
+  ```
+  This is typically caused by using an older version of the MangosSuperUI Extractor that lowercased folder names. Re-extracting with the current version will produce the correct casing.
 
 ### Setup script finds wrong binary directory (build/ instead of run/)
 - The script prefers paths containing `/run/` over `/build/`, but if your directory structure is unusual it may pick the wrong one. Check the Configuration Summary output. If the Bin Dir points to a `build/` path, you can either re-run the script and adjust `server-config.json` manually afterwards, or edit the config through the Settings page in the web interface.

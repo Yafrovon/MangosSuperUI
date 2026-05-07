@@ -57,6 +57,7 @@ public class BotHelloPayload
 
     [JsonPropertyName("z")]
     public float Z { get; set; }
+
 }
 
 public class BotStatePayload
@@ -105,6 +106,21 @@ public class BotStatePayload
 
     [JsonPropertyName("taskState")]
     public string TaskState { get; set; } = "IDLE";
+
+    [JsonPropertyName("freeSlots")]
+    public uint FreeSlots { get; set; } = 16;
+
+    [JsonPropertyName("totalSlots")]
+    public uint TotalSlots { get; set; } = 16;
+
+    [JsonPropertyName("copper")]
+    public uint Copper { get; set; } = 0;
+
+    [JsonPropertyName("questId")]
+    public uint QuestId { get; set; } = 0;
+
+    [JsonPropertyName("questStatus")]
+    public uint QuestStatus { get; set; } = 0;
 }
 
 public class BotEventPayload
@@ -146,6 +162,19 @@ public class BotEventPayload
 
     [JsonPropertyName("channel_name")]
     public string? ChannelName { get; set; }
+
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; set; }
+
+    [JsonPropertyName("have")]
+    public uint? Have { get; set; }
+
+    [JsonPropertyName("need")]
+    public uint? Need { get; set; }
+
+    [JsonPropertyName("cost")]
+    public uint? Cost { get; set; }
 }
 
 public class BotChatPayload
@@ -221,6 +250,15 @@ public class TargetGuidPayload
     public int Guid { get; set; }
 }
 
+public class TakeFlightPayload
+{
+    [JsonPropertyName("sourceNode")]
+    public int SourceNode { get; set; }
+
+    [JsonPropertyName("destNode")]
+    public int DestNode { get; set; }
+}
+
 // ======================== Live Bot State ========================
 
 public class BotState
@@ -243,8 +281,15 @@ public class BotState
     public bool IsDead { get; set; }
     public int TargetGuid { get; set; }
     public string TaskState { get; set; } = "IDLE";
+    public uint FreeSlots { get; set; } = 16;
+    public uint TotalSlots { get; set; } = 16;
+    public uint Copper { get; set; } = 0;
     public DateTime ConnectedAt { get; set; }
     public DateTime LastUpdate { get; set; }
+    public uint QuestId { get; set; } = 0;
+    public uint QuestStatus { get; set; } = 0;
+    // BotState class — add:
+    public bool HasReceivedState { get; set; } = false;
 }
 
 /// <summary>
@@ -498,7 +543,13 @@ public class BotBridgeService : BackgroundService
         bs.IsDead = state.IsDead;
         bs.TargetGuid = state.TargetGuid;
         bs.TaskState = state.TaskState;
+        bs.FreeSlots = state.FreeSlots;
+        bs.TotalSlots = state.TotalSlots;
+        bs.Copper = state.Copper;
         bs.LastUpdate = DateTime.UtcNow;
+        bs.QuestId = state.QuestId;
+        bs.QuestStatus = state.QuestStatus;
+        bs.HasReceivedState = true;
 
         BotStates[conn.Guid] = bs;
 
@@ -587,6 +638,121 @@ public class BotBridgeService : BackgroundService
                 });
                 break;
 
+            case "FLIGHT_STARTED":
+                _logger.LogInformation("BotBridge: FLIGHT_STARTED {Name}", conn.State.Name);
+                conn.State.TaskState = "FLYING";
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "FLIGHT_STARTED",
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
+            case "FLIGHT_COMPLETE":
+                _logger.LogInformation("BotBridge: FLIGHT_COMPLETE {Name}", conn.State.Name);
+                conn.State.TaskState = "IDLE";
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "FLIGHT_COMPLETE",
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
+            case "FLIGHT_FAILED":
+                _logger.LogInformation("BotBridge: FLIGHT_FAILED {Name} — reason={Reason} have={Have} need={Need}",
+                    conn.State.Name, evt.Reason, evt.Have, evt.Need);
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "FLIGHT_FAILED",
+                    reason = evt.Reason ?? "unknown",
+                    have = evt.Have,
+                    need = evt.Need,
+                    cost = evt.Cost,
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
+            case "LOOT":
+                _logger.LogInformation("BotBridge: LOOT {Name} — {Data}",
+                    conn.State.Name, evt.Data);
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "LOOT",
+                    data = evt.Data,
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
+            case "SELL_ACK":
+                {
+                    var sellParts = ParsePipeDelimited(evt.Data);
+                    _logger.LogInformation(
+                        "BotBridge: SELL_ACK {Name} — sold={Sold} earned={Earned}c free={Free} total={Total}c",
+                        conn.State.Name,
+                        sellParts.GetValueOrDefault("sold", "0"),
+                        sellParts.GetValueOrDefault("copper_earned", "0"),
+                        sellParts.GetValueOrDefault("free_slots", "0"),
+                        sellParts.GetValueOrDefault("copper_total", "0"));
+                    await _hub.Clients.All.SendAsync("BotEvent", new
+                    {
+                        guid = conn.Guid,
+                        name = conn.State.Name,
+                        eventType = "SELL_ACK",
+                        data = evt.Data,
+                        timestamp = DateTime.UtcNow
+                    });
+                    break;
+                }
+
+            case "SELL_FAIL":
+                {
+                    _logger.LogWarning("BotBridge: SELL_FAIL {Name} — {Data}",
+                        conn.State.Name, evt.Data);
+                    await _hub.Clients.All.SendAsync("BotEvent", new
+                    {
+                        guid = conn.Guid,
+                        name = conn.State.Name,
+                        eventType = "SELL_FAIL",
+                        data = evt.Data,
+                        timestamp = DateTime.UtcNow
+                    });
+                    break;
+                }
+
+            case "EQUIP":
+                _logger.LogInformation("BotBridge: EQUIP {Name} — {Data}",
+                    conn.State.Name, evt.Data);
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "EQUIP",
+                    data = evt.Data,
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
+            case "BAG_EQUIP":
+                _logger.LogInformation("BotBridge: BAG_EQUIP {Name} — {Data}",
+                    conn.State.Name, evt.Data);
+                await _hub.Clients.All.SendAsync("BotEvent", new
+                {
+                    guid = conn.Guid,
+                    name = conn.State.Name,
+                    eventType = "BAG_EQUIP",
+                    data = evt.Data,
+                    timestamp = DateTime.UtcNow
+                });
+                break;
+
             default:
                 _logger.LogInformation("BotBridge: EVENT {Event} from {Name} (guid={Guid}): {Data}",
                     evt.Event, conn.State.Name, conn.Guid, evt.Data);
@@ -616,7 +782,11 @@ public class BotBridgeService : BackgroundService
                 Message = evt.Message ?? "",
                 ChatType = evt.ChatType ?? "",
                 ChannelName = evt.ChannelName ?? "",
-                Data = evt.Data ?? ""
+                Data = evt.Data ?? "",
+                Reason = evt.Reason ?? "",
+                Have = evt.Have ?? 0,
+                Need = evt.Need ?? 0,
+                Cost = evt.Cost ?? 0
             };
             _ = Task.Run(() => _brain.HandleBridgeEventAsync(conn.Guid, botEvent));
         }
@@ -762,6 +932,42 @@ public class BotBridgeService : BackgroundService
     public Task SendSetTaskIdleAsync(int guid)
     {
         return SendToBotAsync(guid, "SET_TASK", new { task = "IDLE" });
+    }
+
+    public Task SendTakeFlightAsync(int guid, int sourceNode, int destNode)
+    {
+        return SendToBotAsync(guid, "TAKE_FLIGHT", new TakeFlightPayload
+        {
+            SourceNode = sourceNode,
+            DestNode = destNode
+        });
+    }
+
+    public Task SendSellItemsAsync(int guid, int npcEntry, int keepQuality = 2)
+    {
+        return SendToBotAsync(guid, "SELL_ITEMS", new
+        {
+            npc_entry = npcEntry,
+            keep_quality = keepQuality
+        });
+    }
+
+    // ==================== Helpers ====================
+
+    /// <summary>
+    /// Parse pipe-delimited key=value event data. E.g., "sold=7|copper_earned=432|free_slots=12"
+    /// </summary>
+    private static Dictionary<string, string> ParsePipeDelimited(string? data)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(data)) return result;
+        foreach (var segment in data.Split('|'))
+        {
+            var eq = segment.IndexOf('=');
+            if (eq > 0)
+                result[segment[..eq].Trim()] = segment[(eq + 1)..].Trim();
+        }
+        return result;
     }
 
     // ==================== Query ====================

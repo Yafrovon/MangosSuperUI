@@ -14,8 +14,10 @@
     {
         "home" or "console" or "players" or "accounts" or "realm" => "operations",
         "activity" or "serverlogs" or "livelogs" or "config" or "backup" => "server",
-        "worldmap" or "items" or "spells" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
-        "database" or "functiongraph" => "data",
+        "spells" or "patch" => "spells",
+        "worldmap" or "items" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
+        "worldviewer" => "world",
+        "database" or "functiongraph" or "sourcemap" => "data",
         "downloads" => "downloads",
         "bots" => "bots",
         _ => ""
@@ -121,10 +123,38 @@
             </ul>
         </div>
 
-        <!-- Content -->
-        <div class="sidebar-section" data-group="content">
-            <div class="sidebar-section-title" data-toggle-group="content">
-                <span>Content</span>
+        <!-- Spells -->
+        <div class="sidebar-section" data-group="spells">
+            <div class="sidebar-section-title" data-toggle-group="spells">
+                <span>Spells</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
+                <li class="sidebar-nav-item" data-nav-key="spells">
+                    <a asp-controller="Spells" asp-action="Index" class="@NavClass("Spells")">
+                        <i class="fa-solid fa-book-open"></i>
+                        Spell Editor
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="patch">
+                    <a asp-controller="Patch" asp-action="Index" class="@(currentController.Equals("Patch", StringComparison.OrdinalIgnoreCase) && !currentAction.Equals("VisualLab", StringComparison.OrdinalIgnoreCase) ? "active" : "")">
+                        <i class="fa-solid fa-wand-sparkles"></i>
+                        Spell Creator
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="visuallab">
+                    <a asp-controller="Patch" asp-action="VisualLab" class="@(currentController.Equals("Patch", StringComparison.OrdinalIgnoreCase) && currentAction.Equals("VisualLab", StringComparison.OrdinalIgnoreCase) ? "active" : "")">
+                        <i class="fa-solid fa-cube"></i>
+                        Spell Visualizer
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- World & Maps -->
+        <div class="sidebar-section" data-group="world">
+            <div class="sidebar-section-title" data-toggle-group="world">
+                <span>World & Maps</span>
                 <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
             </div>
             <ul class="sidebar-nav sidebar-nav-collapsible">
@@ -134,16 +164,26 @@
                         World Map
                     </a>
                 </li>
+                <li class="sidebar-nav-item" data-nav-key="worldviewer">
+                    <a asp-controller="WorldViewer" asp-action="Index" class="@NavClass("WorldViewer")">
+                        <i class="fa-solid fa-mountain-sun"></i>
+                        3D World Viewer
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Content -->
+        <div class="sidebar-section" data-group="content">
+            <div class="sidebar-section-title" data-toggle-group="content">
+                <span>Content</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
                 <li class="sidebar-nav-item" data-nav-key="items">
                     <a asp-controller="Items" asp-action="Index" class="@NavClass("Items")">
                         <i class="fa-solid fa-box-open"></i>
                         Items
-                    </a>
-                </li>
-                <li class="sidebar-nav-item" data-nav-key="spells">
-                    <a asp-controller="Spells" asp-action="Index" class="@NavClass("Spells")">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i>
-                        Spells
                     </a>
                 </li>
                 <li class="sidebar-nav-item" data-nav-key="gameobjects">
@@ -202,10 +242,10 @@
                         Database Explorer
                     </a>
                 </li>
-                <li class="sidebar-nav-item" data-nav-key="functiongraph">
-                    <a asp-controller="FunctionGraph" asp-action="Index" class="@NavClass("FunctionGraph")">
-                        <i class="fa-solid fa-project-diagram"></i>
-                        Function Graph
+                <li class="sidebar-nav-item" data-nav-key="sourcemap">
+                    <a asp-controller="SourceMap" asp-action="Index" class="@NavClass("SourceMap")">
+                        <i class="fa-solid fa-sitemap"></i>
+                        Source Map
                     </a>
                 </li>
             </ul>

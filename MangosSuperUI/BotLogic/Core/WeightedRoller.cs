@@ -71,4 +71,34 @@ public static class WeightedRoller
         float value = (float)(mean + normal * stdDev);
         return Math.Clamp(value, 0f, 1f);
     }
+
+    /// <summary>
+    /// Adds a random offset (0.5–2.0 yards) in a random direction to prevent bots stacking on the same point.
+    /// Use for grind centers, exploration wanders, and other non-NPC destinations.
+    /// </summary>
+    public static (float x, float y) Jitter(float x, float y)
+    {
+        float distance = Range(0.5f, 2.0f);
+        float angle = Range(0f, MathF.PI * 2f);
+        return (x + distance * MathF.Cos(angle), y + distance * MathF.Sin(angle));
+    }
+
+    /// <summary>
+    /// Offsets target point 0.5–2.0 yards toward the bot's current position, with ±30° spread.
+    /// Keeps jittered destination on ground the bot is approaching from — avoids walls behind NPCs.
+    /// Falls back to random Jitter if bot is already on top of the target.
+    /// </summary>
+    public static (float x, float y) JitterToward(float targetX, float targetY, float fromX, float fromY)
+    {
+        float dx = fromX - targetX;
+        float dy = fromY - targetY;
+        float len = MathF.Sqrt(dx * dx + dy * dy);
+        if (len < 0.5f) return Jitter(targetX, targetY);
+
+        float baseAngle = MathF.Atan2(dy, dx);
+        float spread = Range(-0.52f, 0.52f); // ±30° in radians
+        float angle = baseAngle + spread;
+        float dist = Range(0.5f, 2.0f);
+        return (targetX + dist * MathF.Cos(angle), targetY + dist * MathF.Sin(angle));
+    }
 }

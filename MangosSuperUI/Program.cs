@@ -32,6 +32,19 @@ builder.Services.AddSingleton<HeightMapService>();
 builder.Services.AddSingleton<BotBridgeService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BotBridgeService>());
 builder.Services.AddSingleton<OllamaChatService>();
+builder.Services.AddSingleton<SourceIndexerService>();
+builder.Services.AddSingleton<ZoneSafetyMap>();
+builder.Services.AddSingleton<BotFleetDiagnostics>();
+builder.Services.AddSingleton<SpellCreatorService>();
+builder.Services.AddSingleton<BlpWriterService>();
+builder.Services.AddSingleton<PatchBuilderService>();
+builder.Services.AddSingleton<SpellIconService>();
+builder.Services.AddSingleton<SpellConfigService>();
+builder.Services.AddSingleton<SpellTextureService>();
+builder.Services.AddSingleton<SpellRecipeService>();
+builder.Services.AddSingleton<ComfyUIDispatcher>();
+builder.Services.AddSingleton<VanillaBlpService>();
+builder.Services.AddSingleton<SpellDnaService>();
 
 // ---------- BotLogic: Behavioral Engine ----------
 
@@ -44,8 +57,9 @@ builder.Services.AddSingleton<BotStateTracker>();
     builder.Services.AddSingleton<QuirkLoader>();
     builder.Services.AddSingleton<SpellProgressionLoader>();
     builder.Services.AddSingleton<ZoneDataLoader>();
-    builder.Services.AddSingleton<LevelingGuideLoader>();
+    builder.Services.AddSingleton<QuestGraphLoader>();
     builder.Services.AddSingleton<BotBrainDbInit>();
+    builder.Services.AddSingleton<SpellProgressionLoader>();
 
     // Core engine
     builder.Services.AddSingleton<LiveStateModifiers>();

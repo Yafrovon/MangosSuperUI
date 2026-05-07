@@ -11,15 +11,22 @@ public class SettingsController : Controller
     private readonly IConfiguration _config;
     private readonly AuditService _audit;
     private readonly ILogger<SettingsController> _logger;
+    private readonly ComfyUIDispatcher? _comfyDispatcher;
 
     private string ConfigFilePath => Path.Combine(_env.ContentRootPath, "server-config.json");
 
-    public SettingsController(IWebHostEnvironment env, IConfiguration config, AuditService audit, ILogger<SettingsController> logger)
+    public SettingsController(
+        IWebHostEnvironment env,
+        IConfiguration config,
+        AuditService audit,
+        ILogger<SettingsController> logger,
+        ComfyUIDispatcher? comfyDispatcher = null)
     {
         _env = env;
         _config = config;
         _audit = audit;
         _logger = logger;
+        _comfyDispatcher = comfyDispatcher;
     }
 
     public IActionResult Index()
@@ -61,12 +68,16 @@ public class SettingsController : Controller
                 RealmdProcess = _config["Vmangos:RealmdProcess"] ?? "realmd",
                 MangosdConfPath = _config["Vmangos:MangosdConfPath"] ?? "",
                 LogsDir = _config["Vmangos:LogsDir"] ?? "",
-                DbcPath = _config["Vmangos:DbcPath"] ?? "/home/wowvmangos/vmangos/run/data/5875/dbc",
-                MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "/home/wowvmangos/vmangos/run/data/maps",
-                BackupDirectory = _config["Vmangos:BackupDirectory"] ?? "/home/wowvmangos/backups",
-                VmangosSourcePath = _config["Vmangos:VmangosSourcePath"] ?? "/home/wowvmangos/vmangos/src",
-                VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? "/home/wowvmangos/vmangos/sql"
+                DbcPath = _config["Vmangos:DbcPath"] ?? "",
+                MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "",
+                ClientM2Path = _config["Vmangos:ClientM2Path"] ?? "",
+                ClientDataPath = _config["Vmangos:ClientDataPath"] ?? "",
+                PatchOutputPath = _config["Vmangos:PatchOutputPath"] ?? "",
+                BackupDirectory = _config["Vmangos:BackupDirectory"] ?? "",
+                VmangosSourcePath = _config["Vmangos:VmangosSourcePath"] ?? "",
+                VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? ""
             },
+            SpellCreator = BuildSpellCreatorConfig(),
             Kestrel = new KestrelConfig
             {
                 Url = _config["Kestrel:Endpoints:Http:Url"] ?? "http://0.0.0.0:5000"
@@ -77,6 +88,41 @@ public class SettingsController : Controller
         var overrideExists = System.IO.File.Exists(ConfigFilePath);
 
         return Json(new { settings, overrideExists, configFilePath = ConfigFilePath });
+    }
+
+    /// <summary>
+    /// Build SpellCreator config from IConfiguration, reading the Nodes[] array dynamically.
+    /// </summary>
+    private SpellCreatorConfig BuildSpellCreatorConfig()
+    {
+        var cfg = new SpellCreatorConfig
+        {
+            ComfyUI = new ComfyUIConfig
+            {
+                ClipModel2 = _config["SpellCreator:ComfyUI:ClipModel2"] ?? "",
+                Nodes = new List<ComfyUINodeConfig>()
+            },
+            Ollama = new OllamaConfig
+            {
+                BaseUrl = _config["SpellCreator:Ollama:BaseUrl"] ?? "",
+                Model = _config["SpellCreator:Ollama:Model"] ?? ""
+            },
+            RawBlpPath = _config["SpellCreator:RawBlpPath"] ?? "",
+            DataPath = _config["SpellCreator:DataPath"] ?? ""
+        };
+
+        // Read the Nodes[] array from config
+        var nodesSection = _config.GetSection("SpellCreator:ComfyUI:Nodes").GetChildren().ToList();
+        foreach (var node in nodesSection)
+        {
+            cfg.ComfyUI.Nodes.Add(new ComfyUINodeConfig
+            {
+                Name = node["Name"] ?? "",
+                BaseUrl = node["BaseUrl"] ?? ""
+            });
+        }
+
+        return cfg;
     }
 
     /// <summary>
@@ -144,6 +190,20 @@ public class SettingsController : Controller
         }
     }
 
+    /// <summary>
+    /// Returns the live status of all ComfyUI nodes in the dispatcher pool.
+    /// Used by the Settings page to show node health indicators.
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> ComfyPoolStatus()
+    {
+        if (_comfyDispatcher == null)
+            return Json(Array.Empty<object>());
+
+        var statuses = await _comfyDispatcher.GetPoolStatusAsync();
+        return Json(statuses);
+    }
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -159,6 +219,7 @@ public class ServerConfig
     public ConnectionStringsConfig? ConnectionStrings { get; set; }
     public RemoteAccessConfig? RemoteAccess { get; set; }
     public VmangosConfig? Vmangos { get; set; }
+    public SpellCreatorConfig? SpellCreator { get; set; }
     public KestrelConfig? Kestrel { get; set; }
 }
 
@@ -190,11 +251,40 @@ public class VmangosConfig
     public string RealmdProcess { get; set; } = "realmd";
     public string MangosdConfPath { get; set; } = "";
     public string LogsDir { get; set; } = "";
-    public string DbcPath { get; set; } = "/home/wowvmangos/vmangos/run/data/5875/dbc";
-    public string MapsDataPath { get; set; } = "/home/wowvmangos/vmangos/run/data/maps";
-    public string BackupDirectory { get; set; } = "/home/wowvmangos/backups";
-    public string VmangosSourcePath { get; set; } = "/home/wowvmangos/vmangos/src";
-    public string VmangosSqlPath { get; set; } = "/home/wowvmangos/vmangos/sql";
+    public string DbcPath { get; set; } = "";
+    public string MapsDataPath { get; set; } = "";
+    public string ClientM2Path { get; set; } = "";
+    public string ClientDataPath { get; set; } = "";
+    public string PatchOutputPath { get; set; } = "";
+    public string BackupDirectory { get; set; } = "";
+    public string VmangosSourcePath { get; set; } = "";
+    public string VmangosSqlPath { get; set; } = "";
+}
+
+public class SpellCreatorConfig
+{
+    public ComfyUIConfig ComfyUI { get; set; } = new();
+    public OllamaConfig Ollama { get; set; } = new();
+    public string RawBlpPath { get; set; } = "";
+    public string DataPath { get; set; } = "";
+}
+
+public class ComfyUIConfig
+{
+    public List<ComfyUINodeConfig> Nodes { get; set; } = new();
+    public string ClipModel2 { get; set; } = "";
+}
+
+public class ComfyUINodeConfig
+{
+    public string Name { get; set; } = "";
+    public string BaseUrl { get; set; } = "";
+}
+
+public class OllamaConfig
+{
+    public string BaseUrl { get; set; } = "";
+    public string Model { get; set; } = "";
 }
 
 public class KestrelConfig

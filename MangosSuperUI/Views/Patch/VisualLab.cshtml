@@ -1,0 +1,281 @@
+@{
+    ViewData["Title"] = "Visual Lab";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h1>Visual Lab</h1>
+                    <p>3D spell effect viewer — inspect and tune particle emitters</p>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <span class="status-dot" id="viewerStatus"></span>
+                    <span id="viewerStatusText" style="font-weight: 500; font-size: 13px;">No spell loaded</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-body" style="display: flex; flex-direction: column; overflow: hidden;">
+            <!-- Spell Picker -->
+            <div class="cmd-section" style="flex-shrink: 0;">
+                <div class="cmd-card" style="padding: 12px 16px;">
+                    <div class="d-flex gap-3 align-items-center">
+                        <label class="cmd-label" style="margin: 0; white-space: nowrap;">Spell Entry</label>
+                        <input type="number" class="form-input" id="spellEntry" placeholder="133" style="width: 120px;" />
+                        <button class="btn-accent" id="btnLoadSpell"><i class="fa-solid fa-bolt"></i> Load Visual</button>
+                        <span id="spellNameLabel" style="font-size: 13px; color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Layout: Viewer + Panel -->
+            <div style="flex: 1; display: flex; gap: 12px; min-height: 0; overflow: hidden;">
+                <!-- 3D Viewer -->
+                <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+                    <!-- Phase Tabs -->
+                    <div class="vlab-tabs" id="phaseTabs">
+                        <button class="vlab-tab active" data-phase="cast">Cast</button>
+                        <button class="vlab-tab" data-phase="missile">Missile</button>
+                        <button class="vlab-tab" data-phase="impact">Impact</button>
+                        <button class="vlab-tab" data-phase="channel">Channel</button>
+                        <button class="vlab-tab" data-phase="precast">Precast</button>
+                        <button class="vlab-tab" data-phase="state">State</button>
+                    </div>
+
+                    <!-- Three.js Canvas -->
+                    <div id="viewerContainer" style="flex: 1; background: #000; border-radius: var(--radius-md); position: relative; min-height: 300px; overflow: hidden;">
+                        <canvas id="viewerCanvas" style="width: 100%; height: 100%; display: block;"></canvas>
+                        <!-- Overlay info -->
+                        <div id="viewerOverlay" style="position: absolute; top: 12px; left: 12px; color: #888; font-size: 11px; font-family: 'Consolas', monospace; pointer-events: none;">
+                            <div id="overlayPhase">Phase: —</div>
+                            <div id="overlayEmitters">Emitters: 0</div>
+                            <div id="overlayParticles">Particles: 0</div>
+                            <div id="overlayFps">FPS: 0</div>
+                        </div>
+                        <!-- Playback controls -->
+                        <div id="playbackBar" style="position: absolute; bottom: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 8px; pointer-events: auto;">
+                            <button class="vlab-ctrl-btn" id="btnPause" title="Pause"><i class="fa-solid fa-pause"></i></button>
+                            <button class="vlab-ctrl-btn" id="btnSequence" title="Play full sequence (precast→cast→missile→impact)"><i class="fa-solid fa-forward"></i></button>
+                            <button class="vlab-ctrl-btn" id="btnResetCam" title="Reset camera"><i class="fa-solid fa-video"></i></button>
+                            <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.1);"></div>
+                            <span class="vlab-ctrl-label">Speed</span>
+                            <input type="range" id="speedSlider" min="0.1" max="3.0" step="0.1" value="1.0" class="vlab-slider" />
+                            <span id="speedLabel" class="vlab-ctrl-value">1.0x</span>
+                            <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.1);"></div>
+                            <span class="vlab-ctrl-label">Distance</span>
+                            <input type="range" id="distSlider" min="5" max="40" step="1" value="15" class="vlab-slider" />
+                            <span id="distLabel" class="vlab-ctrl-value">15 yd</span>
+                            <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.1);"></div>
+                            <button class="vlab-ctrl-btn" id="btnBg" title="Cycle background (Black / Grey / Ground)"><i class="fa-solid fa-circle-half-stroke"></i></button>
+                            <span id="bgLabel" class="vlab-ctrl-value">Black</span>
+                        </div>
+                        <!-- Empty state -->
+                        <div id="viewerEmpty" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #555; font-size: 14px;">
+                            Enter a spell entry and click Load Visual
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Emitter Inspector Panel -->
+                <div id="inspectorPanel" style="width: 320px; flex-shrink: 0; overflow-y: auto; display: none;">
+                    <div class="cmd-card" style="height: 100%;">
+                        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px;">
+                            Emitter Inspector
+                        </div>
+
+                        <!-- M2 Info -->
+                        <div id="m2Info" style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; word-break: break-all;"></div>
+
+                        <!-- Emitter Selector -->
+                        <div style="margin-bottom: 12px;">
+                            <label class="cmd-label">Emitter</label>
+                            <select class="form-input" id="emitterSelect" style="width: 100%;"></select>
+                        </div>
+
+                        <!-- Properties -->
+                        <div id="emitterProps"></div>
+
+                        <!-- Textures -->
+                        <div style="margin-top: 16px;">
+                            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px;">
+                                Textures
+                            </div>
+                            <div id="textureGallery" class="d-flex flex-wrap gap-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <style>
+        .vlab-tabs {
+            display: flex;
+            gap: 2px;
+            margin-bottom: 8px;
+            flex-shrink: 0;
+        }
+
+        .vlab-tab {
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md) var(--radius-md) 0 0;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+            .vlab-tab:hover {
+                color: var(--text-primary);
+                background: var(--bg-card-alt);
+            }
+
+            .vlab-tab.active {
+                color: var(--accent);
+                border-bottom-color: transparent;
+                background: #000;
+            }
+
+            .vlab-tab.has-data {
+                color: var(--text-primary);
+            }
+
+            .vlab-tab.no-data {
+                opacity: 0.4;
+            }
+
+        .prop-group {
+            margin-bottom: 12px;
+        }
+
+        .prop-group-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .prop-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 12px;
+        }
+
+        .prop-name {
+            color: var(--text-secondary);
+        }
+
+        .prop-value {
+            color: var(--text-primary);
+            font-weight: 500;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+        }
+
+            .prop-value.animated {
+                color: var(--accent);
+            }
+
+        .tex-thumb {
+            width: 64px;
+            height: 64px;
+            border-radius: 4px;
+            border: 1px solid var(--border-light);
+            background: #111;
+            image-rendering: pixelated;
+            cursor: pointer;
+            transition: border-color var(--transition-fast);
+        }
+
+            .tex-thumb:hover {
+                border-color: var(--accent);
+            }
+
+        .tex-info {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 2px;
+            max-width: 64px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .color-swatch {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid var(--border-light);
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        .vlab-ctrl-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #aaa;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition-fast);
+        }
+
+            .vlab-ctrl-btn:hover {
+                background: rgba(255,255,255,0.15);
+                color: #fff;
+            }
+
+            .vlab-ctrl-btn.active-seq {
+                background: var(--accent);
+                color: #fff;
+                border-color: var(--accent);
+            }
+
+        .vlab-ctrl-label {
+            color: #555;
+            font-size: 10px;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .vlab-ctrl-value {
+            color: #aaa;
+            font-size: 11px;
+            font-family: 'Consolas', monospace;
+            min-width: 36px;
+            white-space: nowrap;
+        }
+
+        .vlab-slider {
+            flex: 0 1 120px;
+            accent-color: var(--accent);
+        }
+    </style>
+}
+
+@section Scripts {
+    <script src="~/lib/three/three.min.js"></script>
+    <script src="~/lib/three/OrbitControls.js"></script>
+    <script src="~/js/spells/visuallab.js" asp-append-version="true"></script>
+}
