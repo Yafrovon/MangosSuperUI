@@ -162,24 +162,77 @@ if [ -n "$BIN_DIR" ]; then
     ok "realmd binary: $REALMD_BINARY_NAME"
 fi
 
-# Process names — check running processes first, fall back to binary name
-MANGOSD_PROCESS="$MANGOSD_BINARY_NAME"
-REALMD_PROCESS="$REALMD_BINARY_NAME"
-MANGOSD_PID=$(pgrep -x "$MANGOSD_BINARY_NAME" 2>/dev/null | head -1 || true)
-if [ -n "$MANGOSD_PID" ] && [ -f "/proc/$MANGOSD_PID/comm" ]; then
-    MANGOSD_PROCESS=$(cat "/proc/$MANGOSD_PID/comm")
-    ok "mangosd process name (live): $MANGOSD_PROCESS"
-else
-    info "mangosd not running — using binary name as process name: $MANGOSD_PROCESS"
-fi
+# Process names — the binary filename (e.g. "mangosd") can differ from what the
+# kernel reports as the process comm name (e.g. "mangosd-main"). MangosSuperUI's
+# ProcessManagerService matches against comm, so we must get the real value.
+#
+# Strategy:
+#   1. If the process is running, read /proc/PID/comm (authoritative).
+#      Use pgrep -f with the full bin path to avoid exact-name mismatches.
+#   2. If not running, read the comm name from the ELF binary itself —
+#      Linux uses the first 15 chars of the filename passed to execve(),
+#      but for binaries the "comm" is typically baked into prctl(PR_SET_NAME)
+#      at startup. The most reliable offline method is to check if the binary
+#      is a symlink (comm = symlink target name) or just use the filename.
+#      As a pragmatic fallback, we also try briefly running the binary with
+#      --version or similar, but VMaNGOS binaries don't support that, so
+#      we simply scan for known patterns.
 
-REALMD_PID=$(pgrep -x "$REALMD_BINARY_NAME" 2>/dev/null | head -1 || true)
-if [ -n "$REALMD_PID" ] && [ -f "/proc/$REALMD_PID/comm" ]; then
-    REALMD_PROCESS=$(cat "/proc/$REALMD_PID/comm")
-    ok "realmd process name (live): $REALMD_PROCESS"
-else
-    info "realmd not running — using binary name as process name: $REALMD_PROCESS"
-fi
+detect_process_name() {
+    local bin_dir="$1"
+    local binary_name="$2"
+    local label="$3"
+    local full_path="$bin_dir/$binary_name"
+    local pid comm
+
+    # Method 1: Check running process via full path (handles name mismatches)
+    pid=$(pgrep -f "$full_path" 2>/dev/null | head -1 || true)
+    if [ -n "$pid" ] && [ -f "/proc/$pid/comm" ]; then
+        comm=$(cat "/proc/$pid/comm")
+        ok "$label process name (live): $comm"
+        echo "$comm"
+        return
+    fi
+
+    # Method 2: Check running process via any matching binary name pattern
+    # e.g. pgrep -f "mangosd" might catch "mangosd-main" started from elsewhere
+    pid=$(pgrep -f "/${binary_name}" 2>/dev/null | head -1 || true)
+    if [ -n "$pid" ] && [ -f "/proc/$pid/comm" ]; then
+        comm=$(cat "/proc/$pid/comm")
+        ok "$label process name (live): $comm"
+        echo "$comm"
+        return
+    fi
+
+    # Method 3: If the binary is a symlink, the real filename is the comm name
+    if [ -L "$full_path" ]; then
+        comm=$(basename "$(readlink -f "$full_path")")
+        ok "$label process name (from symlink): $comm"
+        echo "$comm"
+        return
+    fi
+
+    # Method 4: Check if the ELF binary embeds a different name via
+    # reading the .rodata or using strings — but this is fragile.
+    # Instead, check for the "-main" variant which is a common VMaNGOS
+    # build pattern: the binary is named "mangosd" but sets PR_SET_NAME
+    # to "mangosd-main" at startup.
+    # We can detect this by reading the binary for the prctl name string.
+    local prctl_name
+    prctl_name=$(strings "$full_path" 2>/dev/null | grep -E "^${binary_name}-main$" | head -1 || true)
+    if [ -n "$prctl_name" ]; then
+        ok "$label process name (from binary strings): $prctl_name"
+        echo "$prctl_name"
+        return
+    fi
+
+    # Fallback: use binary filename as-is
+    info "$label not running — using binary name as process name: $binary_name"
+    echo "$binary_name"
+}
+
+MANGOSD_PROCESS=$(detect_process_name "$BIN_DIR" "$MANGOSD_BINARY_NAME" "mangosd")
+REALMD_PROCESS=$(detect_process_name "$BIN_DIR" "$REALMD_BINARY_NAME" "realmd")
 
 # DataDir → DBC and Maps paths
 DATA_DIR=$(conf_get "DataDir")

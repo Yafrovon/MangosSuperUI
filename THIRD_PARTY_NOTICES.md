@@ -82,6 +82,48 @@ ADO.NET data provider for MySQL/MariaDB.
 
 ---
 
+## SkiaSharp
+
+2D graphics library used for PNG encoding, texture processing, and BLP conversion in the Spell Creator pipeline.
+
+- **Copyright:** (c) 2015-2024 The Mono Project
+- **License:** MIT
+- **Website:** https://github.com/mono/SkiaSharp
+- **Source:** https://github.com/mono/SkiaSharp
+- **Note:** `SkiaSharp.NativeAssets.Linux` provides the native libSkiaSharp.so for Linux deployment.
+
+---
+
+## War3Net.IO.Mpq
+
+MPQ archive reader/writer used for reading WoW 1.12.1 client data (terrain, textures, models) and building custom patch MPQ archives.
+
+- **Copyright:** (c) Drake53
+- **License:** MIT
+- **Source:** https://github.com/Drake53/War3Net
+
+---
+
+## War3Net.Drawing.Blp
+
+BLP texture file decoder used for reading WoW BLP textures from MPQ archives and converting them to bitmaps for server-side texture compositing.
+
+- **Copyright:** (c) Drake53
+- **License:** MIT
+- **Source:** https://github.com/Drake53/War3Net
+
+---
+
+## Microsoft.Extensions.Hosting.Systemd
+
+Systemd integration for ASP.NET Core — enables watchdog heartbeats and graceful SIGTERM handling when running as a Linux systemd service.
+
+- **Copyright:** (c) .NET Foundation and Contributors
+- **License:** MIT
+- **Source:** https://github.com/dotnet/runtime
+
+---
+
 ## Bootstrap
 
 CSS framework used for layout and UI components.

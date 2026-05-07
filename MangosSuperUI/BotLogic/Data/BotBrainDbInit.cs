@@ -102,6 +102,25 @@ public class BotBrainDbInit
                     INDEX idx_bot_inv_guid (bot_guid)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+            // --- bot_groups (Session 31 — grouping system) ---
+            await conn.ExecuteAsync(@"
+                CREATE TABLE IF NOT EXISTS bot_groups (
+                    group_id        INT NOT NULL PRIMARY KEY,
+                    leader_guid     INT NOT NULL,
+                    member_guids    VARCHAR(256) NOT NULL,
+                    leader_type     TINYINT NOT NULL DEFAULT 0,
+                    formed_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_bot_groups_leader (leader_guid)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // --- bot_settings (Session 31 — server-level bot config) ---
+            await conn.ExecuteAsync(@"
+                CREATE TABLE IF NOT EXISTS bot_settings (
+                    setting_key     VARCHAR(64) NOT NULL PRIMARY KEY,
+                    setting_value   VARCHAR(256) NOT NULL DEFAULT '',
+                    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
             _logger.LogInformation("BotBrainDbInit: all tables verified/created");
         }
         catch (Exception ex)

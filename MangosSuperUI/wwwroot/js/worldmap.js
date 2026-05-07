@@ -510,6 +510,169 @@
 
         // Init needle to N
         $('#compassNeedle').addClass('visible').css('transform', 'translate(-50%, -100%) rotate(0deg)');
+
+        // ── 3D Explore: drag horse onto map to enter World Viewer ──
+        initExploreButton();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  3D EXPLORE — drag horse onto map to enter World Viewer
+    // ══════════════════════════════════════════════════════════
+
+    function initExploreButton() {
+        var mapContainer = document.getElementById('worldmap');
+        if (!mapContainer) return;
+
+        // Create the horse button
+        var btn = document.createElement('div');
+        btn.id = 'exploreBtn';
+        btn.innerHTML = '<i class="fa-solid fa-horse"></i>';
+        btn.title = 'Drag onto map to explore in 3D';
+        btn.style.cssText =
+            'position:absolute;bottom:12px;right:12px;z-index:1000;' +
+            'width:40px;height:40px;border-radius:8px;' +
+            'background:rgba(20,24,32,0.92);border:1px solid rgba(255,255,255,0.15);' +
+            'color:#e8a840;font-size:18px;' +
+            'display:flex;align-items:center;justify-content:center;' +
+            'cursor:grab;user-select:none;transition:transform 0.15s, box-shadow 0.15s;';
+        mapContainer.appendChild(btn);
+
+        // Tooltip label (shown during drag)
+        var label = document.createElement('div');
+        label.id = 'exploreLabel';
+        label.textContent = 'Drop to explore in 3D';
+        label.style.cssText =
+            'position:fixed;z-index:10001;pointer-events:none;display:none;' +
+            'background:rgba(20,24,32,0.95);color:#e8a840;' +
+            'padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;' +
+            'white-space:nowrap;border:1px solid rgba(232,168,64,0.3);';
+        document.body.appendChild(label);
+
+        // Ghost icon that follows the cursor during drag
+        var ghost = document.createElement('div');
+        ghost.innerHTML = '<i class="fa-solid fa-horse"></i>';
+        ghost.style.cssText =
+            'position:fixed;z-index:10000;pointer-events:none;display:none;' +
+            'width:36px;height:36px;border-radius:50%;' +
+            'background:rgba(232,168,64,0.9);color:#1a1e28;font-size:18px;' +
+            'display:none;align-items:center;justify-content:center;' +
+            'box-shadow:0 2px 12px rgba(232,168,64,0.5);';
+        document.body.appendChild(ghost);
+
+        var dragging = false;
+        var startX, startY;
+        var DRAG_THRESHOLD = 6;
+        var dragStarted = false;
+
+        btn.addEventListener('pointerdown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragging = true;
+            dragStarted = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            btn.style.cursor = 'grabbing';
+            btn.setPointerCapture(e.pointerId);
+        });
+
+        btn.addEventListener('pointermove', function (e) {
+            if (!dragging) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            var dx = e.clientX - startX;
+            var dy = e.clientY - startY;
+
+            if (!dragStarted && Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
+
+            if (!dragStarted) {
+                dragStarted = true;
+                ghost.style.display = 'flex';
+                label.style.display = 'block';
+                btn.style.opacity = '0.3';
+            }
+
+            ghost.style.left = (e.clientX - 18) + 'px';
+            ghost.style.top = (e.clientY - 18) + 'px';
+            label.style.left = (e.clientX + 24) + 'px';
+            label.style.top = (e.clientY - 12) + 'px';
+
+            // Check if cursor is over the map
+            var mapRect = mapContainer.getBoundingClientRect();
+            var overMap = e.clientX >= mapRect.left && e.clientX <= mapRect.right &&
+                e.clientY >= mapRect.top && e.clientY <= mapRect.bottom;
+
+            if (overMap) {
+                ghost.style.background = 'rgba(232,168,64,0.9)';
+                ghost.style.boxShadow = '0 2px 16px rgba(232,168,64,0.6)';
+                label.textContent = 'Drop to explore in 3D';
+            } else {
+                ghost.style.background = 'rgba(120,120,120,0.7)';
+                ghost.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+                label.textContent = 'Drag onto map';
+            }
+        });
+
+        btn.addEventListener('pointerup', function (e) {
+            if (!dragging) return;
+            dragging = false;
+            btn.style.cursor = 'grab';
+            btn.style.opacity = '1';
+            ghost.style.display = 'none';
+            label.style.display = 'none';
+            btn.releasePointerCapture(e.pointerId);
+
+            if (!dragStarted) return;
+
+            // Check if dropped on the map
+            var mapRect = mapContainer.getBoundingClientRect();
+            var overMap = e.clientX >= mapRect.left && e.clientX <= mapRect.right &&
+                e.clientY >= mapRect.top && e.clientY <= mapRect.bottom;
+
+            if (!overMap) return;
+
+            // Convert pixel position to Leaflet latlng to WoW world coords
+            var containerPoint = L.point(
+                e.clientX - mapRect.left,
+                e.clientY - mapRect.top
+            );
+            var latlng = map.containerPointToLatLng(containerPoint);
+            var w = latLngToWorld(latlng);
+            var def = MAP_DEFS[currentMapKey];
+            var mapId = def ? def.mapId : 0;
+
+            if (mapId < 0) {
+                alert('Cannot explore this map — no mapId configured for ' + currentMapKey);
+                return;
+            }
+
+            // Compute grid coordinates (same formula as HeightMapService)
+            // gridX = gy = floor(32 - worldX / 533.33)  (first field in filename)
+            // gridY = gx = floor(32 - worldY / 533.33)  (second field in filename)
+            var gridX = Math.floor(32 - w.x / TILE_YARDS);
+            var gridY = Math.floor(32 - w.y / TILE_YARDS);
+
+            if (gridX < 0 || gridX > 63 || gridY < 0 || gridY > 63) {
+                alert('Location is outside the valid map grid');
+                return;
+            }
+
+            // Navigate to the World Viewer with coordinates
+            var url = '/WorldViewer?mapId=' + mapId +
+                '&gridX=' + gridX + '&gridY=' + gridY +
+                '&worldX=' + w.x.toFixed(1) + '&worldY=' + w.y.toFixed(1);
+            window.location.href = url;
+        });
+
+        // Cancel on pointer leave without release
+        btn.addEventListener('pointercancel', function () {
+            dragging = false;
+            dragStarted = false;
+            btn.style.cursor = 'grab';
+            btn.style.opacity = '1';
+            ghost.style.display = 'none';
+            label.style.display = 'none';
+        });
     }
 
     // ══════════════════════════════════════════════════════════

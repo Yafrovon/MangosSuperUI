@@ -1,0 +1,136 @@
+@{
+    ViewData["Title"] = "3D World Viewer";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div>
+                <h1><i class="fa-solid fa-mountain-sun" style="color: var(--accent);"></i> 3D World Viewer</h1>
+                <p>Explore terrain, doodads, and buildings from the game world</p>
+            </div>
+        </div>
+
+        <div class="content-body" style="padding: 0;">
+            <div class="card" style="margin: 0; border-radius: 0; overflow: hidden;">
+                <div class="card-body p-0" style="position: relative;">
+                    <!-- Toolbar -->
+                    <div class="wv-toolbar" id="wvToolbar">
+                        <select class="wv-control" id="wvPresetSelect">
+                            <option value="">Loading presets...</option>
+                        </select>
+                        <button class="wv-control wv-btn active" id="wvLoadBtn">
+                            <i class="fa-solid fa-globe"></i> Load
+                        </button>
+                        <div class="wv-separator"></div>
+                    </div>
+
+                    <!-- HUD -->
+                    <div class="wv-hud" id="wvHud">
+                        <span id="wvFps">--</span> FPS &nbsp;|&nbsp;
+                        <span id="wvDoodadCount">--</span> doodads &nbsp;|&nbsp;
+                        <span id="wvWmoCount">--</span> WMOs &nbsp;|&nbsp;
+                        <span id="wvModelCount">--</span> models
+                    </div>
+
+                    <!-- Status -->
+                    <div class="wv-status" id="wvStatus">Select a preset and click Load</div>
+
+                    <!-- Canvas -->
+                    <canvas id="wvCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <style>
+        .content-body {
+            padding: 0 !important;
+        }
+
+        #wvCanvas {
+            width: 100%;
+            height: calc(100vh - 130px);
+            display: block;
+            background: #1a1a2e;
+        }
+
+        .wv-toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .wv-control {
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(30, 37, 48, 0.85);
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: all 0.15s;
+        }
+
+            .wv-control:hover {
+                background: rgba(50, 62, 78, 0.9);
+                color: #fff;
+            }
+
+        .wv-btn.active {
+            background: var(--accent, #4a90d9);
+            border-color: var(--accent, #4a90d9);
+            color: #fff;
+        }
+
+        .wv-separator {
+            width: 1px;
+            height: 22px;
+            background: rgba(255,255,255,0.12);
+            margin: 0 2px;
+        }
+
+        .wv-hud {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.55);
+            color: #aaa;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            font: 11px/1.4 var(--font-mono, monospace);
+            z-index: 10;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+        }
+
+        .wv-status {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.55);
+            color: #999;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            font-size: 12px;
+            z-index: 10;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+        }
+    </style>
+}
+
+@section Scripts {
+    <script src="~/lib/three/three.min.js"></script>
+    <script src="~/lib/three/OrbitControls.js"></script>
+    <script src="~/js/worldviewer.js" asp-append-version="true"></script>
+}

@@ -1,18 +1,18 @@
 # MangosSuperUI
 
-https://www.youtube.com/@Yafrovon --- For Video references on how to use the tool
+https://www.youtube.com/@Yafrovon — Video walkthroughs and feature demos
 
-A web-based server management and content development platform for [VMaNGOS](https://github.com/vmangos/core) 1.12.1 vanilla WoW private servers. Built with ASP.NET Core 8.0 MVC, jQuery, and MariaDB/MySQL. Runs on Linux, developed on Windows.
+A web-based server management, content development, and world building platform for [VMaNGOS](https://github.com/vmangos/core) 1.12.1 vanilla WoW private servers. Built with ASP.NET Core 8.0 MVC, jQuery, Three.js, and MariaDB/MySQL. Runs on Linux, developed on Windows.
 
 ## Why This Exists
 
-I built MangosSuperUI for myself. I run a private VMaNGOS server at home — not public, just for me. I did not find a single tool that brought it all together in a way that didn't require you to already know everything.
+I run a private VMaNGOS server at home — not public, just for me. I wanted a single tool that brought together server ops, content editing, world building, spell creation, 3D terrain visualization, and AI-driven playerbots without requiring SQL expertise or scattered command-line tools. I looked for one and didn't find it — not for VMaNGOS, and not for any emulator.
 
-I looked for one and didn't find it — not for VMaNGOS, and not anything that was both unified (server ops, content editing, world building, data exploration in one place) and accessible (you shouldn't need to write SQL to change a drop rate). So I'm building it. 
+So I'm building it. The end goal is a living game world with hundreds of AI-driven bots that feel real, custom spells and items that feel vanilla but add flavor, and the tooling to iterate on all of it from a browser.
 
-I'm open-sourcing it because if I needed this, other people running VMaNGOS, or those who want to immortalize vanilla WoW which many of us consider the apex of what this genre is, probably could use it too. It's not polished product software — it's a tool I'm using, developing, with the end goal of being able to run 100s of bots, that seem real enough, and with changes to the gameplay loop that feel vanilla, but add flavor and replayability. Feedback, bug reports, and contributions are all welcome.
+I'm open-sourcing it because if I needed this, other people running VMaNGOS — or those who want to immortalize vanilla WoW — probably could too. It's not polished product software. It's a tool I use daily. Feedback, bug reports, and contributions are welcome.
 
-> **⚠️ Work in Progress:** MangosSuperUI is functional and actively used, but it is not finished. Existing features may have bugs, and entire sections (vendors, creatures, quests) are not yet built.
+> **⚠️ Work in Progress:** MangosSuperUI is functional and actively used, but it is not finished. Some planned sections (vendors, creatures, quests) are not yet built.
 
 ![Dashboard](Screenshots/dashboard.png)
 
@@ -20,116 +20,99 @@ I'm open-sourcing it because if I needed this, other people running VMaNGOS, or 
 
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 World of Warcraft® is a registered trademark of Blizzard Entertainment, Inc.
-MangosSuperUI does not distribute any Blizzard assets — icons, models, and minimap tiles are extracted from your own WoW 1.12.1 client using the included extractor tool (see INSTALL.md).
-
----
-
-## Current Release: Phases 1–3.5
-
-MangosSuperUI is under active development. This release covers the core platform, content editors for items, spells, game objects, and loot tables, and the Database Explorer. See the [Roadmap](#roadmap) for what's coming next.
+MangosSuperUI does not distribute any Blizzard assets — icons, models, and minimap tiles are extracted from your own WoW 1.12.1 client using the included [Extractor tool](https://github.com/Yafrovon/MangosSuperUI_Extractor).
 
 ---
 
 ## Features
 
-### Operations
+### Server Operations
 
-**Dashboard** — At-a-glance server health. Process status for mangosd and realmd (start/stop/restart), RA connection status, all five database connections, players online, uptime, and core revision. If something's red, you know immediately.
+**Dashboard** — At-a-glance server health with a built-in **Diagnose** button that probes every subsystem and tells you specifically *why* something is broken. Process status for mangosd and realmd (with auto-detection of process names via `/proc` scanning), RA connection status, all five database connections, players online, uptime, core revision. First-run detection shows a setup banner when configuration is missing.
 
-![Dashboard](Screenshots/dashboard.png)
+**Console** — Full RA terminal in the browser via SignalR. Send any GM command, see responses in real time. Command history and autocomplete.
 
-**Console** — Full RA terminal in the browser via SignalR. Send any GM command, see the response in real time. Command history, autocomplete from a curated command list.
+**Players & Accounts** — Search, inspect, and manage characters and accounts. Kick, mute, ban, teleport, send mail/items, adjust GM levels. Everything audit-logged.
 
-![Console](Screenshots/console.png)
+**Config Editor** — All 601 `mangosd.conf` settings organized into 22 human-readable tabs with descriptions and inline editing. Built from a curated metadata mapping — no more hunting through a 2,000-line conf file.
 
-**Players** — Search, inspect, and manage characters. Kick, mute, ban, teleport, send mail, send items, reset stats. Everything audit-logged.
+**Activity Log** — Append-only audit trail. Every action recorded with operator, IP, full before/after state snapshots, RA commands, and timestamps. Filter by category, action, or target.
 
-**Accounts** — Account management. Create, modify GM levels, ban/unban, view account history.
+**Live Logs** — Real-time log tailing via SignalR. Streams new log lines to the browser every 500ms.
 
-**Realm** — Edit the realmlist table directly. Useful for changing your realm name or address without touching SQL.
+**Backup & Restore** — Three backup groups (Game World databases, Characters, Core Source). Timestamped snapshots with `mysqldump`, one-click restore, auto-safety snapshots before destructive operations. Labels, stats, audit-logged.
 
-### Server
+### Content Editing
 
-**Activity Log** — Every action MangosSuperUI takes is recorded in an append-only audit log. Full before/after state snapshots, RA commands sent, operator IP, timestamps. Filter by category, action type, or target.
+**Items** — Browse 25,000+ items. Search, filter, paginate. Full detail panel with stats, spells, and loot sources. 3D model viewer for weapons/shields/objects. Clone base game items to create custom variants. Icon picker with DBC-resolved names.
 
-![Activity Log](Screenshots/activity-log.png)
+**Spells** — Browse, search, and batch-edit the spell_template table. Grouped search across spell families. DBC-resolved icons, duration, cast time, and range.
 
-**Server Logs** — Browse the VMaNGOS database log tables across 8 tabs. Search, filter, paginate through historical server events.
+**Game Objects** — Browse, search, clone, edit, delete. 3D model viewer. Custom summary field. Integration with World Map for visual placement.
 
-**Live Logs** — Real-time log file tailing via SignalR. Watches your mangosd log files and streams new lines to the browser every 500ms. No more `tail -f` in a terminal.
+**Loot Tuner** — Bulk loot rate adjustment by quality, level, rank, or instance. Baseline diffs and one-click reset to original values.
 
-**Config Editor** — All 601 `mangosd.conf` settings organized into 22 human-readable tabs with descriptions, current values, and inline editing. Built from a curated metadata JSON that maps raw config keys to categories and explanations. No more hunting through a 2,000-line conf file.
+**Instance Loot** — Per-boss loot editing for all 26 instances (~256 curated bosses). Full loot tree with reference chain expansion. Edit drop rates, add/remove items.
 
-![Config Editor](Screenshots/config-editor.png)
+**ARPG Lootifier** — Diablo-style item variant generator. Tier-quota system (Improved, of Power, of Glory, of the Gods), stat family detection, spell-effect items, quality promotion to Epic/Legendary, boss-named legendaries at 150% budget. Batch mode across entire dungeons/raids with full rollback.
 
-### Content
+### World Building
 
-**World Map** — Leaflet.js-powered minimap tile viewer. Browse Azeroth, Kalimdor, dungeons, and raids using tiles extracted from your WoW client. Click anywhere to place a game object at that location — the HeightMapService reads VMaNGOS `.map` binary files to resolve terrain Z coordinates automatically. Compass widget for setting orientation. Spawn overlay shows existing game objects on the map.
+**World Map** — Leaflet.js minimap viewer for all continents, dungeons, and raids. Click-to-place game objects with automatic terrain Z resolution from VMaNGOS `.map` files. Spawn overlay, compass widget, orientation control.
 
-![World Map](Screenshots/world-map.png)
+**3D World Viewer** — Browser-based Three.js terrain renderer that reads directly from WoW 1.12.1 client MPQ archives. Features include:
+- V9 heightmap geometry with server-side RGB composite textures
+- M2 doodad models with per-submesh textures and InstancedMesh batching
+- WMO building rendering with full textured geometry
+- Spatial streaming with spherical load/unload
+- PBR golden hour lighting with Lit/Flat toggle
+- Walk mode (WASD + right-click FPS look + ground follow)
+- **WMO Placement Tool** — browse all WMOs from MPQ listfiles, ghost placement on terrain with rotation and height adjust, persist to database, commit to game world (gameobject_template + gameobject + DBC patching + patch MPQ generation)
 
-**Items** — Browse all 25,000+ items in the mangos database. Search, filter, paginate. Click any item for a full detail panel with stats, spells, and loot sources. 3D model viewer shows automatically for items that have an extractable model. Clone any base game item to create custom variants, or edit custom items directly. Icon picker with DBC-resolved icon names.
+![World Viewer](Screenshots/world-viewer.png)
 
-![Items](Screenshots/items.png)
+### Spell Creator
 
-**Spells** — Browse and search the full spell_template table. Grouped search across spell families. Edit spell fields directly, or batch-edit multiple spells at once. DBC-resolved spell icons, duration, cast time, and range values.
+A complete custom spell creation pipeline from concept to playable in-game. Create spells with unique visuals, register them at trainers, and generate client patches — all from the browser.
 
-**Game Objects** — Browse, search, clone, edit, and delete game objects. 3D model viewer shows automatically when an extracted model exists for the object's display ID. Custom summary field for quick identification. Full integration with the World Map for visual placement.
+- **Guided Wizard** — 6-step creation flow: search source spell → identity → power presets → appearance (color, intensity, per-phase fine-tune, icon) → ranks & training → review & create
+- **Workshop** — per-phase particle controls with independent color, texture, and emission settings
+- **Experiment Lab** — SpellDNA extreme parameter testing for discovering visual effects
+- **Visual Lab** — Three.js particle renderer with spatial caster/target markers, missile travel, sequence playback, and terrain presets
+- **AI-powered visuals** — ComfyUI/FLUX icon generation, AI texture generation (7 themes × 6 roles), Ollama prompt crafting
+- **Rank chain system** — auto-generates full rank progressions (e.g. 12 Fireball ranks) with proportional damage/mana scaling
+- **Trainer registration** — copy-from-source or add-to-all-class-trainers with SPELL_EFFECT_LEARN_SPELL wrapper generation
+- **Unified patch** — single `patch-3.MPQ` for all custom spells including all DBC entries, icons, textures, and M2 particles
 
-**Loot Tuner** — Bulk loot rate adjustment. Filter by item quality, level range, creature rank, dungeon/raid. Apply multipliers across matching loot tables. Baseline system tracks all changes with visual diffs and one-click reset to original values.
+![Spell Creator](Screenshots/spell-creator.png)
 
-**Instance Loot** — Per-boss loot editing for all 26 instances. Curated boss list (~256 entries) via `instance-bosses.json`. View the full loot tree for any boss with reference chain expansion. Edit drop rates, add or remove items from loot tables.
+### AI Playerbots
 
-![Instance Loot](Screenshots/instance-loot.png)
+An AI-driven playerbot system with behavioral decision engine, LLM-powered chat, and real economy interaction.
 
-**ARPG Lootifier** — This is the fun one. A Diablo-style item variant generator layered on top of vanilla WoW data. Pick a creature (or batch-select by quality/level/rank/instance), and the engine generates N stat-rerolled variants of each item in their loot table, then expands the loot tables so variants drop alongside originals.
+- **Bot Tuner Dashboard** — roster, personality bars, decision weights, real economy display, inventory with icons, activity timeline
+- **Behavioral Engine** — domain-based decision system: Questing (full quest graph with sub-phase sequencer), Economy (vendoring, training, repair), Combat (grinding, corpse run), Social (LLM chat via Ollama)
+- **Multi-class groups** — warrior + priest + paladin + mage grouping system
+- **Real integration** — bots use real character_inventory, real gold, real spell progression. No shadow state.
+- **C++/C# split** — low-latency AI in C++ (movement, combat, looting), high-level decisions in C# (quest selection, vendor logic, personality)
 
-![Lootifier](Screenshots/lootifier.png)
+### Data & Development
 
-The Lootifier features:
-
-- **Tier-quota system** — variants are pre-allocated across tiers: Improved (prefix), of Power, of Glory, of the Gods (suffixes). Each tier has a budget range and naming convention. All configurable.
-- **Stat family detection** — items auto-classified as physical, caster, or hybrid. New affixes only added from the same family.
-- **Spell-effect items** — trinkets and proc weapons with no stat slots get bonus stats derived from item level. Spell effects preserved.
-- **Quality promotion** — high-tier variants promoted to Epic (purple) or Legendary (orange) quality.
-- **Legendary system** — optional boss-named legendaries at 150% budget with configurable drop rates. "Edwin VanCleef's Cruel Barb" type naming with overlap detection.
-- **Batch mode** — run the Lootifier across entire dungeons or raids in one operation with full preview before commit.
-- **Full rollback** — per-creature or global. Every generated item and loot table change is tracked for clean undo.
-
-### Data
-
-**Database Explorer** — A universal, metadata-driven browser for all four VMaNGOS databases (mangos, characters, realmd, logs) — 255 tables total. This isn't phpMyAdmin. The Database Explorer treats the VMaNGOS schema as a connected graph, not isolated tables.
-
-![Database Explorer](Screenshots/database-explorer.png)
-
-VMaNGOS uses MyISAM with no declared foreign keys. MangosSuperUI solves this with a relationship discovery pipeline — a Python script that brute-force tests value overlap across every integer column pair in the schema, then scores and filters candidates using naming heuristics. The result: **749 curated relationship edges** (222 proven, 527 likely) shipped as a JSON file that the explorer loads at startup.
-
-What you get:
-
-- **Data grid** — paginated, sortable, searchable. Inline editing — double-click any cell to edit, Tab to advance, Enter to commit. Insert and delete rows. All mutations audit-logged with before/after state.
-- **Relationship panel** — select any row and see every table connected to it, split into "References" (outbound) and "Referenced By" (inbound) with row counts. Expand any relationship to see the actual connected rows inline. Click to navigate — the explorer follows the relationship and pushes a breadcrumb so you can trace back.
-- **Map view** — vertical relationship visualization centered on your selected row. Outbound references above, inbound below, connected by visual lines. Expand any card to see rows inline.
-- **ER diagram** — interactive SVG entity-relationship diagram for any table. Radial layout with the selected table at center, all connected tables arranged around it. Column-level detail with PK/FK highlighting. Proven edges drawn solid, likely edges dashed. Pan, zoom, click any node to recenter, double-click to navigate into that table.
-- **Breadcrumb navigation** — every relationship click pushes a breadcrumb. Trace paths like `creature_template → creature_loot_template → item_template → item_enchantment_template` and jump back to any point.
-- **CSV export** — export any table or filtered view. RFC 4180 compliant with formula injection prevention.
-- **Column name toggle** (WIP) — swap between raw column names and custom human-readable names. Double-click any header to set your own label, persisted to localStorage. No pre-built mappings yet — you define them as you go.
-- **Read-only enforcement** — `characters` and `logs` databases are read-only at the controller level. Tables without primary keys are also read-only.
+**Database Explorer** — Universal browser for all 255 tables across 4 VMaNGOS databases. This isn't phpMyAdmin — it treats the schema as a connected graph.
+- 749 curated relationship edges (discovered via brute-force column overlap testing)
+- Inline editing with audit-logged before/after state
+- Relationship panel with expand-to-see-rows navigation
+- Interactive SVG ER diagrams with radial layout
 
 ![ER Diagram](Screenshots/er-diagram.png)
 
-### OG Baseline System
+**Source Map** — C++ source tree explorer for VMaNGOS development. 4-layer indexing (files, symbols, types, enums), interactive call graph visualization, inline source preview, trace export. Built for understanding VMaNGOS internals without an IDE.
 
-Pristine snapshots of your mangos tables taken before you start editing. Every content page (Items, Spells, Game Objects, Loot Tuner, Instance Loot, Lootifier) shows field-level diffs against the original values. One-click reset at any level — per item, per boss, per instance, per table, or full nuclear reset. Custom items (entry ≥ 900000) are excluded since they have no original.
+**OG Baseline System** — Pristine snapshots of your mangos tables before editing. Field-level diffs on every content page. One-click reset at any granularity.
 
-### Downloads & Uploads
+**Downloads** — Host addon ZIPs for players. Auto-generates `Catalog.lua` for the MangosSuperUI_Placer WoW addon.
 
-Host WoW addon ZIPs for your players to download. Auto-generates a `Catalog.lua` file for the MangosSuperUI_Placer addon — a companion WoW addon that lets players place game objects in-game with `.gobject` commands.
-
-### Sidebar & Theme Customization
-
-Collapsible navigation groups, drag-to-reorder via a customize modal, and a full theme color picker for every major CSS variable (sidebar, content area, cards, accent, text). All persisted to localStorage. Make it yours.
-
-![Theme Customization](Screenshots/theme-customization.png)
+**Settings** — Full path and credential configuration through the web UI. DBC file status, ComfyUI node pool monitoring, Ollama connectivity. Configuration override system (`server-config.json` over `appsettings.json`).
 
 ---
 
@@ -143,31 +126,38 @@ Routes, DB queries,         Thin HTML shell,              All dynamic rendering,
 RA commands, audit          scoped CSS                    AJAX calls, DOM updates
 ```
 
-C# handles routing, business logic, and database access. Views are minimal HTML skeletons. JavaScript drives all UI rendering dynamically. This means every page is essentially a single-page app inside the MVC shell.
-
 Key services:
 
-- **RaService** — singleton persistent TCP connection to mangosd's RA interface. Every GM command goes through here.
-- **AuditService** — append-only audit trail. Every action logged with operator, IP, category, target, RA command/response, and full before/after state as JSON.
-- **DbcService** — parses WoW 1.12.1 DBC binary files at startup for icon resolution, spell metadata, and display info lookups.
-- **HeightMapService** — reads VMaNGOS `.map` binary files for terrain Z-coordinate resolution on the World Map.
-- **ProcessManagerService** — starts/stops/restarts mangosd and realmd via passwordless sudo systemctl.
+| Service | Role |
+|---------|------|
+| **RaService** | Singleton persistent TCP to mangosd RA. App-level keepalive, prompt-based read, auto-reconnect. |
+| **AuditService** | Append-only audit trail with before/after state snapshots. |
+| **ProcessManagerService** | Process detection via `/proc` scanning with 3-strategy fallback. Systemd start/stop/restart. |
+| **DbcService** | Parses 1.12.1 DBC binary files at startup for icon/spell/item metadata. |
+| **HeightMapService** | Reads VMaNGOS `.map` binary files for terrain Z resolution. |
+| **BotBridgeService** | TCP bridge (port 3444) between C++ AiBot AI and C# behavioral engine. |
+| **BotBrainService** | Decision loop orchestrator, domain routing, Ollama LLM dispatch. |
+| **PatchBuilderService** | DBC/M2/MPQ pipeline for Spell Creator unified patch generation. |
+| **SpellTextureService** | AI texture generation via ComfyUI/FLUX with BLP conversion. |
+| **SourceIndexerService** | C++ source tree indexer for Source Map (files, symbols, types, enums). |
+| **ComfyUIDispatcher** | Multi-node ComfyUI pool with channel-based token allocation. |
 
-Database access uses Dapper for VMaNGOS tables (read-heavy, raw SQL) and EF Core for MangosSuperUI's own `vmangos_admin` database. All VMaNGOS game-state mutations go through RA commands, with exceptions for direct table writes (items, spells, game objects, loot tables) that are fully audit-logged with before/after state.
-
-The Database Explorer adds a relationship discovery layer — a ~6MB JSON file of pre-computed edges loaded once at startup, with three indexed dictionaries for fast lookup. All SQL identifiers are validated against a schema whitelist before query construction.
+Database access uses Dapper for VMaNGOS tables (raw SQL, read-heavy) and auto-created tables in `vmangos_admin` for MangosSuperUI's own state. All SQL identifiers validated against schema whitelists.
 
 ---
 
 ## Requirements
 
 - A working **VMaNGOS 1.12.1** server (compiled, databases populated, able to log in and play)
-- **Ubuntu 22.04+** or similar Linux (tested on Ubuntu 24.04)
+- **Ubuntu 22.04+** or similar Linux (tested on Ubuntu 24.04 LTS)
 - **ASP.NET Core 8.0 Runtime** (or SDK if building from source)
-- **MariaDB 10.x+** or MySQL 5.5+ (whatever VMaNGOS is using)
+- **MariaDB 10.x+** or MySQL 5.5+
 - **WoW 1.12.1 client** (for asset extraction — optional but recommended)
 
-MangosSuperUI does NOT cover compiling VMaNGOS or populating the world database. See the [VMaNGOS Wiki](https://github.com/vmangos/wiki) for that.
+Optional for advanced features:
+- **Ollama** with a model like `qwen3:4b` (for Spell Creator prompts + AiBot chat)
+- **ComfyUI** with FLUX (for AI icon/texture generation)
+- **Python 3 + mpyq** (for M2/BLP extraction on the server)
 
 ---
 
@@ -175,51 +165,40 @@ MangosSuperUI does NOT cover compiling VMaNGOS or populating the world database.
 
 See **[INSTALL.md](INSTALL.md)** for the full step-by-step guide covering:
 
-- **Part 1:** VMaNGOS prerequisites — RA configuration, systemd services, account setup, sudo permissions
-- **Part 2:** MangosSuperUI deployment — .NET runtime, download/build, systemd service, setup script, dashboard verification
-- **Part 3:** Asset extraction — icons, 3D models, and minimap tiles from your WoW client (optional)
+- **Part 1:** VMaNGOS prerequisites — RA configuration (including the critical `Ra.MinLevel` gotcha), systemd services, account setup, sudo permissions
+- **Part 2:** MangosSuperUI deployment — .NET runtime, download/build, systemd service, setup script, dashboard verification with Diagnose button
+- **Part 3:** Asset extraction — icons, 3D models, and minimap tiles from your WoW client
+- **Part 4:** SpellCreator & WorldViewer assets — M2/BLP extraction via python mpyq
+- **Part 5:** Validation script — comprehensive audit of your entire installation
 
-The setup script auto-discovers your VMaNGOS paths, database connections, and configuration from `mangosd.conf`. The only thing you provide manually is your RA username and password.
+The setup script auto-discovers your VMaNGOS paths, database connections, and configuration from `mangosd.conf`. The Dashboard's Diagnose button actively tests every subsystem and tells you specifically what needs fixing.
 
 ---
 
 ## Roadmap
 
-MangosSuperUI is built in phases. This release is **Phases 1–3.5**.
+### Built and Working
 
-### Released (Phases 1–3.5)
+Everything listed in [Features](#features). Server management, content editors, world map, 3D world viewer with WMO placement, spell creator with AI visuals, AI playerbots with LLM chat, database explorer with ER diagrams, source map, backup system, full audit trail.
 
-Everything listed above in [Features](#features). Server management, content editors for items/spells/game objects/loot, world map, Database Explorer with relationship graphs and ER diagrams, theme customization, full audit trail.
+### In Progress
+
+- **WorldViewer client rendering** — WMO placements commit to the game database but client-side rendering of custom displayIds needs investigation
+- **Cave/interior WMO rendering** — group file loading and DoubleSide material for interior geometry
+- **GPU instancing optimization** — `InstancedMesh` fetch queue throttling and distance-based LOD culling
+
+### Planned
+
+- **Vendors & Creatures** — NPC browsing, vendor inventory editing, trainer spell lists
+- **Quests** — quest template editor, quest reward lootification
+- **Game Tuning** — XP/honor/reputation rate sliders
+- **Docker Compose** packaging for one-command deployment
+- **Smart quest reward choice** for bots (ScoreItem comparison)
+- **Sound integration** for Spell Creator via SoundEntries.dbc
 
 ### Development Philosophy
 
-If any single feature or phase hits a wall beyond ~50 hours of effort, I'll skip it and move on to the next phase or section rather than throttle progress on everything else. The goal is steady forward momentum across the whole platform, not getting stuck on one piece.
-
-### Phase 4 — Playerbot Management
-
-VMaNGOS supports playerbots that simulate real players in the world. Phase 4 brings bot management into the UI:
-
-- Playerbot dashboard — spawn, despawn, configure, and monitor bots from the web interface
-- LLM-driven personality system — bots with distinct personalities, chat styles, and behavioral tendencies powered by local AI inference (Ollama)
-- Complex interactions — bots that respond to player chat, form groups, run dungeons, and make decisions based on their personality profiles
-- Scripting interface — define bot behaviors and event responses through the UI without touching code
-
-### Phase 5 — World Building
-
-Broader content creation tools for shaping the game world beyond items and loot:
-
-- **Vendors & Creatures** — new sidebar section. Browse, edit, and create NPCs. Manage vendor inventories (`npc_vendor`), trainer spell lists (`npc_trainer`), and creature templates
-- **Quests** — quest template editor for creating custom content. Quest reward lootification via `quest_mail_loot_template` (research complete, implementation pending)
-- **Game Tuning** — XP rate sliders, honor rate sliders, reputation multipliers. Rapid iteration knobs for tuning the overall game feel without restarting the server
-- **NPC/creature spawn overlay on World Map** — visual placement of creatures alongside game objects, with search and filtering
-
-### Other Planned Work
-
-- Docker Compose packaging for one-command deployment
-- Configurable original-item share in the Lootifier (currently hardcoded at 40%)
-- Loot table expansion math preview (before/after percentages)
-- Undo button on reversible audit entries
-- Database Explorer: saved queries, column visibility toggle, baseline diff view
+If any single feature hits a wall beyond ~50 hours, I skip it and move on. Steady forward momentum across the whole platform rather than getting stuck on one piece.
 
 ---
 
@@ -228,16 +207,15 @@ Broader content creation tools for shaping the game world beyond items and loot:
 | Layer | Technology |
 |-------|-----------|
 | Backend | ASP.NET Core 8.0 MVC (C#) |
-| Frontend | jQuery, vanilla JS, Bootstrap |
-| Real-time | SignalR (Console, Live Logs) |
-| Database | MariaDB/MySQL via Dapper (VMaNGOS) + EF Core (admin) |
-| 3D Models | Google model-viewer (GLB format) |
+| Frontend | jQuery, vanilla JS |
+| 3D Rendering | Three.js r128 (World Viewer, Visual Lab) |
+| Real-time | SignalR (Console, Live Logs, Bot Bridge) |
+| Database | MariaDB/MySQL via Dapper |
+| 3D Models | Google `<model-viewer>` (GLB), Three.js (terrain/WMO/M2) |
 | World Map | Leaflet.js with custom tile layers |
-| ER Diagrams | Custom SVG rendering with pan/zoom |
-| DBC Parsing | Custom binary parser (DbcService) |
-| Heightmaps | Custom binary parser (HeightMapService) |
-| Relationship Discovery | Python script → scored JSON (749 edges across 255 tables) |
-| Asset Extraction | [MangosSuperUI Extractor](https://github.com/Yafrovon/MangosSuperUI_Extractor) (separate tool, WinForms + War3Net.IO.Mpq) |
+| AI Inference | Ollama (LLM chat/prompts), ComfyUI/FLUX (icons/textures) |
+| MPQ/BLP/DBC | War3Net.IO.Mpq, custom binary parsers |
+| Asset Extraction | [MangosSuperUI Extractor](https://github.com/Yafrovon/MangosSuperUI_Extractor) (WinForms + War3Net) |
 
 ---
 
@@ -245,16 +223,17 @@ Broader content creation tools for shaping the game world beyond items and loot:
 
 ```
 MangosSuperUI/
-├── Controllers/          # 20 controllers — one per page + API endpoints
-├── Services/             # Core services (RA, Audit, DBC, HeightMap, Process Manager)
+├── Controllers/          # ~25 controllers — one per page + API endpoints
+├── Services/             # ~30 services (RA, Audit, DBC, Patch, Texture, Bot, etc.)
+├── BotLogic/             # AI playerbot behavioral engine (domains, tracking, data loaders)
 ├── Models/               # ConnectionFactory, POCOs
-├── Hubs/                 # SignalR hubs (Console, Live Logs)
+├── Hubs/                 # SignalR hubs (Console, Live Logs, Bot Bridge)
 ├── Views/                # Razor views — thin HTML shells
 ├── wwwroot/
 │   ├── js/               # One JS file per page — all dynamic rendering lives here
-│   ├── css/              # Global theme, baseline styles, help overlay
-│   ├── data/             # Curated JSON (commands, config metadata, instance bosses, relationships)
-│   ├── lib/              # Vendored libs (Leaflet, model-viewer)
+│   ├── css/              # Global theme, baseline styles
+│   ├── data/             # Curated JSON (commands, config metadata, relationships, etc.)
+│   ├── lib/              # Vendored libs (Leaflet, model-viewer, Three.js r128)
 │   ├── addons/           # MangosSuperUI_Placer WoW addon
 │   ├── icons/            # Item/spell icon PNGs (user-extracted)
 │   ├── models/           # Game object GLB models (user-extracted)
@@ -271,15 +250,15 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide. The short version
 
 Open an issue before submitting a PR. Bug reports, feature requests, and documentation improvements are all welcome.
 
-If you're adding a new page, follow the existing pattern: controller for routing and data, thin Razor view for the HTML shell, JS file for all dynamic rendering. Keep VMaNGOS database writes going through RA commands where possible, with direct SQL only for content tables (items, spells, game objects, loot) — and always audit-log the before/after state.
+If you're adding a new page, follow the existing pattern: C# controller for routing and data, thin Razor view for the HTML shell, JS file for all dynamic rendering. Keep VMaNGOS database writes going through RA commands where possible, with direct SQL for content tables — and always audit-log the before/after state.
 
 ---
 
 ## Acknowledgments
 
-MangosSuperUI was built with [Claude](https://claude.ai) (Anthropic) as a primary development resource — the same way I use it in my professional work. Claude was instrumental in architecture decisions, code generation, debugging, and documentation across the entire project. This would have taken significantly longer without it.
+MangosSuperUI was built with [Claude](https://claude.ai) (Anthropic) as a primary development resource — the same way I use it in my professional work. Claude was instrumental in architecture decisions, code generation, debugging, and documentation across the entire project.
 
-More fundamentally, none of this would exist without the years of work by the people who built and documented the systems underneath it. The VMaNGOS team and the broader MaNGOS lineage. The WoW modding community that reverse-engineered DBC formats, loot table mechanics, stat budget formulas, and the RA protocol. The wiki editors, forum posters, and GitHub contributors who wrote it all down so someone like me could find it fifteen years later. MangosSuperUI is a UI layer on top of knowledge that thousands of people contributed over two decades. I just made it clickable.
+None of this would exist without the years of work by the VMaNGOS team and the broader MaNGOS lineage. The WoW modding community that reverse-engineered DBC formats, M2 particle systems, loot table mechanics, stat budget formulas, and the RA protocol. The wiki editors, forum posters, and GitHub contributors who wrote it all down so someone like me could find it fifteen years later. MangosSuperUI is a UI layer on top of knowledge that thousands of people contributed over two decades. I just made it clickable.
 
 ---
 

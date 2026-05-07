@@ -478,6 +478,74 @@
             letter-spacing: 0.04em;
         }
 
+        /* --- Inventory Panel --- */
+        .bt-inv-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+            .bt-inv-section-title i {
+                margin-right: 4px;
+                font-size: 10px;
+            }
+
+        .bt-inv-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .bt-inv-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px 3px 4px;
+            background: var(--bg-card-alt);
+            border: 1px solid var(--border-light);
+            border-radius: 3px;
+            font-size: 11px;
+            cursor: default;
+            transition: border-color var(--transition-fast);
+        }
+
+            .bt-inv-item:hover {
+                border-color: var(--accent);
+            }
+
+        .bt-inv-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+            flex-shrink: 0;
+            image-rendering: pixelated;
+        }
+
+        .bt-inv-name {
+            font-weight: 500;
+            white-space: nowrap;
+            max-width: 140px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .bt-inv-slot {
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            flex-shrink: 0;
+        }
+
+        .bt-inv-stat {
+            font-size: 9px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
         /* --- Scrollbar Styling --- */
         .bt-roster::-webkit-scrollbar,
         .bt-detail::-webkit-scrollbar,
@@ -520,6 +588,17 @@
                 <div class="bt-engine-toggle" id="engineToggle" title="Toggle brain engine">
                     <span class="bt-engine-dot"></span>
                     <span class="bt-engine-label">Engine Off</span>
+                </div>
+                <div style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;">
+                    <label style="color:var(--text-muted);font-size:11px;margin:0;white-space:nowrap;">Grouping:</label>
+                    <select id="groupingMode" class="form-input" style="width:auto;font-size:11px;padding:2px 6px;height:26px;">
+                        <option value="0">Off</option>
+                        <option value="1">Sticky</option>
+                        <option value="2">Opportunistic</option>
+                    </select>
+                    <button id="autoFormGroups" class="btn-accent" style="font-size:10px;padding:2px 8px;height:26px;white-space:nowrap;" title="Auto-pair ungrouped bots by class">
+                        <i class="fa-solid fa-users"></i> Auto-Form
+                    </button>
                 </div>
                 <span class="status-dot offline" id="bridgeStatus"></span>
                 <span id="bridgeStatusText" style="font-weight:500;font-size:13px;">Connecting...</span>
@@ -569,12 +648,24 @@
 
             <!-- Main Layout -->
             <div class="bt-layout">
-                <!-- Left: Bot Roster -->
-                <div class="bt-roster" id="botRoster">
-                    <div class="bt-detail-empty" id="rosterEmpty">
-                        <i class="fa-solid fa-robot"></i>
-                        <div style="font-size:14px;">No bots connected</div>
-                        <div style="font-size:12px;margin-top:4px;">Waiting for AiBotAI on TCP 3444...</div>
+                <!-- Left: Bot Roster + Groups -->
+                <div style="display:flex;flex-direction:column;overflow:hidden;">
+                    <div class="bt-roster" id="botRoster" style="flex:1;overflow-y:auto;">
+                        <div class="bt-detail-empty" id="rosterEmpty">
+                            <i class="fa-solid fa-robot"></i>
+                            <div style="font-size:14px;">No bots connected</div>
+                            <div style="font-size:12px;margin-top:4px;">Waiting for AiBotAI on TCP 3444...</div>
+                        </div>
+                    </div>
+                    <!-- Groups Panel -->
+                    <div class="bt-section" style="margin-top:8px;flex-shrink:0;max-height:200px;overflow-y:auto;">
+                        <div class="bt-section-header">
+                            <span><i class="fa-solid fa-users" style="color:var(--accent);margin-right:6px;"></i>Groups</span>
+                            <span id="groupCount" style="font-size:10px;color:var(--text-muted);">0</span>
+                        </div>
+                        <div id="groupList" style="padding:6px 10px;">
+                            <div style="color:var(--text-muted);font-size:12px;">No active groups</div>
+                        </div>
                     </div>
                 </div>
 

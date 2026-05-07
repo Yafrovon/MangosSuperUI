@@ -115,6 +115,13 @@ public class BotBridgeHub : Hub
         await Clients.Caller.SendAsync("CommandAck", new { guid, command = "INTERACT_NPC", npcGuid, success = true });
     }
 
+    public async Task SendTakeFlight(int guid, int sourceNode, int destNode)
+    {
+        _logger.LogInformation("BotBridgeHub: TAKE_FLIGHT bot {Guid} {Src} → {Dst}", guid, sourceNode, destNode);
+        await _bridge.SendTakeFlightAsync(guid, sourceNode, destNode);
+        await Clients.Caller.SendAsync("CommandAck", new { guid, command = "TAKE_FLIGHT", sourceNode, destNode, success = true });
+    }
+
     public override async Task OnConnectedAsync()
     {
         _logger.LogInformation("BotBridge UI client connected: {ConnectionId}", Context.ConnectionId);

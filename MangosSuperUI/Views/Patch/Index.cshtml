@@ -1,0 +1,1010 @@
+@{
+    ViewData["Title"] = "Spell Creator";
+}
+
+@section Styles {
+    <style>
+        /* Top bar — patch + install */
+        .sc-topbar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+
+        .sc-topbar-patch {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            gap: 12px;
+        }
+
+        .sc-topbar-patch-info {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sc-topbar-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        /* Custom Spells Modal */
+        .spells-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,.6);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .spells-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-lg);
+            width: 600px;
+            max-width: 95vw;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 24px 64px rgba(0,0,0,.5);
+        }
+
+        .spells-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .spells-modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+            .spells-modal-title i {
+                color: var(--accent);
+            }
+
+        .spells-modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px 8px;
+        }
+
+            .spells-modal-close:hover {
+                color: var(--text-primary);
+            }
+
+        .spells-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+
+        /* Spell Creator panels */
+        .sc-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .sc-panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+            .sc-panel-title i {
+                color: var(--accent);
+                font-size: 13px;
+            }
+
+        .sc-label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            margin-top: 10px;
+        }
+
+            .sc-label:first-child {
+                margin-top: 0;
+            }
+
+        .source-search-wrap {
+            position: relative;
+        }
+
+        .source-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            max-height: 250px;
+            overflow-y: auto;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+            .source-results.open {
+                display: block;
+            }
+
+        .source-result {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .source-result:hover {
+                background: var(--surface-alt);
+            }
+
+        .source-result-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .source-result-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 6px;
+        }
+
+        .source-result-id {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        .search-empty {
+            padding: 12px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .source-selected {
+            padding: 8px 12px;
+            background: var(--surface-alt);
+            border-radius: var(--radius-sm);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .source-selected-name {
+            font-weight: 500;
+        }
+
+        .source-selected-id {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        .source-clear {
+            cursor: pointer;
+            color: var(--text-muted);
+            padding: 4px;
+        }
+
+            .source-clear:hover {
+                color: #e74c3c;
+            }
+
+        .preset-grid {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+
+        .preset-btn {
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            border: 2px solid transparent;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+
+            .preset-btn.active {
+                border-color: var(--text-primary);
+            }
+
+            .preset-btn[data-preset="shadow"] {
+                background: #3c0a9633;
+                color: #bb55ff;
+            }
+
+            .preset-btn[data-preset="frost"] {
+                background: #11226633;
+                color: #5599ff;
+            }
+
+            .preset-btn[data-preset="holy"] {
+                background: #ccaa0033;
+                color: #fff0aa;
+            }
+
+            .preset-btn[data-preset="nature"] {
+                background: #11551133;
+                color: #33cc33;
+            }
+
+            .preset-btn[data-preset="arcane"] {
+                background: #66008833;
+                color: #ff88ff;
+            }
+
+            .preset-btn[data-preset="fire"] {
+                background: #ff662233;
+                color: #ff6622;
+            }
+
+            .preset-btn[data-preset="none"] {
+                background: var(--surface-alt);
+                color: var(--text-muted);
+            }
+
+        .intensity-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 4px;
+        }
+
+            .intensity-row input[type="range"] {
+                flex: 1;
+            }
+
+        .intensity-value {
+            font-family: monospace;
+            font-size: 13px;
+            color: var(--text-primary);
+            min-width: 35px;
+        }
+
+        .icon-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 8px;
+        }
+
+        .icon-result {
+            margin-top: 8px;
+            padding: 8px;
+            background: var(--surface-alt);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+        }
+
+            .icon-result.error {
+                color: #e74c3c;
+            }
+
+        .icon-result-title {
+            font-weight: 500;
+        }
+
+        .icon-result-meta {
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .icon-result-prompt {
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 4px;
+            font-size: 11px;
+        }
+
+        .icon-preview {
+            width: 64px;
+            height: 64px;
+            margin-top: 6px;
+            border-radius: 4px;
+            image-rendering: pixelated;
+        }
+
+        .patch-result {
+            padding: 12px;
+            border-radius: var(--radius-sm);
+            margin-top: 12px;
+            font-size: 13px;
+        }
+
+            .patch-result.success {
+                background: #22aa2222;
+                border: 1px solid #22aa2244;
+            }
+
+            .patch-result.error {
+                background: #cc333322;
+                border: 1px solid #cc333344;
+                color: #e74c3c;
+            }
+
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .result-detail {
+            margin-top: 3px;
+            color: var(--text-secondary);
+        }
+
+        .custom-spell-row {
+            padding: 8px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .custom-spell-row:last-child {
+                border-bottom: none;
+            }
+
+        .custom-spell-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .custom-spell-id {
+            font-family: monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .custom-spell-name {
+            font-weight: 500;
+        }
+
+        .custom-spell-school {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .custom-spell-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .spell-action-btn {
+            padding: 4px 8px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+            .spell-action-btn:hover {
+                color: var(--text-primary);
+                border-color: var(--border-medium);
+            }
+
+        .btn-delete-spell:hover {
+            color: #e74c3c;
+            border-color: #e74c3c;
+        }
+
+        .teach-modal {
+            padding: 12px;
+            background: var(--surface-alt);
+            border-radius: var(--radius-md);
+            margin-top: 12px;
+        }
+
+        .teach-title {
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .teach-select {
+            width: 100%;
+            padding: 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .teach-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .teach-btn {
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-light);
+            cursor: pointer;
+            font-size: 12px;
+            background: var(--card-bg);
+            color: var(--text-primary);
+        }
+
+        .teach-confirm {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+        }
+
+        .teach-cancel {
+            background: var(--surface-alt);
+        }
+
+        .teach-known {
+            margin-top: 10px;
+        }
+
+        .teach-known-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .teach-known-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+
+        .teach-unlearn {
+            font-size: 11px;
+            padding: 2px 8px;
+            color: #e74c3c;
+        }
+
+        .patch-file {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .patch-file:last-child {
+                border-bottom: none;
+            }
+
+        .patch-file-icon {
+            color: var(--accent);
+            font-size: 18px;
+        }
+
+        .patch-file-info {
+            flex: 1;
+        }
+
+        .patch-file-name {
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .patch-file-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .patch-file-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .patch-file-btn {
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-light);
+            cursor: pointer;
+            font-size: 12px;
+            background: var(--surface-alt);
+            color: var(--text-muted);
+        }
+
+            .patch-file-btn.download:hover {
+                color: var(--accent);
+            }
+
+            .patch-file-btn.delete:hover {
+                color: #e74c3c;
+            }
+
+        .sc-install-toggle {
+            font-size: 12px;
+            color: var(--accent);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+            .sc-install-toggle:hover {
+                text-decoration: underline;
+            }
+
+        .sc-install-body {
+            display: none;
+            margin-top: 10px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+            .sc-install-body.open {
+                display: block;
+            }
+
+            .sc-install-body code {
+                background: var(--surface-alt);
+                padding: 1px 5px;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+
+            .sc-install-body ol {
+                padding-left: 20px;
+            }
+
+            .sc-install-body li {
+                margin-bottom: 6px;
+            }
+
+        .empty-state {
+            padding: 16px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+            .empty-state.error {
+                color: #e74c3c;
+            }
+
+        /* ── Visual Designer — Session 11 ── */
+
+        .designer-toggle-wrap {
+            margin: 12px 0 4px;
+        }
+
+        .designer-toggle-btn {
+            width: 100%;
+            padding: 10px 16px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            color: var(--text-muted);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.15s;
+        }
+
+            .designer-toggle-btn:hover {
+                border-color: var(--accent);
+                color: var(--text-primary);
+            }
+
+            .designer-toggle-btn.active {
+                border-color: var(--accent);
+                color: var(--accent);
+                background: rgba(85,153,255,0.05);
+            }
+
+            .designer-toggle-btn i {
+                font-size: 16px;
+            }
+
+        .designer-toggle-hint {
+            margin-left: auto;
+            font-size: 12px;
+            opacity: 0.5;
+        }
+
+        .designer-panel {
+            margin: 8px 0 16px;
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            background: var(--card-bg);
+            overflow: hidden;
+        }
+
+        .designer-presets {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-light);
+            flex-wrap: wrap;
+        }
+
+        .designer-presets-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-right: 4px;
+            white-space: nowrap;
+        }
+
+        .recipe-btn {
+            padding: 4px 12px;
+            border: 1px solid var(--border-light);
+            border-radius: 14px;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+
+            .recipe-btn:hover {
+                border-color: var(--accent);
+                color: var(--text-primary);
+            }
+
+            .recipe-btn.active {
+                border-color: var(--accent);
+                background: rgba(85,153,255,0.15);
+                color: var(--accent);
+            }
+
+        .phase-card {
+            border-bottom: 1px solid var(--border-light);
+        }
+
+            .phase-card:last-child {
+                border-bottom: none;
+            }
+
+        .phase-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+            .phase-header:hover {
+                background: var(--surface-alt);
+            }
+
+        .phase-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-primary);
+            min-width: 100px;
+        }
+
+        .phase-icon {
+            font-size: 14px;
+            opacity: 0.7;
+            width: 18px;
+            text-align: center;
+        }
+
+        .phase-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            flex: 1;
+        }
+
+        .phase-collapse-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+
+        .phase-body {
+            padding: 4px 14px 14px;
+        }
+
+        .knob-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 0;
+        }
+
+        .knob-label-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 180px;
+            flex-shrink: 0;
+        }
+
+        .knob-icon {
+            font-size: 12px;
+            color: var(--text-muted);
+            width: 16px;
+            text-align: center;
+        }
+
+        .knob-label {
+            font-size: 13px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            cursor: default;
+        }
+
+        .knob-desc {
+            display: none;
+        }
+
+        .knob-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .knob-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border-light);
+            outline: none;
+            cursor: pointer;
+        }
+
+            .knob-slider::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                background: var(--accent);
+                border: 2px solid var(--card-bg);
+                cursor: pointer;
+                transition: transform 0.1s;
+            }
+
+                .knob-slider::-webkit-slider-thumb:hover {
+                    transform: scale(1.2);
+                }
+
+            .knob-slider::-moz-range-thumb {
+                width: 14px;
+                height: 14px;
+                border-radius: 50%;
+                background: var(--accent);
+                border: 2px solid var(--card-bg);
+                cursor: pointer;
+            }
+
+        .knob-value {
+            font-size: 13px;
+            font-family: monospace;
+            color: var(--text-primary);
+            min-width: 42px;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        @@media (max-width: 600px) {
+            .knob-row {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 4px;
+            }
+
+            .knob-label-wrap {
+                min-width: unset;
+            }
+
+            .knob-control {
+                padding-left: 24px;
+            }
+
+            .phase-desc {
+                display: none;
+            }
+        }
+    </style>
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h1>Spell Creator</h1>
+                    <p>Create custom spells with recolored particle effects and AI-generated icons.</p>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn-outline-subtle" id="btnOpenSpellsModal">
+                        <i class="fa-solid fa-wand-sparkles"></i> Custom Spells
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-body">
+
+            <!-- Top bar: Patch download + Install guide (always visible) -->
+            <div class="sc-topbar">
+                <div class="sc-topbar-patch">
+                    <div class="sc-topbar-patch-info">
+                        <i class="fa-solid fa-file-zipper" style="color:var(--accent);margin-right:6px"></i>
+                        <span id="topbarPatchName" style="font-size:12px;color:var(--text-secondary)">No patch yet</span>
+                        <span id="topbarPatchMeta" style="font-size:11px;color:var(--text-muted);margin-left:8px"></span>
+                    </div>
+                    <div class="sc-topbar-actions">
+                        <button class="btn-accent" id="btnTopbarDownload" style="display:none;padding:6px 14px;font-size:12px">
+                            <i class="fa-solid fa-download"></i> Download
+                        </button>
+                        <button class="btn-outline-subtle" id="btnTopbarInstall" style="padding:6px 14px;font-size:12px">
+                            <i class="fa-solid fa-circle-question"></i> Install Guide
+                        </button>
+                    </div>
+                </div>
+                <div id="installBody" style="display:none;padding:0 16px 12px">
+                    <ol style="font-size:12px;color:var(--text-secondary);padding-left:18px;margin:0">
+                        <li>Download <code>patch-3.MPQ</code> from above.</li>
+                        <li>Copy it to your WoW client's <code>Data/</code> folder (replacing any existing patch-3.MPQ).</li>
+                        <li><strong>Delete your <code>WDB/</code> folder</strong> inside the WoW directory (stale tooltip cache).</li>
+                        <li>Restart the VMaNGOS server (<code>sudo systemctl restart mangosd</code>) for spell_template changes.</li>
+                        <li>Log in — custom spells appear in your spellbook under the chosen class skill tab.</li>
+                    </ol>
+                    <p style="margin-top:8px;font-size:11px;color:var(--text-muted)">
+                        <strong>Note:</strong> All custom spells are packaged into a single unified <code>patch-3.MPQ</code>.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Full-width create area -->
+            <div class="sc-panel">
+                <div class="sc-panel-title"><i class="fa-solid fa-bolt"></i> Create Custom Spell</div>
+
+                <label class="sc-label">Source Spell (clone from)</label>
+                <div class="source-search-wrap">
+                    <input type="text" id="sourceSearch" class="form-input" placeholder="Search by name or entry ID..." autocomplete="off" />
+                    <div id="sourceResults" class="source-results"></div>
+                </div>
+                <div id="sourceSelected" style="display:none; margin-top:6px;"></div>
+
+                <label class="sc-label">Spell Name</label>
+                <input type="text" id="spellName" class="form-input" placeholder="e.g. Void Lance" />
+
+                <label class="sc-label">Subtext</label>
+                <input type="text" id="nameSubtext" class="form-input" placeholder="e.g. Rank 1" value="Rank 1" />
+
+                <label class="sc-label">Description</label>
+                <textarea id="spellDesc" class="form-input" placeholder="Tooltip description..." style="resize:vertical;min-height:60px"></textarea>
+
+                <label class="sc-label">School</label>
+                <select id="spellSchool" class="form-input">
+                    <option value="0">Physical</option>
+                    <option value="1">Holy</option>
+                    <option value="2">Fire</option>
+                    <option value="3">Nature</option>
+                    <option value="4">Frost</option>
+                    <option value="5" selected>Shadow</option>
+                    <option value="6">Arcane</option>
+                </select>
+
+                <label class="sc-label">Particle Color</label>
+                <div class="preset-grid">
+                    <button class="preset-btn active" data-preset="shadow">Shadow</button>
+                    <button class="preset-btn" data-preset="frost">Frost</button>
+                    <button class="preset-btn" data-preset="holy">Holy</button>
+                    <button class="preset-btn" data-preset="nature">Nature</button>
+                    <button class="preset-btn" data-preset="arcane">Arcane</button>
+                    <button class="preset-btn" data-preset="fire">Fire</button>
+                    <button class="preset-btn" data-preset="none">None</button>
+                </div>
+
+                <label class="sc-label">Particle Intensity</label>
+                <div class="intensity-row">
+                    <input type="range" id="intensity" min="0.5" max="5.0" step="0.1" value="1.0" />
+                    <span class="intensity-value" id="intensityValue">1.0×</span>
+                </div>
+
+                <div id="designerContainer"></div>
+
+                <label class="sc-label">Icon</label>
+                <div class="icon-row">
+                    <label style="font-size:12px; display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" id="chkGenerateIcon" /> AI-generate icon (FLUX Q5)
+                    </label>
+                    <button id="btnGenerateIcon" class="btn-outline-subtle" style="margin-left:auto;padding:6px 12px;font-size:12px">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Preview
+                    </button>
+                </div>
+                <div id="iconResult"></div>
+
+                <label class="sc-label">Teach To Character</label>
+                <select id="teachCharacter" class="form-input">
+                    <option value="0">None (teach later)</option>
+                </select>
+
+                <button id="btnGenerate" class="btn-accent" style="width:100%;margin-top:16px;padding:12px">
+                    <i class="fa-solid fa-bolt"></i> Create Spell & Generate Patch
+                </button>
+
+                <div id="generateResult"></div>
+            </div>
+
+            <!-- Experiment Lab panel (shown/hidden by mode selector) -->
+            <div class="sc-panel" id="experimentPanel" style="display:none">
+                <div class="sc-panel-title"><i class="fa-solid fa-flask"></i> Experiment Lab</div>
+                <div id="experimentContent"></div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Custom Spells Modal -->
+<div class="spells-modal-overlay" id="spellsModalOverlay" style="display:none">
+    <div class="spells-modal">
+        <div class="spells-modal-header">
+            <div class="spells-modal-title"><i class="fa-solid fa-wand-sparkles"></i> Custom Spells</div>
+            <button class="spells-modal-close" id="btnCloseSpellsModal"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="spells-modal-body" id="customSpellsList"></div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/spells/patch-manager.js" asp-append-version="true"></script>
+    <script src="~/js/spells/experiment-lab.js" asp-append-version="true"></script>
+    <script src="~/js/spells/spell-guided-wizard.js" asp-append-version="true"></script>
+}

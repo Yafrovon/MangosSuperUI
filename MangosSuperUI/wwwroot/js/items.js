@@ -870,7 +870,7 @@ $(function () {
     }
 
     function selectIcon(cell) {
-        var displayIds = JSON.parse($(cell).data('display-ids') || '[]');
+         var displayIds = JSON.parse($(cell).attr('data-display-ids') || '[]');
         var iconName = $(cell).data('icon-name');
         if (displayIds.length === 0) return;
 

@@ -10,6 +10,8 @@ public class ExplorationDomain : IBotDomain
 {
     public ActivityType[] OwnedActivities => new[] { ActivityType.Exploring };
 
+    public bool IsOperational => true;
+
     public Dictionary<ActivityType, float> EvaluateTransitions(BotIdentity bot, BotStateSnapshot state)
     {
         var weights = new Dictionary<ActivityType, float>();
@@ -52,10 +54,11 @@ public class ExplorationDomain : IBotDomain
         float distance = WeightedRoller.Range(50f, wanderRadius);
         float newX = state.X + (float)Math.Cos(angle) * distance;
         float newY = state.Y + (float)Math.Sin(angle) * distance;
+        var (jitterX, jitterY) = WeightedRoller.Jitter(newX, newY);
 
         return new List<BridgeCommand>
         {
-            new BridgeCommand("MOVE_TO", new { mapId = state.MapId, x = newX, y = newY, z = state.Z })
+            new BridgeCommand("MOVE_TO", new { mapId = state.MapId, x = jitterX, y = jitterY, z = state.Z })
         };
     }
 
@@ -73,8 +76,9 @@ public class ExplorationDomain : IBotDomain
                 float distance = WeightedRoller.Range(30f, 80f);
                 float newX = state.X + (float)Math.Cos(angle) * distance;
                 float newY = state.Y + (float)Math.Sin(angle) * distance;
+                var (jitterX, jitterY) = WeightedRoller.Jitter(newX, newY);
 
-                commands.Add(new BridgeCommand("MOVE_TO", new { mapId = state.MapId, x = newX, y = newY, z = state.Z }));
+                commands.Add(new BridgeCommand("MOVE_TO", new { mapId = state.MapId, x = jitterX, y = jitterY, z = state.Z }));
                 bot.CurrentActivity.SubPhase = "Wandering";
             }
         }

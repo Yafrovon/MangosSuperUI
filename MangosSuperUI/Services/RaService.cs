@@ -11,17 +11,20 @@ public class RaService : IDisposable
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly RemoteAccessSettings _settings;
     private readonly ILogger<RaService> _logger;
-    private bool _authenticated;
+    private bool _alive;              // OUR liveness flag — only set false on actual I/O failure
     private Timer? _keepAliveTimer;
     private DateTime _lastCommandUtc = DateTime.MinValue;
 
     /// <summary>
-    /// How often the keepalive timer fires (seconds).
-    /// Must be well under mangosd's RA idle timeout (~60s).
+    /// Application-level keepalive interval (seconds).
+    /// This is the SOLE mechanism keeping the connection alive.
+    /// We do NOT use OS-level TCP keepalive because on Linux, the kernel's
+    /// keepalive probes cause TcpClient.Connected to return false, which
+    /// was triggering spurious reconnects.
     /// </summary>
     private const int KeepAliveIntervalSec = 25;
 
-    public bool IsConnected => _client?.Connected == true && _authenticated;
+    public bool IsConnected => _alive;
 
     public RaService(IOptions<RemoteAccessSettings> settings, ILogger<RaService> logger)
     {
@@ -35,6 +38,10 @@ public class RaService : IDisposable
         try
         {
             await EnsureConnectedAsync(ct);
+
+            // Drain any stale bytes left in the buffer from a previous
+            // read that returned on idle-timeout without consuming the prompt
+            DrainStaleData();
 
             var cmdBytes = Encoding.UTF8.GetBytes(command + "\n");
             await _stream!.WriteAsync(cmdBytes, ct);
@@ -58,49 +65,50 @@ public class RaService : IDisposable
 
     private async Task EnsureConnectedAsync(CancellationToken ct)
     {
-        if (IsConnected)
+        if (_alive && _stream != null)
             return;
 
         Disconnect();
 
         _logger.LogInformation("Connecting to RA at {Host}:{Port}", _settings.Host, _settings.Port);
 
-        _client = new TcpClient();
+        _client = new TcpClient
+        {
+            NoDelay = true
+        };
         await _client.ConnectAsync(_settings.Host, _settings.Port, ct);
         _stream = _client.GetStream();
 
-        // Read the welcome banner ("Welcome to World of Warcraft!")
+        // Read the welcome banner
         await ReadResponseAsync(ct);
 
         // Send username
-        var userBytes = Encoding.UTF8.GetBytes(_settings.Username + "\n");
-        await _stream.WriteAsync(userBytes, ct);
-        await _stream.FlushAsync(ct);
+        await WriteLineAsync(_settings.Username, ct);
 
-        // Read auth response ("Patch 1.12: Drums of War is now live!")
+        // Read password prompt
         var authResponse = await ReadResponseAsync(ct);
         _logger.LogInformation("RA auth response: {Response}", authResponse);
 
         // Send password
-        var passBytes = Encoding.UTF8.GetBytes(_settings.Password + "\n");
-        await _stream.WriteAsync(passBytes, ct);
-        await _stream.FlushAsync(ct);
+        await WriteLineAsync(_settings.Password, ct);
 
-        // Read post-auth response (if any)
+        // Read post-auth response (+Logged in.\r\nmangos>)
         await ReadResponseAsync(ct);
 
-        _authenticated = true;
+        _alive = true;
         _lastCommandUtc = DateTime.UtcNow;
         _logger.LogInformation("RA connection established and authenticated");
 
-        // Start keepalive timer to prevent mangosd from closing the idle connection
         StartKeepAlive();
     }
 
-    /// <summary>
-    /// Starts (or restarts) a timer that sends a lightweight command to keep
-    /// the RA socket alive. Only fires if no real command has been sent recently.
-    /// </summary>
+    private async Task WriteLineAsync(string text, CancellationToken ct)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text + "\n");
+        await _stream!.WriteAsync(bytes, ct);
+        await _stream.FlushAsync(ct);
+    }
+
     private void StartKeepAlive()
     {
         _keepAliveTimer?.Dispose();
@@ -113,34 +121,31 @@ public class RaService : IDisposable
     {
         // Skip if a real command was sent recently
         var elapsed = DateTime.UtcNow - _lastCommandUtc;
-        if (elapsed.TotalSeconds < KeepAliveIntervalSec - 2)
+        if (elapsed.TotalSeconds < KeepAliveIntervalSec - 5)
             return;
 
-        // Try to acquire semaphore without blocking — if something else is
-        // using the connection right now, it's already alive, skip this tick.
+        // Non-blocking acquire — if a real command is in flight, skip
         if (!await _semaphore.WaitAsync(0))
             return;
 
         try
         {
-            if (!IsConnected || _stream == null)
+            if (!_alive || _stream == null)
                 return;
 
-            // Send a newline — mangosd RA treats it as a no-op but resets
-            // the idle timer. Much cheaper than a full ".server info".
-            var ping = Encoding.UTF8.GetBytes("\n");
-            await _stream.WriteAsync(ping);
-            await _stream.FlushAsync();
+            // Drain stale bytes, send newline, read prompt
+            DrainStaleData();
 
-            // Drain any prompt/echo that comes back (the mangos> prompt)
+            await WriteLineAsync("", default);
+
             await ReadResponseAsync(default);
             _lastCommandUtc = DateTime.UtcNow;
 
-            _logger.LogDebug("RA keepalive sent");
+            _logger.LogDebug("RA keepalive OK");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "RA keepalive failed — connection will reconnect on next command");
+            _logger.LogWarning(ex, "RA keepalive failed — will reconnect on next command");
             Disconnect();
         }
         finally
@@ -150,23 +155,54 @@ public class RaService : IDisposable
     }
 
     /// <summary>
-    /// Reads from the stream until no more data arrives within the idle timeout.
-    /// VMaNGOS RA has no prompt — we detect end-of-response by silence.
+    /// Synchronously drains any bytes sitting in the receive buffer.
+    /// Prevents protocol desync from a previous ReadResponseAsync that
+    /// returned on idle-timeout without consuming the full prompt.
+    /// </summary>
+    private void DrainStaleData()
+    {
+        if (_stream == null)
+            return;
+
+        try
+        {
+            while (_stream.DataAvailable)
+            {
+                var junk = new byte[4096];
+                var n = _stream.Read(junk, 0, junk.Length);
+                if (n == 0) break;
+                _logger.LogDebug("RA drained {Bytes} stale bytes", n);
+            }
+        }
+        catch
+        {
+            // If draining fails, the next real I/O will catch it
+        }
+    }
+
+    /// <summary>
+    /// Reads until the "mangos>" prompt is detected or silence is detected.
+    /// Two-phase timeout: generous wait for the first byte (mangosd processes
+    /// CLI commands on its world-tick), then tight timeout between chunks.
     /// </summary>
     private async Task<string> ReadResponseAsync(CancellationToken ct)
     {
         var sb = new StringBuilder();
         var buffer = new byte[4096];
-        var idleTimeoutMs = 800;
         var overallTimeoutMs = _settings.CommandTimeoutMs;
 
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overallCts.CancelAfter(overallTimeoutMs);
 
+        var isFirstRead = true;
+
         while (true)
         {
+            // First byte: 3s (world-tick delay). Subsequent: 500ms.
+            var idleMs = isFirstRead ? 3000 : 500;
+
             using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(overallCts.Token);
-            idleCts.CancelAfter(idleTimeoutMs);
+            idleCts.CancelAfter(idleMs);
 
             try
             {
@@ -174,16 +210,20 @@ public class RaService : IDisposable
                 if (bytesRead == 0)
                     throw new IOException("RA connection closed by remote host");
 
+                isFirstRead = false;
                 sb.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+
+                // Prompt-based completion
+                if (sb.ToString().Contains("mangos>"))
+                    break;
             }
             catch (OperationCanceledException) when (!overallCts.Token.IsCancellationRequested)
             {
-                // Idle timeout — no more data coming, response is complete
+                // Idle timeout — no more data
                 break;
             }
             catch (OperationCanceledException)
             {
-                // Overall timeout
                 if (sb.Length > 0)
                     break;
 
@@ -194,28 +234,31 @@ public class RaService : IDisposable
         return sb.ToString().Trim();
     }
 
-    /// <summary>
-    /// Strips the +mangos> / -mangos> prompt and trailing whitespace from RA responses.
-    /// </summary>
     private static string CleanResponse(string raw)
     {
         if (string.IsNullOrEmpty(raw))
             return raw;
 
         var cleaned = raw;
-        if (cleaned.EndsWith("+mangos>"))
-            cleaned = cleaned[..^"+mangos>".Length];
-        else if (cleaned.EndsWith("-mangos>"))
-            cleaned = cleaned[..^"-mangos>".Length];
-        else if (cleaned.EndsWith("mangos>"))
-            cleaned = cleaned[..^"mangos>".Length];
+        for (var pass = 0; pass < 2; pass++)
+        {
+            cleaned = cleaned.TrimEnd();
+            if (cleaned.EndsWith("+mangos>"))
+                cleaned = cleaned[..^"+mangos>".Length];
+            else if (cleaned.EndsWith("-mangos>"))
+                cleaned = cleaned[..^"-mangos>".Length];
+            else if (cleaned.EndsWith("mangos>"))
+                cleaned = cleaned[..^"mangos>".Length];
+            else
+                break;
+        }
 
         return cleaned.TrimEnd();
     }
 
     private void Disconnect()
     {
-        _authenticated = false;
+        _alive = false;
         _keepAliveTimer?.Dispose();
         _keepAliveTimer = null;
         try { _stream?.Dispose(); } catch { }

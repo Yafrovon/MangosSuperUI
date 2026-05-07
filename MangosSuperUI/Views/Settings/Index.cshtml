@@ -220,6 +220,123 @@
                 </div>
             </div>
 
+            <!-- Spell Creator Paths -->
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--accent);"></i>
+                    Spell Creator Paths
+                </div>
+                <div class="card-body">
+                    <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px;">
+                        Paths used by the Spell Creator's patch pipeline. M2 particle files are sourced from the pre-extracted directory first,
+                        falling back to <code>patch*.MPQ</code> files in the client data directory. The output directory is where <code>patch-3.MPQ</code> is written.
+                    </p>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Pre-extracted M2 Files
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Directory containing M2 particle effect files extracted from the client's patch.MPQ via Ladik's MPQ Editor. Preserves MPQ path structure (e.g. Spells/Fire_Cast_Hand.m2). This is the PRIMARY source — model.MPQ is blacklisted."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgClientM2Path" placeholder="/home/wowvmangos/wowclient/m2" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Client Data Directory
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Directory containing the WoW client's MPQ archives (patch.MPQ, patch-2.MPQ, etc). Used as FALLBACK when an M2 isn't found in the pre-extracted directory. model.MPQ is excluded automatically."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgClientDataPath" placeholder="/home/wowvmangos/wowclient/Data" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Patch Output Directory
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Where the unified patch-3.MPQ is written. Players download this file and place it in their WoW client's Data folder."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgPatchOutputPath" placeholder="/opt/mangossuperui/wwwroot/patches" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Services (ComfyUI + Ollama) -->
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fa-solid fa-microchip" style="color: var(--accent);"></i>
+                    AI Services
+                </div>
+                <div class="card-body">
+                    <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px;">
+                        ComfyUI nodes for FLUX image generation (spell icons + particle textures) and Ollama for prompt crafting.
+                        Multiple ComfyUI nodes form a pool — the dispatcher routes jobs to whichever node is idle, enabling parallel generation.
+                    </p>
+
+                    <!-- ComfyUI Nodes -->
+                    <div style="margin-bottom: 20px;">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <label class="cmd-label" style="margin: 0;">
+                                ComfyUI Nodes
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Each node is a ComfyUI instance on your network. The dispatcher checks GET /queue on each node and sends work to the first free one. Add more nodes to parallelize generation."></i>
+                            </label>
+                            <button class="btn-outline-subtle btn-xs" id="btnAddComfyNode" title="Add another ComfyUI node">
+                                <i class="fa-solid fa-plus"></i> Add Node
+                            </button>
+                        </div>
+                        <div id="comfyNodesContainer">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <!-- CLIP Model -->
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                CLIP T5 Model
+                                <i class="fa-solid fa-circle-question cfg-hint" title="The T5 text encoder model used in the FLUX workflow. Both ComfyUI nodes must have this file in their models/clip/ directory."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgClipModel2" placeholder="t5xxl_fp8_e4m3fn.safetensors" />
+                        </div>
+
+                        <!-- Ollama -->
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Ollama Base URL
+                                <i class="fa-solid fa-circle-question cfg-hint" title="HTTP endpoint for the Ollama API. Used to generate image prompts for spell icons and optionally refine texture prompts."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgOllamaUrl" placeholder="http://192.168.0.201:11434" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Ollama Model
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Ollama model tag for prompt generation. Must be pulled on the Ollama server (ollama pull <model>)."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgOllamaModel" placeholder="qwen3:4b-instruct-2507-q4_K_M" />
+                        </div>
+                        <!-- Vanilla BLP Reference -->
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Vanilla BLP Directory
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Directory containing extracted vanilla BLP files (lowercase filenames). VanillaBlpService reads actual BLP headers from here to match output dimensions, format (DXT1/DXT3), and alpha depth. Without this, all custom textures default to 512×512 DXT3 — causing dark missiles and square artifacts."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgRawBlpPath" placeholder="/home/wowvmangos/wowclient/rawblps/m2_blps" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Spell Creator Data
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Directory containing m2_texture_graph.json and blp_to_m2_reverse.json. These map M2 files to their vanilla BLP textures for the reference lookup."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgSpellDataPath" placeholder="/opt/mangossuperui/data" />
+                        </div>
+                    </div>
+
+                    <!-- Pool Status -->
+                    <div class="dbc-status-panel mt-3" id="comfyStatusPanel">
+                        <div class="d-flex align-items-center gap-2" id="comfyStatusRow">
+                            <i class="fa-solid fa-spinner fa-spin" style="font-size: 13px; color: var(--text-muted);"></i>
+                            <span style="font-size: 12.5px; color: var(--text-secondary);">Checking ComfyUI pool status...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Backup & Restore -->
             <div class="card mb-4">
                 <div class="card-header d-flex align-items-center gap-2">
@@ -319,6 +436,49 @@
                 font-weight: 600;
                 color: var(--text-primary);
             }
+
+        .comfy-node-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+            .comfy-node-row .form-input {
+                flex: 1;
+            }
+
+            .comfy-node-row .node-name-input {
+                max-width: 160px;
+            }
+
+        .btn-xs {
+            padding: 3px 10px;
+            font-size: 11.5px;
+        }
+
+        .btn-remove-node {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+            .btn-remove-node:hover {
+                color: var(--status-error);
+                border-color: var(--status-error);
+            }
+
+        .node-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
     </style>
 }
 

@@ -47,8 +47,12 @@ public class LiveStateModifiers
                 mods.ExploreWeight *= 1.5f;
 
             // Gold pressure (from BotIdentity shadow wallet — no DB query needed)
+            // Session 9 fix: Only apply vendoring pressure if the bot has items to sell.
+            // A level 1 bot with 0 copper and empty bags was getting VendorWeight *= 1.5
+            // which pushed it into vendoring loops with nothing to sell.
             float goldPerLevel = bot.CopperBalance / (float)Math.Max(1, bot.Level * 100);
-            if (goldPerLevel < 0.5f)
+            bool hasBagContents = (state.TotalSlots - state.FreeSlots) > 2;
+            if (goldPerLevel < 0.5f && hasBagContents)
                 mods.VendorWeight *= 1.5f;
             if (goldPerLevel > 3.0f)
                 mods.AHBuyWeight *= 1.3f;
