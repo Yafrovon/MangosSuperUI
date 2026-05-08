@@ -4,11 +4,11 @@ https://discord.gg/AzCdnyPHPY - Community Discord for updates, questions, bugs, 
 
 https://www.youtube.com/@Yafrovon — Video walkthroughs and feature demos
 
-A web-based server management, content development, and world building platform for [VMaNGOS](https://github.com/vmangos/core) 1.12.1 vanilla WoW private servers. Built with ASP.NET Core 8.0 MVC, jQuery, Three.js, and MariaDB/MySQL. Runs on Linux, developed on Windows.
+A web-based server management, content development, and world building platform for 1.12.1-compatible emulator projects [VMaNGOS](https://github.com/vmangos/core). Built with ASP.NET Core 8.0 MVC, jQuery, Three.js, and MariaDB/MySQL. Runs on Linux, developed on Windows.
 
 ## Why This Exists
 
-I run a private VMaNGOS server at home — not public, just for me. I wanted a single tool that brought together server ops, content editing, world building, spell creation, 3D terrain visualization, and AI-driven playerbots without requiring 100s of hours of manual scripting or scattered & disjointed tools/workflows. I looked for one and didn't find it — not for VMaNGOS, and not for any emulator.
+I run a 1.12 VMaNGOS emulation server at home — not public, just for me. I wanted a single tool that brought together server ops, content editing, world building, spell creation, 3D terrain visualization, and AI-driven playerbots without requiring 100s of hours of manual scripting or scattered & disjointed tools/workflows. I looked for one and didn't find it — not for VMaNGOS, and not for any emulator.
 
 So I'm building it. The end goal is a living game world with hundreds of AI-driven bots that feel real, custom spells and items that feel vanilla but add flavor, and the tooling to iterate on all of it from a browser.
 
