@@ -32,12 +32,18 @@ namespace MangosSuperUI.Services;
 /// "If a doodad entry from MDDF or MODF gets never referenced in a chunk's MCRF,
 ///  it won't be drawn at all." — wowdev.wiki
 ///
-/// MCRF PATCHING STRATEGY (Session 49 rewrite):
+/// MCRF STRUCTURE (Session 50 — corrected from Session 49's "headerless" error):
+///   MCRF is a STANDARD IFF sub-chunk with an 8-byte header:
+///     [4 bytes] magic = "FRCM" (reversed "MCRF")
+///     [4 bytes] data size = (nDoodadRefs + nMapObjRefs) * 4
+///     [data]    nDoodadRefs × uint32 MDDF indices, then nMapObjRefs × uint32 MODF indices
+///   ofsMCRF in the MCNK header points to the magic bytes, NOT to the data.
+///
+/// MCRF PATCHING STRATEGY:
 ///   - Only patch MCNKs whose world-space AABB overlaps the WMO's MODF bounding box
-///   - Scan for the actual MCRF sub-chunk magic within the MCNK bytes (don't trust ofsMCRF alone)
-///   - Use the MCRF IFF size field to determine data extent (not header counts)
-///   - Insert the new MODF index at the END of MCRF data (after all existing refs)
-///   - Adjust all MCNK sub-chunk offsets that point past the insertion
+///   - Insert new MODF index at ofsMCRF + 8 + existingDataSize (after IFF header + existing refs)
+///   - Update MCRF IFF size field at ofsMCRF + 4
+///   - Update nMapObjRefs in MCNK header, MCNK IFF size, and all sub-chunk offsets past insertion
 /// </summary>
 public class AdtPatcherService
 {
@@ -238,6 +244,9 @@ public class AdtPatcherService
         int runningMwmoSize = adt.MwmoSize;
         int runningMwidCount = adt.MwidSize / 4;
 
+        // Pre-read existing MWID entries so we can find MWID index for existing paths
+        int existingMwidCount = adt.MwidSize / 4;
+
         for (int pi = 0; pi < placements.Count; pi++)
         {
             var (placement, uniqueId) = placements[pi];
@@ -246,6 +255,7 @@ public class AdtPatcherService
 
             // Check if path already exists in MWMO (original data only — appended paths checked below)
             int wmoByteOffsetInMwmo;
+            int wmoMwidIndex;          // ← THIS is what MODF nameId actually needs
             bool pathIsNew = true;
 
             int existingPathOffset = FindStringInChunk(originalAdt, mwmoDataStart, adt.MwmoSize, normalizedPath);
@@ -253,6 +263,22 @@ public class AdtPatcherService
             {
                 wmoByteOffsetInMwmo = existingPathOffset;
                 pathIsNew = false;
+
+                // Find which MWID entry has this byte offset
+                wmoMwidIndex = -1;
+                for (int wi = 0; wi < existingMwidCount; wi++)
+                {
+                    int mwidVal = ReadInt32(originalAdt, mwidDataStart + wi * 4);
+                    if (mwidVal == existingPathOffset)
+                    {
+                        wmoMwidIndex = wi;
+                        break;
+                    }
+                }
+                // Fallback: if no MWID points to this exact offset (shouldn't happen),
+                // use the byte offset (which is what we were doing before)
+                if (wmoMwidIndex < 0)
+                    wmoMwidIndex = existingPathOffset;
             }
             else
             {
@@ -262,6 +288,22 @@ public class AdtPatcherService
                 {
                     wmoByteOffsetInMwmo = adt.MwmoSize + appendOffset;
                     pathIsNew = false;
+
+                    // Find the MWID index for this appended path
+                    // It was added as a previous batch item — scan the append stream
+                    byte[] mwidAppendBytes = mwidAppendStream.ToArray();
+                    wmoMwidIndex = -1;
+                    for (int wi = 0; wi < mwidAppendBytes.Length / 4; wi++)
+                    {
+                        int mwidVal = BitConverter.ToInt32(mwidAppendBytes, wi * 4);
+                        if (mwidVal == wmoByteOffsetInMwmo)
+                        {
+                            wmoMwidIndex = existingMwidCount + wi;
+                            break;
+                        }
+                    }
+                    if (wmoMwidIndex < 0)
+                        wmoMwidIndex = wmoByteOffsetInMwmo; // fallback
                 }
                 else
                 {
@@ -271,18 +313,20 @@ public class AdtPatcherService
                     mwmoAppendStream.WriteByte(0); // null terminator
                     runningMwmoSize += pathBytes.Length + 1;
 
-                    // MWID: append one uint32 entry
+                    // MWID: append one uint32 entry (byte offset into MWMO)
                     var mwidEntry = BitConverter.GetBytes(wmoByteOffsetInMwmo);
                     mwidAppendStream.Write(mwidEntry, 0, 4);
+                    wmoMwidIndex = runningMwidCount;  // this entry's MWID index
                     runningMwidCount++;
                 }
             }
 
             // MODF: always append 64-byte entry
+            // CRITICAL: nameId (field 0x00) is a MWID INDEX, not a byte offset into MWMO!
             int newModfIndex = existingModfCount + pi;
             byte[] modfRecord = new byte[64];
 
-            WriteUint32(modfRecord, 0x00, (uint)wmoByteOffsetInMwmo);
+            WriteUint32(modfRecord, 0x00, (uint)wmoMwidIndex);
             WriteUint32(modfRecord, 0x04, uniqueId);
             WriteFloat(modfRecord, 0x08, placement.PosX);
             WriteFloat(modfRecord, 0x0C, placement.PosY);
@@ -583,20 +627,22 @@ public class AdtPatcherService
         int insertCount = newModfIndices.Count;
         int insertBytes = insertCount * 4;
 
-        // ── MCRF is HEADERLESS — no IFF magic+size ──
-        // Unlike other MCNK sub-chunks, MCRF has no "FRCM" magic and no size field.
-        // ofsMCRF points DIRECTLY to the raw uint32 data.
-        // Data layout: [nDoodadRefs × uint32 MDDF indices] [nMapObjRefs × uint32 MODF indices]
-        // Total data size = (nDoodadRefs + nMapObjRefs) * 4
+        // ── MCRF HAS a standard IFF header (Session 50 discovery) ──
+        // At ofsMCRF:
+        //   [4 bytes] magic = "FRCM" (reversed "MCRF")
+        //   [4 bytes] data size = (nDoodadRefs + nMapObjRefs) * 4
+        //   [data]    nDoodadRefs × uint32 MDDF indices
+        //             nMapObjRefs × uint32 MODF indices
         //
         // We append our new MODF indices at the end of the existing MCRF data
-        // (after all doodad refs + all existing WMO refs).
+        // (after all doodad refs + all existing WMO refs), and update the IFF size.
 
         int mcnkStart = mcnk.AbsoluteOffset;
 
-        // ofsMCRF is relative to MCNK chunk start (including IFF header)
-        // It points directly to the first uint32 of MCRF data
-        int mcrfDataRelOff = mcnk.McrfSubOffset;
+        // ofsMCRF is relative to MCNK chunk start (including MCNK's own IFF header).
+        // It points to the MCRF magic bytes. Data starts 8 bytes later.
+        int mcrfChunkRelOff = mcnk.McrfSubOffset;          // points to FRCM magic
+        int mcrfDataRelOff = mcrfChunkRelOff + 8;           // skip MCRF IFF header
         int existingDataSize = (mcnk.McrfDoodadCount + mcnk.McrfMapObjCount) * 4;
         int insertRelOff = mcrfDataRelOff + existingDataSize; // append after existing data
 
@@ -623,15 +669,19 @@ public class AdtPatcherService
         int remaining = mcnk.TotalSize - insertRelOff;
         Array.Copy(adt, insertAbsOff, newMcnk, insertRelOff + insertBytes, remaining);
 
-        // Fix MCNK IFF size (at offset 4)
+        // Fix MCNK IFF size (at offset 4 in the MCNK chunk)
         WriteInt32(newMcnk, 4, (mcnk.TotalSize - 8) + insertBytes);
+
+        // Fix MCRF IFF size (at mcrfChunkRelOff + 4)
+        int oldMcrfSize = ReadInt32(newMcnk, mcrfChunkRelOff + 4);
+        WriteInt32(newMcnk, mcrfChunkRelOff + 4, oldMcrfSize + insertBytes);
 
         // Fix nMapObjRefs in MCNK header (data offset 0x38)
         int oldObjCount = ReadInt32(newMcnk, 8 + 0x38);
         WriteInt32(newMcnk, 8 + 0x38, oldObjCount + insertCount);
 
         // Adjust sub-chunk offsets in MCNK header that point PAST the insertion
-        // ofsMCRF (0x20) does NOT need adjustment — MCRF data start didn't move
+        // ofsMCRF (0x20) does NOT need adjustment — MCRF chunk start didn't move
         // But everything after the MCRF data region needs +insertBytes
         int[] subChunkOffsetFields = { 0x14, 0x18, 0x1C, 0x24, 0x2C, 0x58, 0x60, 0x74 };
         foreach (int field in subChunkOffsetFields)

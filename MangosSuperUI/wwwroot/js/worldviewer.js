@@ -911,7 +911,7 @@
     var pendingPlacement = null; // { path, name } waiting for terrain click
     var ghostGroup = null;     // THREE.Group for the translucent ghost
     var ghostRotY = 0;         // degrees, adjusted with Q/E
-    var ghostScale = 1.5;
+    var ghostScale = 1.0; // Must match streamed WMO scale (1.0) — MODF has no scale field
 
     (function buildPlacementModal() {
         var toolbar = document.getElementById('wvLoadBtn');
@@ -1435,7 +1435,7 @@
             pendingPlacement = { path: selectedWmoPath, name: selectedWmoPath.split('\\').pop().replace('.wmo', '') };
             placementMode = true;
             ghostRotY = 0;
-            ghostScale = 1.5;
+            ghostScale = 1.0;
             ghostHeightOffset = 0;
             hidePlacementModal();
             canvas.style.cursor = 'crosshair';
@@ -1462,13 +1462,16 @@
             if (!ghostGroup || !pendingPlacement) return;
 
             var id = ++placementIdCounter;
+            // Ghost is in scene space, but placed mesh goes into wmoGroup (position.y = -0.5).
+            // Store Y in wmoGroup-local space so the placed mesh renders at the same
+            // world position as the ghost, and the reverse transform to MODF is correct.
             var placement = {
                 id: id,
                 dbId: null, // set after save
                 path: pendingPlacement.path,
                 name: pendingPlacement.name,
                 x: ghostGroup.position.x,
-                y: ghostGroup.position.y,
+                y: ghostGroup.position.y - wmoGroup.position.y,
                 z: ghostGroup.position.z,
                 rotY: ghostRotY,
                 scale: ghostScale

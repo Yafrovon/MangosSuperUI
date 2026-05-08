@@ -1307,19 +1307,27 @@ public class WorldViewerController : Controller
             }
 
             // Load height data for coordinate transform
+            // MUST use same multi-tile loop as Heightmap endpoint (tileRadius=1 → 3×3 grid)
             string mapsDir = GetMapsDirectory();
-            string mapFilePath = Path.Combine(mapsDir, VmangosMapParser.BuildFilename(p.mapId, p.gridX, p.gridY));
-            float globalMidHeight = 0, globalHeightScale = 1;
-            if (System.IO.File.Exists(mapFilePath))
+            float globalMin = float.MaxValue, globalMax = float.MinValue;
+            int commitTileRadius = 1;
+            for (int dy = -commitTileRadius; dy <= commitTileRadius; dy++)
             {
-                var terrain = VmangosMapParser.Parse(mapFilePath, 8, 8, 8);
-                if (terrain != null)
+                for (int dx = -commitTileRadius; dx <= commitTileRadius; dx++)
                 {
-                    globalMidHeight = (terrain.MinHeight + terrain.MaxHeight) / 2f;
-                    float range = terrain.MaxHeight - terrain.MinHeight;
-                    globalHeightScale = range > 0.01f ? Math.Min(3.5f, 350f / range) : 1f;
+                    int gx = p.gridX + dy;
+                    int gy = p.gridY + dx;
+                    string mp = Path.Combine(mapsDir, VmangosMapParser.BuildFilename(p.mapId, gx, gy));
+                    if (!System.IO.File.Exists(mp)) continue;
+                    var tr = VmangosMapParser.Parse(mp, 8, 8, 8);
+                    if (tr == null) continue;
+                    if (tr.MinHeight < globalMin) globalMin = tr.MinHeight;
+                    if (tr.MaxHeight > globalMax) globalMax = tr.MaxHeight;
                 }
             }
+            float globalMidHeight = (globalMin + globalMax) * 0.5f;
+            float globalHeightRange = globalMax - globalMin;
+            float globalHeightScale = globalHeightRange > 0 ? Math.Min(3.5f, 350.0f / globalHeightRange) : 3.5f;
 
             float cellSize = AdtTerrainReader.CELL_SIZE;
             float gridSize = AdtTerrainReader.GRID_SIZE;
@@ -1418,143 +1426,273 @@ public class WorldViewerController : Controller
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Diagnostic: read the patched ADT from patch-Z.MPQ, parse all 256 MCNKs,
-    /// and dump MCRF details for any MCNK that has nMapObjRefs > 0.
-    /// Also dumps MODF entries for cross-reference.
+    /// One-shot MCRF diagnostic. Reads original + patched ADTs, analyzes MCRF structure,
+    /// cross-references WMO refs against MODF entries. Returns plain text (not JSON).
+    /// Writes same output to /tmp/mcrf_diag.txt for easy retrieval.
     /// </summary>
     [HttpGet]
     public IActionResult DiagnoseMcrf()
     {
+        var sb = new System.Text.StringBuilder();
+        void W(string s = "") => sb.AppendLine(s);
+
         try
         {
             string clientDataPath = GetClientDataDirectory();
             if (string.IsNullOrEmpty(clientDataPath))
-                return Json(new { error = "No client data path" });
+            { W("ERROR: No client data path"); return Content(sb.ToString(), "text/plain"); }
 
-            // Read the patched ADT (WITH patch-Z.MPQ)
-            using var adminConn = _db?.Admin();
-            adminConn?.Open();
-            var lastPlacement = adminConn?.QueryFirstOrDefault(
-                "SELECT preset FROM custom_wmo_placements WHERE committed = 1 ORDER BY id DESC LIMIT 1");
+            System.Data.IDbConnection adminConn = null;
+            try { adminConn = _db?.Admin(); adminConn?.Open(); } catch { }
+
+            var lastPlacement = adminConn != null
+                ? Dapper.SqlMapper.QueryFirstOrDefault(adminConn,
+                    "SELECT preset FROM custom_wmo_placements WHERE committed = 1 ORDER BY id DESC LIMIT 1")
+                : null;
             if (lastPlacement == null)
-                return Json(new { error = "No committed placements" });
+            { W("ERROR: No committed placements"); adminConn?.Dispose(); return Content(sb.ToString(), "text/plain"); }
 
             string preset = (string)lastPlacement.preset;
             if (!TryResolvePreset(preset, out var p, out var error))
-                return Json(new { error });
+            { W($"ERROR: {error}"); adminConn?.Dispose(); return Content(sb.ToString(), "text/plain"); }
 
             string mapName = AdtPatcherService.GetMapName(p.mapId);
             string adtMpqPath = AdtPatcherService.GetAdtMpqPath(mapName, p.gridX, p.gridY);
 
-            // Read patched ADT (from patch-Z.MPQ)
-            byte[] patchedAdt = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
-            if (patchedAdt == null)
-                return Json(new { error = "Could not read patched ADT" });
+            W("═══ MCRF ANALYSIS ═══");
+            W($"Preset: {preset}  Map: {p.mapId}  Grid: ({p.gridX},{p.gridY})");
+            W($"ADT: {adtMpqPath}");
 
-            // Also read original for comparison
-            byte[] originalAdt = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath, skipPatchZ: true);
+            // Read both ADTs
+            byte[] orig = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath, skipPatchZ: true);
+            if (orig == null) { W("ERROR: Could not read original ADT"); adminConn?.Dispose(); return Content(sb.ToString(), "text/plain"); }
 
-            var parsed = AdtPatcherService.Parse(patchedAdt);
-            var diag = new Dictionary<string, object>();
-            diag["adtSize"] = patchedAdt.Length;
-            diag["originalSize"] = originalAdt?.Length ?? 0;
-            diag["modfSize"] = parsed.ModfSize;
-            diag["modfEntries"] = parsed.ModfSize / 64;
+            byte[] patched = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
+            bool hasPatch = patched != null && patched.Length != orig.Length;
 
-            // Dump MODF entries
-            var modfEntries = new List<object>();
-            int modfDataStart = parsed.ModfOffset + 8;
-            for (int i = 0; i < parsed.ModfSize / 64; i++)
+            W($"Original: {orig.Length} bytes  Patched: {(hasPatch ? $"{patched.Length} bytes (+{patched.Length - orig.Length})" : "none")}");
+            W();
+
+            // ── Helper lambdas ──
+            int RI(byte[] d, int o) => BitConverter.ToInt32(d, o);
+            uint RU(byte[] d, int o) => BitConverter.ToUInt32(d, o);
+            float RF(byte[] d, int o) => BitConverter.ToSingle(d, o);
+            string RS(byte[] d, int start, int max)
             {
-                int off = modfDataStart + i * 64;
-                modfEntries.Add(new
-                {
-                    index = i,
-                    nameId = BitConverter.ToUInt32(patchedAdt, off),
-                    uniqueId = BitConverter.ToUInt32(patchedAdt, off + 4),
-                    posX = BitConverter.ToSingle(patchedAdt, off + 8),
-                    posY = BitConverter.ToSingle(patchedAdt, off + 12),
-                    posZ = BitConverter.ToSingle(patchedAdt, off + 16),
-                });
+                int end = start;
+                int lim = Math.Min(start + max, d.Length);
+                while (end < lim && d[end] != 0) end++;
+                return end > start ? System.Text.Encoding.ASCII.GetString(d, start, end - start) : "";
             }
-            diag["modfEntries_detail"] = modfEntries;
-
-            // Dump MWMO paths
-            var mwmoPaths = new List<string>();
-            int mwmoDataStart = parsed.MwmoOffset + 8;
-            int mwmoEnd = mwmoDataStart + parsed.MwmoSize;
-            int spos = mwmoDataStart;
-            while (spos < mwmoEnd)
+            string ReverseM(byte[] d, int o)
             {
-                int send = spos;
-                while (send < mwmoEnd && patchedAdt[send] != 0) send++;
-                if (send > spos)
-                    mwmoPaths.Add($"offset={spos - mwmoDataStart}: {System.Text.Encoding.UTF8.GetString(patchedAdt, spos, send - spos)}");
-                spos = send + 1;
+                byte[] mb = BitConverter.GetBytes(RU(d, o));
+                Array.Reverse(mb);
+                return System.Text.Encoding.ASCII.GetString(mb);
             }
-            diag["mwmoPaths"] = mwmoPaths;
 
-            // Dump MCNKs with MCRF data
-            var mcnkDiags = new List<object>();
-            for (int i = 0; i < 256; i++)
+            // ── Parse structure ──
+            void AnalyzeAdt(byte[] adt, string label)
             {
-                var mcnk = parsed.Mcnks[i];
-                int mcnkDataStart = mcnk.AbsoluteOffset + 8;
-                int nDoodadRefs = BitConverter.ToInt32(patchedAdt, mcnkDataStart + 0x10);
-                int nMapObjRefs = BitConverter.ToInt32(patchedAdt, mcnkDataStart + 0x38);
-                int ofsMCRF = BitConverter.ToInt32(patchedAdt, mcnkDataStart + 0x20);
+                W($"═══ {label} ADT ({adt.Length} bytes) ═══");
 
-                if (nDoodadRefs > 0 || nMapObjRefs > 0)
+                int mverSize = RI(adt, 4);
+                int mhdrData = 8 + mverSize + 8;
+
+                int mwmoAbs = mhdrData + RI(adt, mhdrData + 20);
+                int mwmoSize = RI(adt, mwmoAbs + 4);
+                int mwidAbs = mhdrData + RI(adt, mhdrData + 24);
+                int mwidSize = RI(adt, mwidAbs + 4);
+                int mddfAbs = mhdrData + RI(adt, mhdrData + 28);
+                int mddfSize = RI(adt, mddfAbs + 4);
+                int modfAbs = mhdrData + RI(adt, mhdrData + 32);
+                int modfSize = RI(adt, modfAbs + 4);
+                int mcinAbs = mhdrData + RI(adt, mhdrData + 4);
+
+                int modfCount = modfSize / 64;
+                int mddfCount = mddfSize / 36;
+
+                // MODF entries
+                W($"MODF: {modfCount} entries  MDDF: {mddfCount} entries");
+                for (int i = 0; i < modfCount; i++)
                 {
-                    // Walk IFF chain to find MCRF
-                    int subPos = mcnk.AbsoluteOffset + 8 + 128;
-                    int mcnkEnd = mcnk.AbsoluteOffset + mcnk.TotalSize;
-                    int mcrfFound = -1;
-                    int mcrfSize = -1;
-                    var mcrfValues = new List<int>();
+                    int off = modfAbs + 8 + i * 64;
+                    uint nameId = RU(adt, off);
+                    string path = RS(adt, mwmoAbs + 8 + (int)nameId, 512);
+                    W($"  MODF[{i}] nameId={nameId} uid={RU(adt, off + 4)} pos=({RF(adt, off + 8):F1},{RF(adt, off + 12):F1},{RF(adt, off + 16):F1}) \"{path}\"");
+                }
 
-                    while (subPos + 8 <= mcnkEnd)
+                // MWMO paths
+                W($"MWMO ({mwmoSize} bytes):");
+                int sp = mwmoAbs + 8; int mwEnd = sp + mwmoSize;
+                while (sp < mwEnd)
+                {
+                    int se = sp;
+                    while (se < mwEnd && adt[se] != 0) se++;
+                    if (se > sp) W($"  ofs={sp - mwmoAbs - 8}: \"{System.Text.Encoding.ASCII.GetString(adt, sp, se - sp)}\"");
+                    sp = se + 1;
+                }
+
+                // Parse MCNKs from MCIN
+                int mcinData = mcinAbs + 8;
+                int mcnksWithWmo = 0;
+
+                // First pass: count
+                for (int i = 0; i < 256; i++)
+                {
+                    int mcAbs = RI(adt, mcinData + i * 16);
+                    int nMO = RI(adt, mcAbs + 8 + 0x38);
+                    if (nMO > 0) mcnksWithWmo++;
+                }
+                W($"MCNKs with nMapObjRefs>0: {mcnksWithWmo}");
+                W();
+
+                // Second pass: detailed dump of MCNKs with WMO refs
+                for (int i = 0; i < 256; i++)
+                {
+                    int mcAbs = RI(adt, mcinData + i * 16);
+                    int mcIff = RI(adt, mcAbs + 4);
+                    int mcData = mcAbs + 8;
+                    int ixX = RI(adt, mcData + 4);
+                    int ixY = RI(adt, mcData + 8);
+                    int nDR = RI(adt, mcData + 0x10);
+                    int nMO = RI(adt, mcData + 0x38);
+                    int ofsMCRF = RI(adt, mcData + 0x20);
+
+                    if (nMO <= 0) continue;
+
+                    W($"── MCNK[{i}] ({ixX},{ixY}) size={mcIff + 8} nDoodad={nDR} nMapObj={nMO} ofsMCRF=0x{ofsMCRF:X} ──");
+
+                    // What's at ofsMCRF?
+                    int mcrfAbs = mcAbs + ofsMCRF;
+                    int mcrfDataAbs = mcrfAbs + 8; // skip IFF header
+                    if (mcrfAbs + 8 <= adt.Length)
                     {
-                        uint magic = BitConverter.ToUInt32(patchedAdt, subPos);
-                        int subSize = BitConverter.ToInt32(patchedAdt, subPos + 4);
-                        if (subSize < 0 || subPos + 8 + subSize > mcnkEnd) break;
-
-                        if (magic == BitConverter.ToUInt32(new byte[] { (byte)'F', (byte)'R', (byte)'C', (byte)'M' }, 0))
-                        {
-                            mcrfFound = subPos - mcnk.AbsoluteOffset;
-                            mcrfSize = subSize;
-                            for (int v = 0; v < subSize / 4; v++)
-                                mcrfValues.Add(BitConverter.ToInt32(patchedAdt, subPos + 8 + v * 4));
-                            break;
-                        }
-                        subPos += 8 + subSize;
+                        string f4 = System.Text.Encoding.ASCII.GetString(adt, mcrfAbs, 4);
+                        bool isMagic = (f4 == "FRCM");
+                        int mcrfIffSize = RI(adt, mcrfAbs + 4);
+                        int expectedIffSize = (nDR + nMO) * 4;
+                        W($"  @ofsMCRF: magic={f4} iffSize={mcrfIffSize} expected={expectedIffSize} match={mcrfIffSize == expectedIffSize}");
                     }
 
-                    mcnkDiags.Add(new
+                    // Read MCRF data (AFTER 8-byte IFF header)
+                    int expectedSz = (nDR + nMO) * 4;
+                    // Doodad refs
+                    if (nDR > 0)
                     {
-                        mcnkIndex = i,
-                        indexX = mcnk.IndexX,
-                        indexY = mcnk.IndexY,
-                        totalSize = mcnk.TotalSize,
-                        nDoodadRefs,
-                        nMapObjRefs,
-                        ofsMCRF,
-                        mcrfFoundAtRelOff = mcrfFound,
-                        mcrfIffSize = mcrfSize,
-                        mcrfValues,
-                        ofsMcrfMatchesScan = mcrfFound == ofsMCRF,
-                    });
-                }
-            }
-            diag["mcnksWithRefs"] = mcnkDiags;
-            diag["mcnksWithRefsCount"] = mcnkDiags.Count;
+                        var dv = new List<string>();
+                        for (int r = 0; r < Math.Min(nDR, 50); r++)
+                        {
+                            int pos = mcrfDataAbs + r * 4;
+                            if (pos + 4 <= adt.Length) dv.Add(RI(adt, pos).ToString());
+                        }
+                        int maxD = dv.Select(int.Parse).Max();
+                        W($"  DoodadRefs[0..{nDR - 1}]: [{string.Join(",", dv)}{(nDR > 50 ? "..." : "")}] max={maxD} valid={maxD < mddfCount}");
+                    }
 
-            return Json(diag);
+                    // WMO refs
+                    int wStart = mcrfDataAbs + nDR * 4;
+                    var wv = new List<int>();
+                    for (int r = 0; r < nMO; r++)
+                    {
+                        int pos = wStart + r * 4;
+                        if (pos + 4 <= adt.Length) wv.Add(RI(adt, pos));
+                    }
+                    W($"  WmoRefs: [{string.Join(",", wv)}]");
+                    foreach (int val in wv)
+                    {
+                        bool valid = val >= 0 && val < modfCount;
+                        if (valid)
+                        {
+                            int moff = modfAbs + 8 + val * 64;
+                            uint nid = RU(adt, moff);
+                            string p2 = RS(adt, mwmoAbs + 8 + (int)nid, 512);
+                            W($"    val={val} → MODF[{val}] ✓ \"{p2}\"");
+                        }
+                        else
+                        {
+                            W($"    val={val} → INVALID (max index={modfCount - 1})");
+                        }
+                    }
+
+                    // Context bytes (around MCRF data, not IFF header)
+                    if (mcrfDataAbs >= 16 && mcrfDataAbs + expectedSz + 16 <= adt.Length)
+                    {
+                        W($"  16B before data: {BitConverter.ToString(adt, mcrfDataAbs - 16, 16)}");
+                        W($"  MCRF data:       {BitConverter.ToString(adt, mcrfDataAbs, Math.Min(expectedSz, 64))}");
+                        W($"  16B after data:  {BitConverter.ToString(adt, mcrfDataAbs + expectedSz, 16)}");
+                    }
+
+                    // IFF chain
+                    var chain = new List<string>();
+                    int sub = mcAbs + 8 + 128;
+                    int mcEnd = mcAbs + 8 + mcIff;
+                    while (sub + 8 <= mcEnd && chain.Count < 20)
+                    {
+                        string m = ReverseM(adt, sub);
+                        int sz = RI(adt, sub + 4);
+                        if (sz < 0 || sub + 8 + sz > mcEnd) break;
+                        int rel = sub - mcAbs;
+                        chain.Add($"{m}(0x{rel:X},{sz})");
+                        if (m == "MCRF") W($"  *** MCRF in IFF chain at 0x{rel:X} size={sz} ***");
+                        sub += 8 + sz;
+                    }
+                    W($"  IFF: {string.Join(" → ", chain)}");
+                    W();
+                }
+
+                // Also 2 doodad-only samples
+                int samp = 0;
+                for (int i = 0; i < 256 && samp < 2; i++)
+                {
+                    int mcAbs = RI(adt, mcinData + i * 16);
+                    int mcData = mcAbs + 8;
+                    int nDR = RI(adt, mcData + 0x10);
+                    int nMO = RI(adt, mcData + 0x38);
+                    if (nDR == 0 || nMO > 0) continue;
+                    samp++;
+
+                    int ofsMCRF = RI(adt, mcData + 0x20);
+                    int mcrfAbs = mcAbs + ofsMCRF;
+                    string f4 = mcrfAbs + 4 <= adt.Length ? System.Text.Encoding.ASCII.GetString(adt, mcrfAbs, 4) : "?";
+                    bool isMag = f4 == "FRCM";
+                    int mcrfIffSz = mcrfAbs + 8 <= adt.Length ? RI(adt, mcrfAbs + 4) : -1;
+
+                    var chain = new List<string>();
+                    int sub = mcAbs + 8 + 128;
+                    int mcEnd = mcAbs + 8 + RI(adt, mcAbs + 4);
+                    while (sub + 8 <= mcEnd && chain.Count < 20)
+                    {
+                        string m = ReverseM(adt, sub);
+                        int sz = RI(adt, sub + 4);
+                        if (sz < 0 || sub + 8 + sz > mcEnd) break;
+                        chain.Add($"{m}(0x{(sub - mcAbs):X},{sz})");
+                        sub += 8 + sz;
+                    }
+                    W($"Sample doodad-only MCNK[{i}] nD={nDR} ofsMCRF=0x{ofsMCRF:X} magic={f4} iffSize={mcrfIffSz} expected={nDR * 4}");
+                    W($"  IFF: {string.Join(" → ", chain)}");
+                }
+                W();
+            }
+
+            AnalyzeAdt(orig, "ORIGINAL");
+            if (hasPatch) AnalyzeAdt(patched, "PATCHED");
+
+            adminConn?.Dispose();
         }
         catch (Exception ex)
         {
-            return Json(new { error = ex.Message, stack = ex.StackTrace });
+            W($"EXCEPTION: {ex.Message}");
+            W(ex.StackTrace);
         }
+
+        string output = sb.ToString();
+
+        // Write to file for easy retrieval
+        try { System.IO.File.WriteAllText("/tmp/mcrf_diag.txt", output); }
+        catch { /* ignore write failure */ }
+
+        return Content(output, "text/plain");
     }
 
     [HttpGet]
@@ -2438,6 +2576,143 @@ public class WorldViewerController : Controller
         var found = _terrainPresets.FirstOrDefault(x => x.key == preset);
         if (found.key == null) { error = $"Unknown preset: {preset}"; return false; }
         p = found; return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DIAGNOSTIC — Height pipeline: place → save → commit → stream round-trip
+    //   Usage: Place a WMO, hit this. Delete it, hit this again.
+    //   Compare "saved meshY" vs "streamed Y after round-trip" vs "vanilla WMO Y at same area"
+    // ═══════════════════════════════════════════════════════════════
+    [HttpGet]
+    public IActionResult DiagnoseHeight(string? preset)
+    {
+        if (!TryResolvePreset(preset, out var p, out var error))
+            return Content($"ERROR: {error}", "text/plain");
+
+        string clientDataPath = GetClientDataDirectory();
+        string mapsDir = GetMapsDirectory();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== HEIGHT DIAGNOSTIC ===");
+        sb.AppendLine($"Preset: {preset}  gridX={p.gridX} gridY={p.gridY} mapId={p.mapId}");
+        sb.AppendLine();
+
+        // ── Multi-tile height calc (matches Heightmap endpoint) ──
+        float globalMin = float.MaxValue, globalMax = float.MinValue;
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int gx = p.gridX + dy, gy = p.gridY + dx;
+                string mp = Path.Combine(mapsDir, VmangosMapParser.BuildFilename(p.mapId, gx, gy));
+                if (!System.IO.File.Exists(mp)) continue;
+                var tr = VmangosMapParser.Parse(mp, 8, 8, 8);
+                if (tr == null) continue;
+                sb.AppendLine($"  Tile ({gx},{gy}): min={tr.MinHeight:F4} max={tr.MaxHeight:F4}");
+                if (tr.MinHeight < globalMin) globalMin = tr.MinHeight;
+                if (tr.MaxHeight > globalMax) globalMax = tr.MaxHeight;
+            }
+        }
+        float midHeight = (globalMin + globalMax) * 0.5f;
+        float range2 = globalMax - globalMin;
+        float heightScale = range2 > 0 ? Math.Min(3.5f, 350.0f / range2) : 3.5f;
+        sb.AppendLine();
+        sb.AppendLine($"Multi-tile: globalMin={globalMin:F4}  globalMax={globalMax:F4}");
+        sb.AppendLine($"  midHeight={midHeight:F4}  heightScale={heightScale:F6}");
+
+        // ── Saved placements from DB ──
+        sb.AppendLine();
+        sb.AppendLine("=== SAVED PLACEMENTS (from DB) ===");
+        using var adminConn = new MySqlConnector.MySqlConnection("Server=localhost;Database=vmangos_admin;User=mangos;Password=mangos");
+        adminConn.Open();
+        var placements = adminConn.Query(
+            "SELECT id, wmo_path, mesh_x, mesh_y, mesh_z, rot_y, scale_val, committed FROM custom_wmo_placements WHERE preset=@Preset ORDER BY id",
+            new { Preset = preset });
+
+        float cellSize = AdtTerrainReader.CELL_SIZE;
+        float gridSize = AdtTerrainReader.GRID_SIZE;
+
+        foreach (var row in placements)
+        {
+            float meshX = (float)row.mesh_x, meshY = (float)row.mesh_y, meshZ = (float)row.mesh_z;
+            sb.AppendLine($"  Placement #{row.id}: committed={row.committed}");
+            sb.AppendLine($"    DB meshY = {meshY:F4}");
+            sb.AppendLine($"    Reverse transform → modfPosY = {meshY:F4} / {heightScale:F6} + {midHeight:F4} = {meshY / heightScale + midHeight:F4}");
+            sb.AppendLine($"    Round-trip streamedY = (modfPosY - midHeight) * heightScale = {meshY:F4}  (should equal DB meshY)");
+        }
+
+        // ── Vanilla WMOs from ADT (what streaming sees) ──
+        sb.AppendLine();
+        sb.AppendLine("=== VANILLA + PATCHED WMOs FROM ADT (what NearbyObjects returns) ===");
+        if (!string.IsNullOrEmpty(clientDataPath))
+        {
+            try
+            {
+                var adt = AdtTerrainReader.ReadFromMpq(clientDataPath, MapIdToName(p.mapId), p.gridX, p.gridY);
+                if (adt != null)
+                {
+                    var wmos = AdtTerrainReader.GetWmosForRegion(adt, heightScale, midHeight);
+                    sb.AppendLine($"  Total WMOs in ADT: {wmos.Count}");
+                    foreach (var w in wmos)
+                    {
+                        float streamedY = (w.PosY - midHeight) * heightScale;
+                        sb.AppendLine($"  WMO: {w.ModelPath}");
+                        sb.AppendLine($"    MODF PosY (raw) = {w.PosY:F4}");
+                        sb.AppendLine($"    streamedY = ({w.PosY:F4} - {midHeight:F4}) * {heightScale:F6} = {streamedY:F4}");
+                        sb.AppendLine($"    MODF Pos = ({w.PosX:F2}, {w.PosY:F2}, {w.PosZ:F2})");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"  ADT read error: {ex.Message}");
+            }
+
+            // ── Also read WITHOUT patch-Z for comparison ──
+            sb.AppendLine();
+            sb.AppendLine("=== VANILLA WMOs (original ADT, no patch-Z) ===");
+            try
+            {
+                string mapName = MapIdToName(p.mapId);
+                string adtPath = $"World\\Maps\\{mapName}\\{mapName}_{p.gridY}_{p.gridX}.adt";
+                byte[]? origBytes = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtPath, skipPatchZ: true);
+                if (origBytes != null)
+                {
+                    var origAdt = AdtTerrainReader.Parse(origBytes, p.gridX, p.gridY);
+                    if (origAdt != null)
+                    {
+                        var origWmos = AdtTerrainReader.GetWmosForRegion(origAdt, heightScale, midHeight);
+                        sb.AppendLine($"  Original WMOs: {origWmos.Count}");
+                        foreach (var w in origWmos)
+                        {
+                            float streamedY = (w.PosY - midHeight) * heightScale;
+                            sb.AppendLine($"  WMO: {w.ModelPath}");
+                            sb.AppendLine($"    MODF PosY (raw) = {w.PosY:F4}");
+                            sb.AppendLine($"    streamedY = {streamedY:F4}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"  Original ADT read error: {ex.Message}");
+            }
+        }
+
+        // ── JS-side context ──
+        sb.AppendLine();
+        sb.AppendLine("=== JS-SIDE NOTES ===");
+        sb.AppendLine("  terrain mesh: position.y = -0.5");
+        sb.AppendLine("  wmoGroup:     position.y = -0.5");
+        sb.AppendLine("  ghost:        added to scene (no offset)");
+        sb.AppendLine("  ghostY = raycast hit on terrain (includes terrain's -0.5)");
+        sb.AppendLine("  placed mesh goes into wmoGroup (gets additional -0.5)");
+        sb.AppendLine("  → placed WMO world Y = meshY + wmoGroup.y = meshY - 0.5");
+        sb.AppendLine("  → streamed WMO world Y = streamedY + wmoGroup.y = streamedY - 0.5");
+        sb.AppendLine("  If ghostY == streamedY, both display at same height (both get -0.5 from their parent)");
+        sb.AppendLine("  But ghost is in scene (no -0.5), terrain surface is at vertexY-0.5");
+        sb.AppendLine("  So ghost appears 0.5 units ABOVE where the placed WMO ends up");
+
+        return Content(sb.ToString(), "text/plain");
     }
 
     private static string MapIdToName(int id) => id switch { 0 => "Azeroth", 1 => "Kalimdor", _ => $"Map{id}" };
