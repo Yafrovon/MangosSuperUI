@@ -1,6 +1,7 @@
 # MangosSuperUI
 
 https://discord.gg/AzCdnyPHPY - Community Discord for updates, questions, bugs, etc.
+
 https://www.youtube.com/@Yafrovon — Video walkthroughs and feature demos
 
 A web-based server management, content development, and world building platform for [VMaNGOS](https://github.com/vmangos/core) 1.12.1 vanilla WoW private servers. Built with ASP.NET Core 8.0 MVC, jQuery, Three.js, and MariaDB/MySQL. Runs on Linux, developed on Windows.
