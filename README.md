@@ -64,7 +64,7 @@ MangosSuperUI does not distribute any Blizzard assets — icons, models, and min
 
 Browser-based Three.js terrain renderer reading directly from WoW 1.12.1 MPQ archives. V9 heightmap geometry, server-side composite textures, M2 doodad models with InstancedMesh batching, WMO building rendering, spatial streaming, PBR golden hour lighting, walk mode (WASD + FPS look). Includes a WMO placement tool — browse all buildings from MPQ listfiles, ghost-place on terrain with rotation controls, and persist to database.
 
-> **In Progress:** The commit-to-game-world pipeline (DBC patching + patch MPQ generation) is built but client-side rendering of custom displayIds is not yet verified. Server sees the spawned objects but the WoW client may not render them. Investigation ongoing.
+> **In Progress:** The commit-to-game-world pipeline (DBC patching + patch MPQ generation) is built and functional! Place buildings, download the mpq, restart the game world + delete your WDB, and boot up the client.
 
 ![World Viewer](Screenshots/world-viewer.png)
 
