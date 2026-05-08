@@ -330,6 +330,37 @@ public partial class PatchController : Controller
                     _logger.LogWarning(ex, "Patch: Failed to insert skill_line_ability for #{Entry}", newEntry);
                 }
             }
+            else
+            {
+                // Auto from source: copy the source spell's skill_line_ability row
+                try
+                {
+                    using var slaConn = _spellCreator.CreateMangosConnection();
+                    var sourceSla = await Dapper.SqlMapper.QueryFirstOrDefaultAsync<dynamic>(slaConn,
+                        @"SELECT skill_id, class_mask, superseded_by_spell
+                          FROM skill_line_ability WHERE spell_id = @E AND build = 5875 LIMIT 1",
+                        new { E = req.SourceSpellEntry });
+                    if (sourceSla != null && (int)(sourceSla.skill_id ?? 0) > 0)
+                    {
+                        await Dapper.SqlMapper.ExecuteAsync(slaConn,
+                            @"INSERT IGNORE INTO skill_line_ability
+                              (spell_id, skill_id, class_mask, superseded_by_spell, learn_on_get_skill, build)
+                              VALUES (@SpellId, @SkillId, @ClassMask, 0, 2, 5875)",
+                            new
+                            {
+                                SpellId = newEntry,
+                                SkillId = (int)sourceSla.skill_id,
+                                ClassMask = (int)(sourceSla.class_mask ?? 0)
+                            });
+                        _logger.LogInformation("Patch: Auto-copied SLA from source #{Src} (skill={Skill}) for #{Entry}",
+                            req.SourceSpellEntry, (int)sourceSla.skill_id, newEntry);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Patch: Failed to auto-copy SLA from source for #{Entry}", newEntry);
+                }
+            }
 
             // ── Step 1c: Insert spell_chain (rank 1 — self-referencing) ──
             try

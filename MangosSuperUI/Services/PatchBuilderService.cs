@@ -572,15 +572,32 @@ public class PatchBuilderService
                         for (int i = 1; i < 8; i++) spellDbc.PatchRow(rank.Entry, FIELD_SUBTEXT_ENUS + i, 0);
                         spellDbc.PatchRow(rank.Entry, FIELD_SUBTEXT_FLAGS, LOCALE_FLAGS);
 
-                        // Description — keep from source rank clone (has template variables $s1/$o2/$d)
-                        // The source rank's description is already correct with template vars.
-                        // Only override if the rank data explicitly specifies one.
-                        if (!string.IsNullOrEmpty(rank.Description))
+                        // Description — prefer R1's custom description from custom_spell_meta
+                        // (request.Description) over the rank's spell_template description,
+                        // which is the vanilla source text copied by CloneSpellAsync.
+                        // Only fall back to rank.Description if R1 has no custom description.
+                        string? rankDesc = !string.IsNullOrEmpty(request.Description)
+                            ? request.Description
+                            : rank.Description;
+
+                        if (!string.IsNullOrEmpty(rankDesc))
                         {
-                            uint descOfs = spellDbc.AddString(rank.Description);
+                            uint descOfs = spellDbc.AddString(rankDesc);
                             spellDbc.PatchRow(rank.Entry, FIELD_DESC_ENUS, descOfs);
                             for (int i = 1; i < 8; i++) spellDbc.PatchRow(rank.Entry, FIELD_DESC_ENUS + i, 0);
                             spellDbc.PatchRow(rank.Entry, FIELD_DESC_FLAGS, LOCALE_FLAGS);
+                        }
+
+                        // Tooltip — same logic: prefer R1's custom tooltip
+                        string? rankTooltip = !string.IsNullOrEmpty(request.Tooltip)
+                            ? request.Tooltip
+                            : null; // no rank-level tooltip field exists, just use R1's or leave clone
+                        if (!string.IsNullOrEmpty(rankTooltip))
+                        {
+                            uint tooltipOfs = spellDbc.AddString(rankTooltip);
+                            spellDbc.PatchRow(rank.Entry, FIELD_TOOLTIP_ENUS, tooltipOfs);
+                            for (int i = 1; i < 8; i++) spellDbc.PatchRow(rank.Entry, FIELD_TOOLTIP_ENUS + i, 0);
+                            spellDbc.PatchRow(rank.Entry, FIELD_TOOLTIP_FLAGS, LOCALE_FLAGS);
                         }
 
                         // ── Effect/gameplay fields — patch DBC with custom-scaled values ──

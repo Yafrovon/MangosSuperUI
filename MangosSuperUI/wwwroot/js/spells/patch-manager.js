@@ -1067,15 +1067,26 @@ $(function () {
         $('#spellPropsChevron').toggleClass('fa-chevron-down fa-chevron-up');
     });
 
-    // Class dropdown → populate skill tab dropdown
+    // Class dropdown → populate skill tab dropdown + auto-select from school
     $(document).on('change', '#spellClass', function () {
         var cls = parseInt($(this).val());
         var $tab = $('#spellSkillTab');
         $tab.html('<option value="">Auto (from source)</option>');
         if (cls && CLASS_SKILL_TABS[cls]) {
-            CLASS_SKILL_TABS[cls].forEach(function (t) {
+            var tabs = CLASS_SKILL_TABS[cls];
+            tabs.forEach(function (t) {
                 $tab.append('<option value="' + t.key + '">' + t.label + '</option>');
             });
+            // Auto-select: match source spell's school to a tab (same logic as guided wizard)
+            if (tabs.length === 1) {
+                $tab.val(tabs[0].key);
+            } else if (selectedSource) {
+                var schoolName = (SCHOOL_NAMES[selectedSource.school] || '').toLowerCase();
+                var matched = tabs.find(function (t) { return t.label.toLowerCase() === schoolName; });
+                $tab.val(matched ? matched.key : tabs[0].key);
+            } else {
+                $tab.val(tabs[0].key);
+            }
         }
     });
 
@@ -1270,6 +1281,7 @@ $(function () {
             missileSpeed: $('#spellMissileSpeed').val() ? parseFloat($('#spellMissileSpeed').val()) : null,
             cooldown: $('#spellCooldown').val() ? Math.round(parseFloat($('#spellCooldown').val()) * 1000) : null,
             generateAllRanks: $('#chkGenerateAllRanks').is(':checked'),
+            copySourceTrainers: $('input[name="trainerMode"]:checked').val() === 'copySource',
             rankOverrides: collectRankOverrides()
         };
 
@@ -1295,38 +1307,27 @@ $(function () {
                     if (r.ranksGenerated && r.ranksGenerated.length > 1) m += '<div class="result-detail"><i class="fa-solid fa-layer-group"></i> ' + r.ranksGenerated.length + ' ranks generated (entries: ' + r.ranksGenerated.map(function (rk) { return '#' + rk.entry; }).join(', ') + ')</div>';
                     m += '<div class="result-detail"><em>Server restart required.</em></div>'; if (!r.hasPatch && r.warning) m += '<div class="result-detail" style="color:var(--text-warning)">' + esc(r.warning) + '</div>';
                     // Register at trainer based on selected mode
+                    // "Copy from source" is handled server-side via copySourceTrainers in the
+                    // Generate payload (same as guided wizard). Only "classTemplate" needs a
+                    // separate post-create call.
                     var trainerMode = $('input[name="trainerMode"]:checked').val();
-                    if (trainerMode && trainerMode !== 'none' && r.spellEntry) {
-                        var tCost = parseInt($('#trainerCost').val()) || 0;
-                        var tLevel = parseInt($('#trainerReqLevel').val()) || 1;
-
-                        if (trainerMode === 'copySource' && selectedSource) {
+                    if (trainerMode === 'classTemplate' && r.spellEntry) {
+                        var cls = parseInt($('#spellClass').val()) || 0;
+                        var trainerClass = cls; // Class ID = Trainer Class directly (gotcha #97)
+                        if (trainerClass > 0) {
+                            var tCost = parseInt($('#trainerCost').val()) || 0;
+                            var tLevel = parseInt($('#trainerReqLevel').val()) || 1;
+                            var spName = $('#spellName').val() || 'Custom Spell';
                             $.ajax({
-                                url: '/Patch/CopySourceTrainers', method: 'POST', contentType: 'application/json',
-                                data: JSON.stringify({ spellEntry: r.spellEntry, sourceSpellEntry: selectedSource.entry, cost: tCost, reqLevel: tLevel }),
+                                url: '/Patch/RegisterAtClassTrainers', method: 'POST', contentType: 'application/json',
+                                data: JSON.stringify({ spellEntry: r.spellEntry, trainerClass: trainerClass, cost: tCost, reqLevel: tLevel, spellName: spName, rankSubtext: 'Rank 1' }),
                                 success: function (tr) {
                                     if (tr.success) {
-                                        var extra = '<div class="result-detail"><i class="fa-solid fa-chalkboard-user"></i> Copied ' + tr.copiedCount + ' trainer entries from ' + esc(selectedSource.name) + '</div>';
+                                        var extra = '<div class="result-detail"><i class="fa-solid fa-chalkboard-user"></i> Added to all ' + (CLASS_NAMES[cls] || 'class') + ' trainers (template #' + tr.templateId + ')</div>';
                                         $('#generateResult .patch-result').append(extra);
                                     }
                                 }
                             });
-                        } else if (trainerMode === 'classTemplate') {
-                            var cls = parseInt($('#spellClass').val()) || 0;
-                            var trainerClass = cls; // Class ID = Trainer Class directly (gotcha #97)
-                            if (trainerClass > 0) {
-                                var spName = $('#spellName').val() || 'Custom Spell';
-                                $.ajax({
-                                    url: '/Patch/RegisterAtClassTrainers', method: 'POST', contentType: 'application/json',
-                                    data: JSON.stringify({ spellEntry: r.spellEntry, trainerClass: trainerClass, cost: tCost, reqLevel: tLevel, spellName: spName, rankSubtext: 'Rank 1' }),
-                                    success: function (tr) {
-                                        if (tr.success) {
-                                            var extra = '<div class="result-detail"><i class="fa-solid fa-chalkboard-user"></i> Added to all ' + (CLASS_NAMES[cls] || 'class') + ' trainers (template #' + tr.templateId + ')</div>';
-                                            $('#generateResult .patch-result').append(extra);
-                                        }
-                                    }
-                                });
-                            }
                         }
                     }
                     showResult('success', m); loadPatches(); loadCustomSpells(); loadCustomIcons();
