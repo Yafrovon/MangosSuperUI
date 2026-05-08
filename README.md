@@ -12,7 +12,7 @@ I run a 1.12 VMaNGOS emulation server at home — not public, just for me. I wan
 
 So I'm building it. The end goal is a living game world with hundreds of AI-driven bots that feel real, custom spells and items that feel vanilla but add flavor, and the tooling to iterate on all of it from a browser.
 
-I'm open-sourcing it because if I needed this, other people running VMaNGOS — or those who want to immortalize vanilla WoW — probably could too. It's not polished product software. It's a tool I use daily. Feedback, bug reports, and contributions are welcome.
+I'm open-sourcing it because if I needed this, other people running VMaNGOS — or those who want to explore 1.12 vanilla emulation — probably could too. It's not polished product software. It's a tool I use daily. Feedback, bug reports, and contributions are welcome.
 
 > **⚠️ Work in Progress:** MangosSuperUI is functional and actively used, but it is not finished. Some planned sections (vendors, creatures, quests) are not yet built.
 
