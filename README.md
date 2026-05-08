@@ -257,7 +257,7 @@ If you're adding a new page, follow the existing pattern: C# controller for rout
 
 MangosSuperUI is co-developed using [Claude](https://claude.ai) (Anthropic) — the same way I use it in my professional work. While I am a systems engineer & software developer by trade, there is no chance I could build this tool this quickly without said help.
 
-None of this would exist without the years of work by the VMaNGOS team and the broader MaNGOS lineage. The WoW modding community that reverse-engineered DBC formats, M2 particle systems, loot table mechanics, stat budget formulas, and the RA protocol. The wiki editors, forum posters, and GitHub contributors who wrote it all down so someone like me could find it fifteen years later. MangosSuperUI is a UI layer on top of knowledge that thousands of people contributed over two decades. I just made it clickable.
+None of this would exist without the years of work by the VMaNGOS team and the broader MaNGOS lineage. The WoW modding community that reverse-engineered DBC formats, M2 particle systems, loot table mechanics, stat budget formulas, and the RA protocol. The wiki editors, forum posters, and GitHub contributors who wrote it all down so someone like me could find it fifteen years later. MangosSuperUI is a UI layer on top of knowledge that thousands of people contributed over two decades. I'm just connecting it all into one place.
 
 ---
 
