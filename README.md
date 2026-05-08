@@ -8,7 +8,7 @@ A web-based server management, content development, and world building platform 
 
 ## Why This Exists
 
-I run a private VMaNGOS server at home — not public, just for me. I wanted a single tool that brought together server ops, content editing, world building, spell creation, 3D terrain visualization, and AI-driven playerbots without requiring SQL expertise or scattered command-line tools. I looked for one and didn't find it — not for VMaNGOS, and not for any emulator.
+I run a private VMaNGOS server at home — not public, just for me. I wanted a single tool that brought together server ops, content editing, world building, spell creation, 3D terrain visualization, and AI-driven playerbots without requiring 100s of hours of manual scripting or scattered & disjointed tools/workflows. I looked for one and didn't find it — not for VMaNGOS, and not for any emulator.
 
 So I'm building it. The end goal is a living game world with hundreds of AI-driven bots that feel real, custom spells and items that feel vanilla but add flavor, and the tooling to iterate on all of it from a browser.
 
