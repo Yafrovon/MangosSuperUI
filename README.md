@@ -23,6 +23,7 @@ I'm open-sourcing it because if I needed this, other people running VMaNGOS — 
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 World of Warcraft® is a registered trademark of Blizzard Entertainment, Inc.
 MangosSuperUI does not distribute any Blizzard assets — icons, models, and minimap tiles are extracted from your own WoW 1.12.1 client using the included [Extractor tool](https://github.com/Yafrovon/MangosSuperUI_Extractor).
+MangosSuperUI is a tooling and interoperability framework intended for educational, research, archival, and private emulator development purposes.
 
 ---
 
