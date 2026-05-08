@@ -60,14 +60,11 @@ MangosSuperUI does not distribute any Blizzard assets — icons, models, and min
 
 **World Map** — Leaflet.js minimap viewer for all continents, dungeons, and raids. Click-to-place game objects with automatic terrain Z resolution from VMaNGOS `.map` files. Spawn overlay, compass widget, orientation control.
 
-**3D World Viewer** — Browser-based Three.js terrain renderer that reads directly from WoW 1.12.1 client MPQ archives. Features include:
-- V9 heightmap geometry with server-side RGB composite textures
-- M2 doodad models with per-submesh textures and InstancedMesh batching
-- WMO building rendering with full textured geometry
-- Spatial streaming with spherical load/unload
-- PBR golden hour lighting with Lit/Flat toggle
-- Walk mode (WASD + right-click FPS look + ground follow)
-- **WMO Placement Tool** — browse all WMOs from MPQ listfiles, ghost placement on terrain with rotation and height adjust, persist to database, commit to game world (gameobject_template + gameobject + DBC patching + patch MPQ generation)
+### 3D World Viewer
+
+Browser-based Three.js terrain renderer reading directly from WoW 1.12.1 MPQ archives. V9 heightmap geometry, server-side composite textures, M2 doodad models with InstancedMesh batching, WMO building rendering, spatial streaming, PBR golden hour lighting, walk mode (WASD + FPS look). Includes a WMO placement tool — browse all buildings from MPQ listfiles, ghost-place on terrain with rotation controls, and persist to database.
+
+> **In Progress:** The commit-to-game-world pipeline (DBC patching + patch MPQ generation) is built but client-side rendering of custom displayIds is not yet verified. Server sees the spawned objects but the WoW client may not render them. Investigation ongoing.
 
 ![World Viewer](Screenshots/world-viewer.png)
 
