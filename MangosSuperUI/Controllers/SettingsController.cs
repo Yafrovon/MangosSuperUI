@@ -70,9 +70,6 @@ public class SettingsController : Controller
                 LogsDir = _config["Vmangos:LogsDir"] ?? "",
                 DbcPath = _config["Vmangos:DbcPath"] ?? "",
                 MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "",
-                ClientM2Path = _config["Vmangos:ClientM2Path"] ?? "",
-                ClientDataPath = _config["Vmangos:ClientDataPath"] ?? "",
-                PatchOutputPath = _config["Vmangos:PatchOutputPath"] ?? "",
                 BackupDirectory = _config["Vmangos:BackupDirectory"] ?? "",
                 VmangosSourcePath = _config["Vmangos:VmangosSourcePath"] ?? "",
                 VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? ""
@@ -108,7 +105,10 @@ public class SettingsController : Controller
                 Model = _config["SpellCreator:Ollama:Model"] ?? ""
             },
             RawBlpPath = _config["SpellCreator:RawBlpPath"] ?? "",
-            DataPath = _config["SpellCreator:DataPath"] ?? ""
+            DataPath = _config["SpellCreator:DataPath"] ?? "",
+            ClientM2Path = _config["SpellCreator:ClientM2Path"] ?? "",
+            ClientDataPath = _config["SpellCreator:ClientDataPath"] ?? "",
+            PatchOutputPath = _config["SpellCreator:PatchOutputPath"] ?? ""
         };
 
         // Read the Nodes[] array from config
@@ -253,9 +253,6 @@ public class VmangosConfig
     public string LogsDir { get; set; } = "";
     public string DbcPath { get; set; } = "";
     public string MapsDataPath { get; set; } = "";
-    public string ClientM2Path { get; set; } = "";
-    public string ClientDataPath { get; set; } = "";
-    public string PatchOutputPath { get; set; } = "";
     public string BackupDirectory { get; set; } = "";
     public string VmangosSourcePath { get; set; } = "";
     public string VmangosSqlPath { get; set; } = "";
@@ -267,6 +264,9 @@ public class SpellCreatorConfig
     public OllamaConfig Ollama { get; set; } = new();
     public string RawBlpPath { get; set; } = "";
     public string DataPath { get; set; } = "";
+    public string ClientM2Path { get; set; } = "";
+    public string ClientDataPath { get; set; } = "";
+    public string PatchOutputPath { get; set; } = "";
 }
 
 public class ComfyUIConfig

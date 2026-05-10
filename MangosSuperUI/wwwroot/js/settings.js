@@ -36,10 +36,12 @@ $(function () {
             // Maps Data
             $('#cfgMapsDataPath').val(s.vmangos.mapsDataPath);
 
-            // Spell Creator Paths
-            $('#cfgClientM2Path').val(s.vmangos.clientM2Path);
-            $('#cfgClientDataPath').val(s.vmangos.clientDataPath);
-            $('#cfgPatchOutputPath').val(s.vmangos.patchOutputPath);
+            // Spell Creator Paths (under spellCreator, not vmangos)
+            if (s.spellCreator) {
+                $('#cfgClientM2Path').val(s.spellCreator.clientM2Path || '');
+                $('#cfgClientDataPath').val(s.spellCreator.clientDataPath || '');
+                $('#cfgPatchOutputPath').val(s.spellCreator.patchOutputPath || '');
+            }
 
             // Backup
             $('#cfgBackupDir').val(s.vmangos.backupDirectory);
@@ -208,7 +210,7 @@ $(function () {
             var $panel = $('#dbcStatusPanel');
             var $row = $('#dbcStatusRow');
 
-            if (data.loaded) {
+            if (data.isLoaded) {
                 var chips = '';
                 for (var dbcName in data.counts) {
                     chips += '<span class="dbc-count-chip">' + escapeHtml(dbcName) +
@@ -301,9 +303,6 @@ $(function () {
                 logsDir: $('#cfgLogsDir').val() || '',
                 dbcPath: $('#cfgDbcPath').val() || '',
                 mapsDataPath: $('#cfgMapsDataPath').val() || '',
-                clientM2Path: $('#cfgClientM2Path').val() || '',
-                clientDataPath: $('#cfgClientDataPath').val() || '',
-                patchOutputPath: $('#cfgPatchOutputPath').val() || '',
                 backupDirectory: $('#cfgBackupDir').val() || '',
                 vmangosSourcePath: $('#cfgSourcePath').val() || '',
                 vmangosSqlPath: $('#cfgSqlPath').val() || ''
@@ -318,7 +317,10 @@ $(function () {
                     model: $('#cfgOllamaModel').val() || ''
                 },
                 rawBlpPath: $('#cfgRawBlpPath').val() || '',
-                dataPath: $('#cfgSpellDataPath').val() || ''
+                dataPath: $('#cfgSpellDataPath').val() || '',
+                clientM2Path: $('#cfgClientM2Path').val() || '',
+                clientDataPath: $('#cfgClientDataPath').val() || '',
+                patchOutputPath: $('#cfgPatchOutputPath').val() || ''
             },
             kestrel: {
                 url: $('#cfgKestrelUrl').val()
