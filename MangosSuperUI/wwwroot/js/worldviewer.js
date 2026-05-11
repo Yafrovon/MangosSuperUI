@@ -51,6 +51,8 @@
 
     // ── Scrollwheel → camera height (additive, constant speed) ──
     canvas.addEventListener('wheel', function (e) {
+        // Only intercept scroll when in fullscreen — otherwise let the page scroll normally
+        if (!document.fullscreenElement) return;
         e.preventDefault();
         var heightStep = 8;
         // Scroll up = zoom in (lower), scroll down = zoom out (higher)
@@ -117,7 +119,7 @@
         }
     }, true);
     canvas.addEventListener('contextmenu', function (e) {
-        if (walkMode) e.preventDefault();
+        if (walkMode || placementMode) e.preventDefault();
     });
     document.addEventListener('pointerup', function (e) {
         if (e.button === 2) rightMouseDown = false;
@@ -598,6 +600,12 @@
             for (var wi = 0; wi < newWmos.length; wi++) {
                 var w = newWmos[wi];
                 if (activePlacements[w.id]) continue;
+
+                // Skip streamed WMOs that overlap with a custom placement
+                // (the placement system already renders these via spawnPlacedWmo)
+                var wSpKey = Math.round(w.x) + '|' + Math.round(w.z);
+                if (customPlacementKeys[wSpKey]) continue;
+
                 activePlacements[w.id] = {
                     model: w.model, x: w.x, y: w.y, z: w.z,
                     rotX: w.rotX, rotY: w.rotY, rotZ: w.rotZ,
@@ -712,7 +720,7 @@
         var backdrop = document.createElement('div');
         backdrop.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;' +
             'background:rgba(0,0,0,0.5);z-index:9998;';
-        document.body.appendChild(backdrop);
+        canvas.parentElement.appendChild(backdrop);
 
         // ── Modal panel ──
         var modal = document.createElement('div');
@@ -720,7 +728,7 @@
             'background:#1e1e2a;color:#ddd;border:1px solid #444;border-radius:10px;padding:24px 28px;' +
             'z-index:9999;min-width:340px;max-width:420px;font-family:system-ui,sans-serif;' +
             'box-shadow:0 8px 32px rgba(0,0,0,0.6);';
-        document.body.appendChild(modal);
+        canvas.parentElement.appendChild(modal);
 
         function showModal() { modal.style.display = 'block'; backdrop.style.display = 'block'; }
         function hideModal() { modal.style.display = 'none'; backdrop.style.display = 'none'; }
@@ -912,6 +920,12 @@
     var ghostGroup = null;     // THREE.Group for the translucent ghost
     var ghostRotY = 0;         // degrees, adjusted with Q/E
     var ghostScale = 1.0; // Must match streamed WMO scale (1.0) — MODF has no scale field
+    var ghostGeneration = 0;   // increments on exit — async ghost builds check this to avoid orphan ghosts
+
+    // ── Custom placement dedup — prevents streaming from double-rendering placed WMOs ──
+    // Maps a spatial key "x|z" (rounded to int) to local placement id.
+    // streamNearbyObjects skips streamed WMOs that collide with these positions.
+    var customPlacementKeys = {}; // spatialKey → localId
 
     (function buildPlacementModal() {
         var toolbar = document.getElementById('wvLoadBtn');
@@ -921,7 +935,7 @@
         // Backdrop
         var backdrop = document.createElement('div');
         backdrop.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:999;';
-        document.body.appendChild(backdrop);
+        canvas.parentElement.appendChild(backdrop);
 
         // Modal
         var modal = document.createElement('div');
@@ -929,7 +943,7 @@
             'width:900px;max-width:92vw;max-height:85vh;background:#1e2530;color:#ccc;border-radius:10px;' +
             'border:1px solid rgba(255,255,255,0.1);padding:20px;z-index:1000;overflow:hidden;' +
             'flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
-        document.body.appendChild(modal);
+        canvas.parentElement.appendChild(modal);
 
         var isOpen = false;
         function showPlacementModal() {
@@ -985,7 +999,7 @@
             '<i class="fa-solid fa-crosshairs"></i> Place on Terrain' +
             '</button>' +
             '<div style="font-size:10px;color:#666;text-align:center;line-height:1.5;">' +
-            'Click to place &bull; <b>Q/E</b> rotate &bull; <b>Scroll</b> height &bull; <b>Click</b> confirm &bull; <b>Esc</b> cancel' +
+            'Click to place &bull; <b>Q/E</b> rotate &bull; <b>Scroll</b> height &bull; <b>Right-click</b> or <b>Esc</b> cancel' +
             '</div>' +
             '</div>' +
             // Placed WMOs list
@@ -997,6 +1011,18 @@
             '<button id="wmoDownloadMpq" class="btn btn-sm btn-outline-info" style="width:100%;font-size:11px;display:none;">' +
             '<i class="fa-solid fa-download"></i> Download patch-Z.MPQ for Client' +
             '</button>' +
+            // Regenerate server data (collision/LoS/pathing)
+            '<button id="wmoRegenServerData" class="btn btn-sm btn-outline-warning" ' +
+            'style="width:100%;font-size:11px;display:none;margin-top:4px;">' +
+            '<i class="fa-solid fa-server"></i> Regenerate Server Data (Collision/LoS/Pathing)' +
+            '</button>' +
+            '<div id="wmoRegenProgress" style="display:none;margin-top:4px;font-size:10px;' +
+            'max-height:120px;overflow-y:auto;background:rgba(0,0,0,0.3);border-radius:4px;padding:6px;"></div>' +
+            // Restore Defaults — removes all custom placements, restores vanilla server data
+            '<button id="wmoRestoreDefaults" class="btn btn-sm btn-outline-danger" ' +
+            'style="width:100%;font-size:11px;display:none;margin-top:8px;">' +
+            '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults' +
+            '</button>' +
             '</div>' +
             '</div>';
 
@@ -1005,6 +1031,16 @@
         // Download patch MPQ button
         modal.querySelector('#wmoDownloadMpq').addEventListener('click', function () {
             window.location.href = '/WorldViewer/DownloadPatchMpq';
+        });
+
+        // Regenerate server data button
+        modal.querySelector('#wmoRegenServerData').addEventListener('click', function () {
+            regenerateServerData();
+        });
+
+        // Restore Defaults button
+        modal.querySelector('#wmoRestoreDefaults').addEventListener('click', function () {
+            restoreVanillaDefaults();
         });
 
         // ── 3D Preview renderer (created lazily on first modal open) ──
@@ -1365,6 +1401,116 @@
         // ── Ghost placement system ──
         var ghostHeightOffset = 0; // manual height adjustment via scroll
 
+        // ── Placement visualization helpers ──
+        var ghostBBox = null;       // { min: Vector3, max: Vector3 } in local ghost space
+        var ghostWireBox = null;    // THREE.LineSegments — bounding box wireframe
+        var ghostFootprint = null;  // THREE.Line — ground footprint ring
+        var ghostHeightLine = null; // THREE.Line — vertical height indicator
+        var ghostHeightLabel = null;// DOM element — height readout
+        var ghostArrow = null;      // THREE.Line — facing direction arrow
+        var ghostTerrainY = 0;      // terrain surface Y under ghost center
+
+        function computeGhostBBox(wmoData) {
+            var pos = wmoData.positions;
+            var min = new THREE.Vector3(Infinity, Infinity, Infinity);
+            var max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+            for (var i = 0; i < pos.length; i += 3) {
+                if (pos[i] < min.x) min.x = pos[i];
+                if (pos[i + 1] < min.y) min.y = pos[i + 1];
+                if (pos[i + 2] < min.z) min.z = pos[i + 2];
+                if (pos[i] > max.x) max.x = pos[i];
+                if (pos[i + 1] > max.y) max.y = pos[i + 1];
+                if (pos[i + 2] > max.z) max.z = pos[i + 2];
+            }
+            return { min: min, max: max };
+        }
+
+        function createPlacementHelpers() {
+            disposePlacementHelpers();
+            if (!ghostBBox) return;
+
+            // ── Height label (DOM overlay) — only helper worth keeping ──
+            ghostHeightLabel = document.createElement('div');
+            ghostHeightLabel.style.cssText = 'position:absolute;pointer-events:none;z-index:15;' +
+                'font-size:13px;font-weight:bold;font-family:monospace;color:#ffaa66;' +
+                'text-shadow:0 1px 4px rgba(0,0,0,0.9);' +
+                'background:rgba(0,0,0,0.65);padding:2px 8px;border-radius:4px;' +
+                'white-space:nowrap;display:none;border:1px solid rgba(255,255,255,0.15);';
+            canvas.parentElement.appendChild(ghostHeightLabel);
+        }
+
+        // ── Interior floor and terrain collision point systems removed ──
+        //    The terrain slice line (orange rectangle at ground level) provides
+        //    the same spatial information without visual clutter.
+        var ghostFloorPoints = null;
+        var ghostCollisionPoints = null;
+
+        function attachHelpersToGhost() {
+            // Height label is a DOM element, not a child of ghostGroup — nothing to attach
+        }
+
+        function updatePlacementHelpers() {
+            if (!placementMode || !ghostGroup || !ghostGroup.visible || !ghostBBox) return;
+
+            var gp = ghostGroup.position;
+
+            if (ghostHeightLabel) {
+                var offsetText = ghostHeightOffset === 0
+                    ? '\u2022 Floor on terrain'
+                    : (ghostHeightOffset > 0 ? '\u25b2 +' : '\u25bc ') + ghostHeightOffset.toFixed(1) + ' yd';
+
+                // Also show rotation
+                if (ghostRotY !== 0) offsetText += '  \u21bb ' + ghostRotY + '\u00b0';
+
+                ghostHeightLabel.textContent = offsetText;
+                ghostHeightLabel.style.display = 'block';
+
+                var screenPos = gp.clone().project(camera);
+                var rect = canvas.getBoundingClientRect();
+                var sx = (screenPos.x * 0.5 + 0.5) * rect.width;
+                var sy = (-screenPos.y * 0.5 + 0.5) * rect.height;
+                ghostHeightLabel.style.left = (sx + 20) + 'px';
+                ghostHeightLabel.style.top = (sy - 10) + 'px';
+            }
+        }
+
+        function disposePlacementHelpers() {
+            if (ghostWireBox) {
+                if (ghostWireBox.parent) ghostWireBox.parent.remove(ghostWireBox);
+                ghostWireBox.geometry.dispose(); ghostWireBox.material.dispose();
+                ghostWireBox = null;
+            }
+            if (ghostFootprint) {
+                if (ghostFootprint.parent) ghostFootprint.parent.remove(ghostFootprint);
+                ghostFootprint.geometry.dispose(); ghostFootprint.material.dispose();
+                ghostFootprint = null;
+            }
+            if (ghostHeightLine) {
+                if (ghostHeightLine.parent) ghostHeightLine.parent.remove(ghostHeightLine);
+                ghostHeightLine.geometry.dispose(); ghostHeightLine.material.dispose();
+                ghostHeightLine = null;
+            }
+            if (ghostArrow) {
+                if (ghostArrow.parent) ghostArrow.parent.remove(ghostArrow);
+                ghostArrow.geometry.dispose(); ghostArrow.material.dispose();
+                ghostArrow = null;
+            }
+            if (ghostFloorPoints) {
+                if (ghostFloorPoints.parent) ghostFloorPoints.parent.remove(ghostFloorPoints);
+                ghostFloorPoints.geometry.dispose(); ghostFloorPoints.material.dispose();
+                ghostFloorPoints = null;
+            }
+            if (ghostCollisionPoints) {
+                if (ghostCollisionPoints.parent) ghostCollisionPoints.parent.remove(ghostCollisionPoints);
+                ghostCollisionPoints.geometry.dispose(); ghostCollisionPoints.material.dispose();
+                ghostCollisionPoints = null;
+            }
+            if (ghostHeightLabel) {
+                if (ghostHeightLabel.parentElement) ghostHeightLabel.parentElement.removeChild(ghostHeightLabel);
+                ghostHeightLabel = null;
+            }
+        }
+
         function buildGhostGroup(wmoData, callback) {
             var group = new THREE.Group();
             var positions = new Float32Array(wmoData.positions);
@@ -1383,8 +1529,9 @@
 
                 function addMesh(mat) {
                     mat.transparent = true;
-                    mat.opacity = 0.45;
+                    mat.opacity = 0.7;
                     mat.depthWrite = false;
+                    mat.depthTest = true;
                     var mesh = new THREE.Mesh(geo, mat);
                     group.add(mesh);
                     pending--;
@@ -1419,7 +1566,7 @@
             if (!ghostGroup) return;
             scene.remove(ghostGroup);
             ghostGroup.traverse(function (c) {
-                if (c.isMesh) {
+                if (c.isMesh || c.isLine || c.isLineSegments) {
                     if (c.geometry) c.geometry.dispose();
                     if (c.material) {
                         if (c.material.map) c.material.map.dispose();
@@ -1439,23 +1586,49 @@
             ghostHeightOffset = 0;
             hidePlacementModal();
             canvas.style.cursor = 'crosshair';
-            if (statusEl) statusEl.textContent = 'Move mouse to position \u2022 Q/E rotate \u2022 Scroll adjust height \u2022 Click to place \u2022 Esc cancel';
+            if (statusEl) statusEl.textContent = 'Click to place \u2022 Q/E rotate \u2022 Scroll offset height \u2022 Right-click or Esc cancel \u2022 Floor auto-snaps to terrain';
+            if (placementCancelBtn) placementCancelBtn.style.display = 'block';
 
-            // Build ghost
+            // Compute bounding box and create visualization helpers
+            ghostBBox = computeGhostBBox(selectedWmoData);
+            createPlacementHelpers();
+
+            // Build ghost — capture generation to detect stale callback
+            var gen = ghostGeneration;
             buildGhostGroup(selectedWmoData, function (g) {
+                if (gen !== ghostGeneration) {
+                    // Placement mode was exited while we were building — dispose immediately
+                    g.traverse(function (c) {
+                        if (c.isMesh) {
+                            if (c.geometry) c.geometry.dispose();
+                            if (c.material) {
+                                if (c.material.map) c.material.map.dispose();
+                                c.material.dispose();
+                            }
+                        }
+                    });
+                    return;
+                }
                 ghostGroup = g;
                 ghostGroup.scale.setScalar(ghostScale);
                 ghostGroup.visible = false; // shown on first mousemove
                 scene.add(ghostGroup);
+
+                // Attach helpers to ghost group
+                attachHelpersToGhost();
             });
         }
 
         function exitPlacementMode() {
             placementMode = false;
             pendingPlacement = null;
+            ghostGeneration++; // invalidate any in-flight async ghost builds
+            disposePlacementHelpers();
+            ghostBBox = null;
             destroyGhost();
             canvas.style.cursor = '';
             if (statusEl) statusEl.textContent = '';
+            if (placementCancelBtn) placementCancelBtn.style.display = 'none';
         }
 
         function confirmPlacement() {
@@ -1479,6 +1652,10 @@
 
             placedWmos.push(placement);
 
+            // Register spatial key for dedup against streaming
+            var spKey = Math.round(placement.x) + '|' + Math.round(placement.z);
+            customPlacementKeys[spKey] = id;
+
             // Save to database
             savePlacementToDb(placement);
 
@@ -1487,16 +1664,36 @@
             updatePlacedList();
 
             // Destroy ghost and stay in placement mode for multi-place
+            disposePlacementHelpers();
             destroyGhost();
-            if (statusEl) statusEl.textContent = 'Placed ' + placement.name + '. Move to place another or Esc to stop.';
+            // Recreate helpers for next ghost
+            ghostBBox = computeGhostBBox(selectedWmoData);
+            createPlacementHelpers();
 
-            // Rebuild ghost for next placement
+            if (statusEl) statusEl.textContent = 'Placed ' + placement.name + '. Move to place another, or right-click / Esc to stop.';
+
+            // Rebuild ghost for next placement — capture generation to detect stale callback
+            var gen = ghostGeneration;
             buildGhostGroup(selectedWmoData, function (g) {
+                if (gen !== ghostGeneration) {
+                    // Placement mode was exited while we were building — dispose immediately
+                    g.traverse(function (c) {
+                        if (c.isMesh) {
+                            if (c.geometry) c.geometry.dispose();
+                            if (c.material) {
+                                if (c.material.map) c.material.map.dispose();
+                                c.material.dispose();
+                            }
+                        }
+                    });
+                    return;
+                }
                 ghostGroup = g;
                 ghostGroup.scale.setScalar(ghostScale);
                 ghostGroup.rotation.y = ghostRotY * Math.PI / 180;
                 ghostGroup.visible = false;
                 scene.add(ghostGroup);
+                attachHelpersToGhost();
             });
         }
 
@@ -1548,7 +1745,17 @@
             var hits = placementRaycaster.intersectObjects(terrainMeshes);
 
             if (hits.length > 0) {
-                ghostGroup.position.set(hits[0].point.x, hits[0].point.y + ghostHeightOffset, hits[0].point.z);
+                var terrainY = hits[0].point.y;
+                ghostTerrainY = terrainY;
+
+                // Auto-snap: place building floor (bbox bottom) on terrain surface,
+                // then apply manual height offset from scroll wheel
+                var floorOffset = ghostBBox ? -ghostBBox.min.y : 0;
+                ghostGroup.position.set(
+                    hits[0].point.x,
+                    terrainY + floorOffset + ghostHeightOffset,
+                    hits[0].point.z
+                );
                 ghostGroup.visible = true;
             } else {
                 ghostGroup.visible = false;
@@ -1561,6 +1768,28 @@
             // Don't place if this was a drag (orbit controls)
             confirmPlacement();
         });
+
+        // ── Right-click — cancel placement ──
+        canvas.addEventListener('pointerdown', function (e) {
+            if (e.button === 2 && placementMode) {
+                exitPlacementMode();
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+
+        // ── Visible cancel button overlay ──
+        var placementCancelBtn = document.createElement('button');
+        placementCancelBtn.innerHTML = '<i class="fa-solid fa-xmark"></i> Cancel Placement';
+        placementCancelBtn.style.cssText = 'display:none;position:absolute;top:12px;right:16px;z-index:20;' +
+            'background:rgba(220,53,69,0.85);color:#fff;border:none;border-radius:6px;' +
+            'padding:6px 14px;font-size:12px;cursor:pointer;font-family:system-ui,sans-serif;' +
+            'backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+        placementCancelBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            exitPlacementMode();
+        });
+        canvas.parentElement.appendChild(placementCancelBtn);
 
         // ── Keyboard — Q/E rotate, Esc cancel ──
         document.addEventListener('keydown', function (e) {
@@ -1700,6 +1929,11 @@
             var hasCommitted = placedWmos.some(function (p) { return p.committed; });
             var dlBtn = modal.querySelector('#wmoDownloadMpq');
             if (dlBtn) dlBtn.style.display = hasCommitted ? 'block' : 'none';
+            var regenBtn = modal.querySelector('#wmoRegenServerData');
+            if (regenBtn) regenBtn.style.display = hasCommitted ? 'block' : 'none';
+            // Restore Defaults visible whenever there are any placements (committed or not)
+            var restoreBtn = modal.querySelector('#wmoRestoreDefaults');
+            if (restoreBtn) restoreBtn.style.display = placedWmos.length > 0 ? 'block' : 'none';
         }
 
         function commitPlacementToWorld(localId) {
@@ -1729,11 +1963,259 @@
             });
         }
 
+        function regenerateServerData() {
+            // Find the most recently committed placement
+            var committed = placedWmos.filter(function (p) { return p.committed && p.dbId; });
+            if (committed.length === 0) {
+                alert('No committed placements to regenerate server data for');
+                return;
+            }
+
+            var lastCommitted = committed[committed.length - 1];
+            var regenBtn = document.getElementById('wmoRegenServerData');
+            var progressDiv = document.getElementById('wmoRegenProgress');
+
+            // Disable button, show progress
+            if (regenBtn) {
+                regenBtn.disabled = true;
+                regenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Regenerating...';
+            }
+            if (progressDiv) {
+                progressDiv.style.display = 'block';
+                progressDiv.innerHTML = '<div style="color:#ffc107;">Starting server data regeneration...</div>';
+            }
+
+            function addProgress(msg, color) {
+                if (!progressDiv) return;
+                var line = document.createElement('div');
+                line.style.color = color || '#ccc';
+                line.style.marginTop = '2px';
+                line.textContent = msg;
+                progressDiv.appendChild(line);
+                progressDiv.scrollTop = progressDiv.scrollHeight;
+            }
+
+            // Use fetch + ReadableStream for SSE
+            fetch('/WorldViewer/RegenerateServerData', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ placementDbId: lastCommitted.dbId })
+            }).then(function (response) {
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+
+                function read() {
+                    return reader.read().then(function (result) {
+                        if (result.done) {
+                            if (regenBtn) {
+                                regenBtn.disabled = false;
+                                regenBtn.innerHTML = '<i class="fa-solid fa-server"></i> Regenerate Server Data (Collision/LoS/Pathing)';
+                            }
+                            return;
+                        }
+
+                        buffer += decoder.decode(result.value, { stream: true });
+                        var lines = buffer.split('\n');
+                        buffer = lines.pop(); // keep incomplete line in buffer
+
+                        for (var i = 0; i < lines.length; i++) {
+                            var line = lines[i].trim();
+                            if (line.startsWith('data: ')) {
+                                var msg = line.substring(6);
+                                if (msg.startsWith('DONE:')) {
+                                    addProgress(msg, '#28a745');
+                                    if (regenBtn) {
+                                        regenBtn.disabled = false;
+                                        regenBtn.innerHTML = '<i class="fa-solid fa-check"></i> Server Data Regenerated!';
+                                        regenBtn.className = 'btn btn-sm btn-outline-success';
+                                        setTimeout(function () {
+                                            regenBtn.innerHTML = '<i class="fa-solid fa-server"></i> Regenerate Server Data (Collision/LoS/Pathing)';
+                                            regenBtn.className = 'btn btn-sm btn-outline-warning';
+                                        }, 5000);
+                                    }
+                                } else if (msg.startsWith('ERROR:')) {
+                                    addProgress(msg, '#dc3545');
+                                    if (regenBtn) {
+                                        regenBtn.disabled = false;
+                                        regenBtn.innerHTML = '<i class="fa-solid fa-server"></i> Regenerate Server Data (Collision/LoS/Pathing)';
+                                    }
+                                } else {
+                                    addProgress(msg, msg.startsWith('  >') ? '#888' : '#ffc107');
+                                }
+                            }
+                        }
+
+                        return read();
+                    });
+                }
+
+                return read();
+            }).catch(function (err) {
+                addProgress('Request failed: ' + err.message, '#dc3545');
+                if (regenBtn) {
+                    regenBtn.disabled = false;
+                    regenBtn.innerHTML = '<i class="fa-solid fa-server"></i> Regenerate Server Data (Collision/LoS/Pathing)';
+                }
+            });
+        }
+
+        function restoreVanillaDefaults() {
+            // Fetch backup status first so the user knows what will be restored
+            var restoreBtn = document.getElementById('wmoRestoreDefaults');
+            if (restoreBtn) {
+                restoreBtn.disabled = true;
+                restoreBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking backups...';
+            }
+
+            $.getJSON('/WorldViewer/BackupStatus', function (status) {
+                if (restoreBtn) {
+                    restoreBtn.disabled = false;
+                    restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                }
+
+                var backupInfo = '';
+                if (status.totalBackups === 0) {
+                    backupInfo = '\n⚠ No vanilla backups found!\ndir_bin will be rebuilt from baseline, but vmaps/mmaps\ncannot be restored without .vanilla backup files.\n';
+                } else {
+                    backupInfo = '\nBackups available to restore:\n';
+                    if (status.dirBinBackup) backupInfo += '  ✓ dir_bin.vanilla (' + Math.round(status.dirBinBackupSize / 1024) + ' KB)\n';
+                    if (status.vmapFiles > 0) backupInfo += '  ✓ Server vmaps: ' + status.vmapFiles + ' file(s)\n';
+                    if (status.mmapFiles > 0) backupInfo += '  ✓ Server mmaps: ' + status.mmapFiles + ' file(s)\n';
+                    if (status.clientVmapFiles > 0) backupInfo += '  ✓ Client vmaps: ' + status.clientVmapFiles + ' file(s)\n';
+                    if (status.clientMmapFiles > 0) backupInfo += '  ✓ Client mmaps: ' + status.clientMmapFiles + ' file(s)\n';
+                }
+
+                if (!confirm('This will:\n' +
+                    '• Delete ALL custom WMO placements from the database\n' +
+                    '• Restore vanilla server data (vmaps, mmaps)\n' +
+                    '• Delete patch-Z.MPQ\n' +
+                    backupInfo +
+                    '\nAre you sure?')) return;
+
+                doRestore();
+            }).fail(function () {
+                if (restoreBtn) {
+                    restoreBtn.disabled = false;
+                    restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                }
+                if (!confirm('This will:\n' +
+                    '• Delete ALL custom WMO placements from the database\n' +
+                    '• Restore vanilla server data (vmaps, mmaps)\n' +
+                    '• Delete patch-Z.MPQ\n\n' +
+                    '(Could not check backup status)\n\nAre you sure?')) return;
+                doRestore();
+            });
+        }
+
+        function doRestore() {
+            var restoreBtn = document.getElementById('wmoRestoreDefaults');
+            var progressDiv = document.getElementById('wmoRegenProgress');
+
+            if (restoreBtn) {
+                restoreBtn.disabled = true;
+                restoreBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Restoring...';
+            }
+            if (progressDiv) {
+                progressDiv.style.display = 'block';
+                progressDiv.innerHTML = '<div style="color:#ffc107;">Starting vanilla restore...</div>';
+            }
+
+            function addProgress(msg, color) {
+                if (!progressDiv) return;
+                var line = document.createElement('div');
+                line.style.color = color || '#ccc';
+                line.style.marginTop = '2px';
+                line.textContent = msg;
+                progressDiv.appendChild(line);
+                progressDiv.scrollTop = progressDiv.scrollHeight;
+            }
+
+            fetch('/WorldViewer/RestoreVanillaDefaults', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).then(function (response) {
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+
+                function read() {
+                    return reader.read().then(function (result) {
+                        if (result.done) {
+                            if (restoreBtn) {
+                                restoreBtn.disabled = false;
+                                restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                            }
+                            return;
+                        }
+
+                        buffer += decoder.decode(result.value, { stream: true });
+                        var lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (var i = 0; i < lines.length; i++) {
+                            var line = lines[i].trim();
+                            if (line.startsWith('data: ')) {
+                                var msg = line.substring(6);
+                                if (msg.startsWith('DONE:')) {
+                                    addProgress(msg, '#28a745');
+                                    // Clear all client-side state
+                                    placedWmos = [];
+                                    placementIdCounter = 0;
+                                    customPlacementKeys = {};
+                                    updatePlacedList();
+                                    // Force full object reload
+                                    clearAllObjects();
+                                    if (restoreBtn) {
+                                        restoreBtn.disabled = false;
+                                        restoreBtn.innerHTML = '<i class="fa-solid fa-check"></i> Defaults Restored!';
+                                        restoreBtn.className = 'btn btn-sm btn-outline-success';
+                                        restoreBtn.style.display = 'none';
+                                        setTimeout(function () {
+                                            restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                                            restoreBtn.className = 'btn btn-sm btn-outline-danger';
+                                        }, 5000);
+                                    }
+                                    // Hide download/regen buttons too
+                                    var dlBtn = modal.querySelector('#wmoDownloadMpq');
+                                    if (dlBtn) dlBtn.style.display = 'none';
+                                    var rgBtn = modal.querySelector('#wmoRegenServerData');
+                                    if (rgBtn) rgBtn.style.display = 'none';
+                                } else if (msg.startsWith('ERROR:')) {
+                                    addProgress(msg, '#dc3545');
+                                    if (restoreBtn) {
+                                        restoreBtn.disabled = false;
+                                        restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                                    }
+                                } else {
+                                    addProgress(msg, msg.startsWith('  >') ? '#888' : '#ffc107');
+                                }
+                            }
+                        }
+
+                        return read();
+                    });
+                }
+
+                return read();
+            }).catch(function (err) {
+                addProgress('Request failed: ' + err.message, '#dc3545');
+                if (restoreBtn) {
+                    restoreBtn.disabled = false;
+                    restoreBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore Vanilla Defaults';
+                }
+            });
+        }
+
         function removePlacedWmo(id) {
             var removed = placedWmos.find(function (p) { return p.id === id; });
             if (removed) {
                 // Flag as cancelled so in-flight async loads won't add meshes
                 removed.cancelled = true;
+
+                // Remove spatial dedup key
+                var spKey = Math.round(removed.x) + '|' + Math.round(removed.z);
+                delete customPlacementKeys[spKey];
 
                 if (removed.dbId) {
                     $.ajax({
@@ -1742,6 +2224,25 @@
                         contentType: 'application/json',
                         data: JSON.stringify({ id: removed.dbId })
                     });
+                }
+
+                // Purge any streamed instances near this position (the streaming
+                // system may have loaded the same WMO from the ADT as an InstancedMesh)
+                var purgeIds = [];
+                for (var sid in activePlacements) {
+                    var sp = activePlacements[sid];
+                    if (sp.kind !== 'w') continue;
+                    var ddx = sp.x - removed.x;
+                    var ddz = sp.z - removed.z;
+                    if (ddx * ddx + ddz * ddz < 4) { // within 2 units
+                        purgeIds.push(sid);
+                    }
+                }
+                for (var pi = 0; pi < purgeIds.length; pi++) {
+                    var pid = purgeIds[pi];
+                    var pp = activePlacements[pid];
+                    if (pp.instanced) removeInstance(pp.model, pid);
+                    delete activePlacements[pid];
                 }
             }
 
@@ -1793,6 +2294,11 @@
                             committed: !!row.committed
                         };
                         placedWmos.push(placement);
+
+                        // Register spatial key so streaming doesn't double-render
+                        var spKey = Math.round(placement.x) + '|' + Math.round(placement.z);
+                        customPlacementKeys[spKey] = id;
+
                         spawnPlacedWmo(placement);
                     });
                     if (resp.count > 0) updatePlacedList();
@@ -1816,7 +2322,14 @@
                 });
                 placedWmos = [];
                 placementIdCounter = 0;
+                customPlacementKeys = {};
                 updatePlacedList();
+            },
+            updateHelpers: function () {
+                updatePlacementHelpers();
+            },
+            exit: function () {
+                exitPlacementMode();
             }
         };
     })();
@@ -1906,16 +2419,39 @@
     function tileKey(gx, gy) { return gx + ',' + gy; }
 
     // ── Resize ──
+    var preFullscreenWidth = 0;
+    var preFullscreenHeight = 0;
+
     function resize() {
         var parent = canvas.parentElement;
-        var w = parent.clientWidth;
-        var h = parent.clientHeight || (window.innerHeight - 130);
+        var w, h;
+        if (document.fullscreenElement) {
+            w = window.innerWidth;
+            h = window.innerHeight;
+        } else {
+            // When exiting fullscreen, canvas inline style may still have fullscreen
+            // dimensions which inflate parent.clientHeight. Reset inline styles first
+            // so CSS-based sizing takes over, then measure.
+            canvas.style.width = '';
+            canvas.style.height = '';
+
+            w = parent.clientWidth;
+            // Use stored pre-fullscreen height if available, otherwise compute
+            h = preFullscreenHeight > 0
+                ? preFullscreenHeight
+                : Math.max(400, window.innerHeight - 130);
+
+            // Clamp to viewport — never taller than the window
+            if (h > window.innerHeight - 60) h = window.innerHeight - 60;
+        }
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
     }
     window.addEventListener('resize', resize);
     resize();
+    // Capture initial non-fullscreen height
+    preFullscreenHeight = canvas.clientHeight || (window.innerHeight - 130);
 
     // ── Presets ──
     $.getJSON('/WorldViewer/Presets', function (data) {
@@ -2502,6 +3038,7 @@
 
     var progressiveCheckTimer = 0;
     var objectStreamTimer = 0;
+    var placementHelperTimer = 0;
 
     setInterval(function () {
         currentFps = fpsCounter * 2;
@@ -2522,6 +3059,15 @@
         }
 
         var dt = clock.getDelta();
+
+        // Placement helper update every ~100ms (light raycast for height indicator)
+        if (placementMode) {
+            placementHelperTimer += dt;
+            if (placementHelperTimer >= 0.1) {
+                placementHelperTimer = 0;
+                if (window._wmoPlacement) window._wmoPlacement.updateHelpers();
+            }
+        }
 
         // Progressive terrain loading check every 500ms
         progressiveCheckTimer += dt;
@@ -2642,7 +3188,24 @@
         canvas.parentElement.appendChild(fsBtn);
 
         // Resize on fullscreen change
-        document.addEventListener('fullscreenchange', function () { setTimeout(resize, 100); });
+        document.addEventListener('fullscreenchange', function () {
+            if (document.fullscreenElement) {
+                // Entering fullscreen — save current dimensions
+                preFullscreenWidth = canvas.clientWidth;
+                preFullscreenHeight = canvas.clientHeight;
+            } else {
+                // Exited fullscreen
+                if (placementMode) {
+                    // Browser ate our Escape to exit fullscreen — cancel placement too.
+                    // Chrome won't let us re-enter fullscreen from a non-gesture context,
+                    // so just cancel and let the user go fullscreen again manually.
+                    if (window._wmoPlacement) window._wmoPlacement.exit();
+                }
+            }
+            // Always resize after fullscreen change (with extra delay for layout settle)
+            setTimeout(resize, 100);
+            setTimeout(resize, 300);
+        });
     })();
 
     function updateCompass() {

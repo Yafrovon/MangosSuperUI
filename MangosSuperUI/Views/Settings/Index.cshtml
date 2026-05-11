@@ -337,6 +337,56 @@
                 </div>
             </div>
 
+            <!-- World Viewer / Server Data -->
+            <div class="card mb-4">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="fa-solid fa-mountain-city" style="color: var(--accent);"></i>
+                    World Viewer &amp; Server Data
+                </div>
+                <div class="card-body">
+                    <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px;">
+                        Paths used by the <a href="/WorldViewer" style="color: var(--accent);">3D World Viewer</a>
+                        for WMO placement, collision/pathfinding regeneration, and patch-Z.MPQ building.
+                        The server data pipeline backs up vanilla originals as <code>.vanilla</code> files before overwriting &mdash;
+                        these backups power the Restore Defaults button in the World Viewer placement panel.
+                    </p>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Client Data Path
+                                <i class="fa-solid fa-circle-question cfg-hint" title="WoW client Data/ folder containing MPQ archives. Parent of Buildings/ directory. Used for VMapExtractor output, patch-Z.MPQ placement, and ADT reading."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgVmangosClientDataPath"
+                                   placeholder="/home/wowvmangos/wowclient/Data" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Extractors Path
+                                <i class="fa-solid fa-circle-question cfg-hint" title="Directory containing VMapAssembler and MoveMapGenerator binaries. These are run during server data regeneration after WMO placement commits."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgExtractorsPath"
+                                   placeholder="/home/wowvmangos/vmangos/run/bin/Extractors" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="cmd-label">
+                                Server Data Path
+                                <i class="fa-solid fa-circle-question cfg-hint" title="VMaNGOS runtime data directory containing maps/, vmaps/, mmaps/ subdirectories. Updated vmaps and mmtiles are copied here after regeneration. mangosd reads from this directory."></i>
+                            </label>
+                            <input type="text" class="form-input cfg-input" id="cfgServerDataPath"
+                                   placeholder="/home/wowvmangos/vmangos/run/data" />
+                        </div>
+                    </div>
+
+                    <!-- Vanilla Backup Status -->
+                    <div class="dbc-status-panel mt-3" id="backupStatusPanel">
+                        <div class="d-flex align-items-center gap-2" id="backupStatusRow">
+                            <i class="fa-solid fa-spinner fa-spin" style="font-size: 13px; color: var(--text-muted);"></i>
+                            <span style="font-size: 12.5px; color: var(--text-secondary);">Checking vanilla backup status...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Backup & Restore -->
             <div class="card mb-4">
                 <div class="card-header d-flex align-items-center gap-2">

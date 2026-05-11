@@ -1128,11 +1128,54 @@ public class WorldViewerController : Controller
             // Always invalidate cache after any placement change
             InvalidatePlacementCache();
 
-            _logger.LogInformation(
-                "DeletePlacement: Removed placement {Id}, wasCommitted={Committed}, patchCleaned={Cleaned}",
-                dto.Id, wasCommitted, patchCleaned);
+            // Auto-trigger server data regen if this was a committed placement.
+            // Fire-and-forget — delete returns immediately, regen runs in background.
+            // The rebuilt dir_bin will exclude the deleted placement, so its collision
+            // and pathfinding data get removed from the server.
+            bool serverRegenQueued = false;
+            if (wasCommitted)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var bgAdminConn = _db.Admin();
+                        bgAdminConn.Open();
 
-            return Json(new { success = true, deleted = true, patchCleaned });
+                        var (activePlacements, affectedTiles) = BuildActivePlacements(bgAdminConn);
+
+                        // Include the tile of the DELETED placement so its collision gets removed
+                        if (TryResolvePreset(preset, out var delP, out _))
+                        {
+                            var deletedTile = (delP.mapId, tileX: delP.gridY, tileY: delP.gridX);
+                            if (!affectedTiles.Any(t => t.mapId == deletedTile.mapId
+                                && t.tileX == deletedTile.tileX && t.tileY == deletedTile.tileY))
+                            {
+                                affectedTiles.Add(deletedTile);
+                            }
+                        }
+
+                        var logger = LoggerFactory.Create(b => b.AddConsole())
+                            .CreateLogger<ServerDataService>();
+                        var service = new ServerDataService(_config, logger);
+
+                        await service.RegenerateServerData(activePlacements, affectedTiles);
+                        _logger.LogInformation(
+                            "DeletePlacement: Background server data regen completed for preset '{Preset}'", preset);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "DeletePlacement: Background server data regen failed");
+                    }
+                });
+                serverRegenQueued = true;
+            }
+
+            _logger.LogInformation(
+                "DeletePlacement: Removed placement {Id}, wasCommitted={Committed}, patchCleaned={Cleaned}, serverRegenQueued={Regen}",
+                dto.Id, wasCommitted, patchCleaned, serverRegenQueued);
+
+            return Json(new { success = true, deleted = true, patchCleaned, serverRegenQueued });
         }
         catch (Exception ex)
         {
@@ -1243,6 +1286,298 @@ public class WorldViewerController : Controller
         {
             _logger.LogWarning(ex, "CommitToWorld failed for placement {Id}", dto.PlacementDbId);
             return Json(new { success = false, error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Regenerate server collision/LoS/pathfinding data for a committed placement.
+    /// Streams progress via SSE (Server-Sent Events).
+    /// Regenerate server collision/LoS/pathfinding data.
+    /// Rebuilds dir_bin from vanilla baseline + ALL committed placements in DB,
+    /// then runs VMapAssembler + MoveMapGenerator for the specified tile.
+    /// </summary>
+    [HttpPost]
+    public async Task RegenerateServerData([FromBody] RegenerateServerDataDto dto)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task SendEvent(string data)
+        {
+            await Response.WriteAsync($"data: {data}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        try
+        {
+            if (_db == null)
+            {
+                await SendEvent("ERROR: Database not configured");
+                return;
+            }
+
+            using var adminConn = _db.Admin();
+            adminConn.Open();
+
+            // Resolve the triggering placement (for tile coordinates)
+            var triggerPlacement = adminConn.QueryFirstOrDefault(@"
+                SELECT id, preset, map_id AS mapId
+                FROM custom_wmo_placements WHERE id = @Id AND committed = 1",
+                new { Id = dto.PlacementDbId });
+
+            if (triggerPlacement == null)
+            {
+                await SendEvent("ERROR: Committed placement not found");
+                return;
+            }
+
+            string preset = (string)triggerPlacement.preset;
+            if (!TryResolvePreset(preset, out var p, out var error))
+            {
+                await SendEvent($"ERROR: Invalid preset: {error}");
+                return;
+            }
+
+            // Tile for MoveMapGenerator — swap gridX/gridY per dir_bin convention
+            int triggerTileX = p.gridY;
+            int triggerTileY = p.gridX;
+
+            // Build ALL active placements for dir_bin rebuild
+            var (activePlacements, _) = BuildActivePlacements(adminConn);
+
+            await SendEvent($"Rebuilding dir_bin with {activePlacements.Count} active placement(s)");
+
+            // Only run MoveMapGenerator for the triggering tile
+            var tilesToRegen = new List<(int mapId, int tileX, int tileY)>
+            {
+                (p.mapId, triggerTileX, triggerTileY)
+            };
+
+            var service = new ServerDataService(_config,
+                HttpContext.RequestServices.GetRequiredService<ILogger<ServerDataService>>());
+
+            var result = await service.RegenerateServerData(activePlacements, tilesToRegen, async msg =>
+            {
+                await SendEvent(msg);
+            });
+
+            if (result.Success)
+            {
+                await SendEvent($"DONE: Server data regenerated in {result.ElapsedSeconds:F1}s " +
+                    $"({result.VmapsCopied} vmaps, {result.MmapsCopied} mmaps, " +
+                    $"{result.PlacementsIncluded} placements in dir_bin)");
+            }
+            else
+            {
+                await SendEvent($"ERROR: {result.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "RegenerateServerData failed");
+            await SendEvent($"ERROR: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic: inspect dir_bin contents (total records, custom records, vanilla baseline status).
+    /// </summary>
+    [HttpGet]
+    public IActionResult DiagnoseDirBin()
+    {
+        var service = new ServerDataService(_config,
+            HttpContext.RequestServices.GetRequiredService<ILogger<ServerDataService>>());
+        return Json(service.DiagnoseDirBin());
+    }
+
+    /// <summary>
+    /// Returns the current state of vanilla .vanilla backup files across all
+    /// configured directories. Used by both the Settings page status panel
+    /// and the World Viewer Restore Defaults button to show what can be restored.
+    /// </summary>
+    [HttpGet]
+    public IActionResult BackupStatus()
+    {
+        try
+        {
+            var service = new ServerDataService(_config,
+                HttpContext.RequestServices.GetRequiredService<ILogger<ServerDataService>>());
+            return Json(service.GetBackupStatus());
+        }
+        catch (Exception ex)
+        {
+            return Json(new { error = ex.Message });
+        }
+    }
+
+    // NOTE: CleanDirBin endpoint removed — the rebuild-from-DB approach makes manual cleaning
+    // unnecessary. Use RegenerateAllServerData to rebuild everything from scratch.
+
+    /// <summary>
+    /// Full regeneration: rebuilds dir_bin from vanilla + ALL committed placements,
+    /// then runs VMapAssembler + MoveMapGenerator for EVERY tile that has a placement.
+    /// Use after bulk changes or as a "fix everything" button.
+    /// </summary>
+    [HttpPost]
+    public async Task RegenerateAllServerData()
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task SendEvent(string data)
+        {
+            await Response.WriteAsync($"data: {data}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        try
+        {
+            if (_db == null)
+            {
+                await SendEvent("ERROR: Database not configured");
+                return;
+            }
+
+            using var adminConn = _db.Admin();
+            adminConn.Open();
+
+            var (activePlacements, allAffectedTiles) = BuildActivePlacements(adminConn);
+
+            await SendEvent($"Full rebuild: {activePlacements.Count} placement(s), {allAffectedTiles.Count} tile(s)");
+
+            var service = new ServerDataService(_config,
+                HttpContext.RequestServices.GetRequiredService<ILogger<ServerDataService>>());
+
+            var result = await service.RegenerateServerData(activePlacements, allAffectedTiles, async msg =>
+            {
+                await SendEvent(msg);
+            });
+
+            if (result.Success)
+            {
+                await SendEvent($"DONE: Full rebuild in {result.ElapsedSeconds:F1}s " +
+                    $"({result.VmapsCopied} vmaps, {result.MmapsCopied} mmaps, " +
+                    $"{result.PlacementsIncluded} placements)");
+            }
+            else
+            {
+                await SendEvent($"ERROR: {result.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "RegenerateAllServerData failed");
+            await SendEvent($"ERROR: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Restore vanilla defaults: delete all custom placements, restore .vanilla backup files,
+    /// delete patch-Z.MPQ. This is the "undo everything" button.
+    /// SSE stream for progress.
+    /// </summary>
+    [HttpPost]
+    public async Task RestoreVanillaDefaults()
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task SendEvent(string data)
+        {
+            await Response.WriteAsync($"data: {data}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        try
+        {
+            if (_db == null)
+            {
+                await SendEvent("ERROR: Database not configured");
+                return;
+            }
+
+            // ── Pre-validate: check configured paths exist ──
+            var service = new ServerDataService(_config,
+                HttpContext.RequestServices.GetRequiredService<ILogger<ServerDataService>>());
+
+            var backupStatus = service.GetBackupStatus();
+
+            // Check that at least the Buildings directory is accessible
+            // (it's the anchor for the whole pipeline)
+            string clientDataPath = GetClientDataDirectory();
+            if (string.IsNullOrEmpty(clientDataPath))
+            {
+                await SendEvent("ERROR: Vmangos:ClientDataPath is not configured. " +
+                    "Set it in Settings → World Viewer & Server Data → Client Data Path.");
+                return;
+            }
+
+            // Report what we found
+            await SendEvent($"Client data path: {clientDataPath}");
+            await SendEvent($"Server vmaps dir: {backupStatus.ServerVmapsDir ?? "(not configured)"}");
+            await SendEvent($"Server mmaps dir: {backupStatus.ServerMmapsDir ?? "(not configured)"}");
+            await SendEvent($"Vanilla backups found: {backupStatus.TotalBackups} file(s)");
+
+            if (backupStatus.TotalBackups == 0)
+            {
+                await SendEvent("WARNING: No .vanilla backup files found — " +
+                    "server data files cannot be restored to vanilla state. " +
+                    "Proceeding with DB cleanup and patch deletion only.");
+            }
+
+            // ── Step 1: Delete all custom placements from DB ──
+            using var adminConn = _db.Admin();
+            adminConn.Open();
+
+            int deletedCount = adminConn.Execute("DELETE FROM custom_wmo_placements");
+            await SendEvent($"Deleted {deletedCount} placement(s) from database");
+
+            // ── Step 2: Delete patch-Z.MPQ ──
+            if (!string.IsNullOrEmpty(clientDataPath))
+            {
+                string patchPath = Path.Combine(clientDataPath, "patch-Z.MPQ");
+                if (System.IO.File.Exists(patchPath))
+                {
+                    System.IO.File.Delete(patchPath);
+                    await SendEvent("Deleted patch-Z.MPQ");
+                }
+                string patchBak = patchPath + ".bak";
+                if (System.IO.File.Exists(patchBak))
+                {
+                    System.IO.File.Delete(patchBak);
+                }
+            }
+
+            // ── Step 3: Restore vanilla server data files ──
+            var restoreResult = service.RestoreVanillaServerData(async msg =>
+            {
+                await SendEvent(msg);
+            });
+            await SendEvent($"Restored {restoreResult.FilesRestored} vanilla file(s)");
+
+            // ── Step 4: Rebuild dir_bin from vanilla baseline (no custom placements) ──
+            // Run regen with empty placement list to restore dir_bin to vanilla
+            var emptyPlacements = new List<DirBinPlacement>();
+            var emptyTiles = new List<(int mapId, int tileX, int tileY)>();
+            var regenResult = await service.RegenerateServerData(emptyPlacements, emptyTiles, async msg =>
+            {
+                await SendEvent(msg);
+            });
+
+            // ── Step 5: Invalidate caches ──
+            InvalidatePlacementCache();
+            await SendEvent("Invalidated server caches");
+
+            await SendEvent($"DONE: Vanilla defaults restored — {deletedCount} placements removed, " +
+                $"{restoreResult.FilesRestored} files restored");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "RestoreVanillaDefaults failed");
+            await SendEvent($"ERROR: {ex.Message}");
         }
     }
 
@@ -1383,6 +1718,27 @@ public class WorldViewerController : Controller
                     }
                 }
                 catch { /* use default extent */ }
+
+                // Store MODF coords for server data regeneration
+                adminConn.Execute(@"
+                     UPDATE custom_wmo_placements
+                     SET modf_pos_x = @PosX, modf_pos_y = @PosY, modf_pos_z = @PosZ,
+                         modf_bb_min_x = @BbMinX, modf_bb_min_y = @BbMinY, modf_bb_min_z = @BbMinZ,
+                         modf_bb_max_x = @BbMaxX, modf_bb_max_y = @BbMaxY, modf_bb_max_z = @BbMaxZ
+                     WHERE id = @Id",
+                new
+                {
+                    PosX = modfPlacement.PosX,
+                    PosY = modfPlacement.PosY,
+                    PosZ = modfPlacement.PosZ,
+                    BbMinX = modfPlacement.BbMinX,
+                    BbMinY = modfPlacement.BbMinY,
+                    BbMinZ = modfPlacement.BbMinZ,
+                    BbMaxX = modfPlacement.BbMaxX,
+                    BbMaxY = modfPlacement.BbMaxY,
+                    BbMaxZ = modfPlacement.BbMaxZ,
+                    Id = (int)row.id
+                });
 
                 uint uniqueId = (uint)(500000 + (int)row.id);
                 placementList.Add((modfPlacement, uniqueId));
@@ -2717,6 +3073,77 @@ public class WorldViewerController : Controller
 
     private static string MapIdToName(int id) => id switch { 0 => "Azeroth", 1 => "Kalimdor", _ => $"Map{id}" };
 
+    // ═══════════════════════════════════════════════════════════════
+    // HELPER: Build active placements + affected tiles from DB
+    // ═══════════════════════════════════════════════════════════════
+
+    // Must match ServerDataService.CUSTOM_OBJECT_ID_FLOOR
+    private const uint CUSTOM_OBJECT_ID_FLOOR = 900000;
+
+    /// <summary>
+    /// Queries ALL committed placements from DB that have stored MODF coordinates,
+    /// builds DirBinPlacement list and the set of affected tiles for MoveMapGenerator.
+    /// </summary>
+    private (List<DirBinPlacement> placements, List<(int mapId, int tileX, int tileY)> tiles)
+        BuildActivePlacements(System.Data.IDbConnection adminConn)
+    {
+        var placements = new List<DirBinPlacement>();
+        var tileSet = new HashSet<(int, int, int)>();
+
+        var rows = adminConn.Query(@"
+            SELECT id, preset, map_id AS mapId, wmo_path AS wmoPath,
+                   modf_pos_x AS modfPosX, modf_pos_y AS modfPosY, modf_pos_z AS modfPosZ,
+                   modf_bb_min_x AS modfBbMinX, modf_bb_min_y AS modfBbMinY, modf_bb_min_z AS modfBbMinZ,
+                   modf_bb_max_x AS modfBbMaxX, modf_bb_max_y AS modfBbMaxY, modf_bb_max_z AS modfBbMaxZ,
+                   rot_y AS rotY
+            FROM custom_wmo_placements
+            WHERE committed = 1 AND modf_pos_x IS NOT NULL
+            ORDER BY id").ToList();
+
+        foreach (var row in rows)
+        {
+            string rowPreset = (string)row.preset;
+            if (!TryResolvePreset(rowPreset, out var rp, out _))
+            {
+                _logger.LogWarning("BuildActivePlacements: Skipping placement {Id} — invalid preset '{Preset}'",
+                    (int)row.id, rowPreset);
+                continue;
+            }
+
+            // dir_bin tileX/tileY = swapped from preset gridX/gridY
+            int tileX = rp.gridY;
+            int tileY = rp.gridX;
+
+            string wmoPath = ((string)row.wmoPath).Replace('/', '\\');
+
+            placements.Add(new DirBinPlacement
+            {
+                PlacementDbId = (int)row.id,
+                MapId = rp.mapId,
+                TileX = tileX,
+                TileY = tileY,
+                UniqueId = CUSTOM_OBJECT_ID_FLOOR + (uint)(int)row.id,
+                ModfPosX = (float)row.modfPosX,
+                ModfPosY = (float)row.modfPosY,
+                ModfPosZ = (float)row.modfPosZ,
+                RotX = 0,
+                RotY = (float)row.rotY,
+                RotZ = 0,
+                BbMinX = (float)row.modfBbMinX,
+                BbMinY = (float)row.modfBbMinY,
+                BbMinZ = (float)row.modfBbMinZ,
+                BbMaxX = (float)row.modfBbMaxX,
+                BbMaxY = (float)row.modfBbMaxY,
+                BbMaxZ = (float)row.modfBbMaxZ,
+                WmoPath = wmoPath
+            });
+
+            tileSet.Add((rp.mapId, tileX, tileY));
+        }
+
+        return (placements, tileSet.ToList());
+    }
+
     private string GetMapsDirectory()
     {
         foreach (var c in new[] { _config?.GetValue<string>("Vmangos:MapsDataPath") ?? "", "/home/wowvmangos/wowclient/maps", "/home/wowvmangos/vmangos/run/data/maps" })
@@ -2730,4 +3157,9 @@ public class WorldViewerController : Controller
             if (!string.IsNullOrEmpty(c) && Directory.Exists(c)) return c;
         return "";
     }
+}
+
+public class RegenerateServerDataDto
+{
+    public int PlacementDbId { get; set; }
 }

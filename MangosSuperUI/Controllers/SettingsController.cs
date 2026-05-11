@@ -72,7 +72,10 @@ public class SettingsController : Controller
                 MapsDataPath = _config["Vmangos:MapsDataPath"] ?? "",
                 BackupDirectory = _config["Vmangos:BackupDirectory"] ?? "",
                 VmangosSourcePath = _config["Vmangos:VmangosSourcePath"] ?? "",
-                VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? ""
+                VmangosSqlPath = _config["Vmangos:VmangosSqlPath"] ?? "",
+                ExtractorsPath = _config["Vmangos:ExtractorsPath"] ?? "",
+                ServerDataPath = _config["Vmangos:ServerDataPath"] ?? "",
+                ClientDataPath = _config["Vmangos:ClientDataPath"] ?? ""
             },
             SpellCreator = BuildSpellCreatorConfig(),
             Kestrel = new KestrelConfig
@@ -256,6 +259,9 @@ public class VmangosConfig
     public string BackupDirectory { get; set; } = "";
     public string VmangosSourcePath { get; set; } = "";
     public string VmangosSqlPath { get; set; } = "";
+    public string ExtractorsPath { get; set; } = "";
+    public string ServerDataPath { get; set; } = "";
+    public string ClientDataPath { get; set; } = "";
 }
 
 public class SpellCreatorConfig

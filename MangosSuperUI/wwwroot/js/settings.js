@@ -48,6 +48,11 @@ $(function () {
             $('#cfgSourcePath').val(s.vmangos.vmangosSourcePath);
             $('#cfgSqlPath').val(s.vmangos.vmangosSqlPath);
 
+            // World Viewer / Server Data paths
+            $('#cfgExtractorsPath').val(s.vmangos.extractorsPath);
+            $('#cfgServerDataPath').val(s.vmangos.serverDataPath);
+            $('#cfgVmangosClientDataPath').val(s.vmangos.clientDataPath);
+
             // Kestrel
             $('#cfgKestrelUrl').val(s.kestrel.url);
 
@@ -80,9 +85,10 @@ $(function () {
             }
         });
 
-        // Also load DBC status + ComfyUI pool status
+        // Also load DBC status + ComfyUI pool status + Backup status
         loadDbcStatus();
         loadComfyStatus();
+        loadBackupStatus();
     }
 
     // ===================== COMFYUI NODE MANAGEMENT =====================
@@ -242,6 +248,62 @@ $(function () {
         });
     }
 
+    // ===================== VANILLA BACKUP STATUS =====================
+
+    function loadBackupStatus() {
+        $.getJSON('/WorldViewer/BackupStatus', function (data) {
+            var $panel = $('#backupStatusPanel');
+            var $row = $('#backupStatusRow');
+
+            if (!data || data.error) {
+                $row.html(
+                    '<i class="fa-solid fa-circle-xmark" style="font-size: 13px; color: var(--status-error);"></i>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">' +
+                    escapeHtml(data ? data.error : 'Could not check backup status') + '</span>'
+                );
+                $panel.css('border-left', '3px solid var(--status-error)');
+                return;
+            }
+
+            if (data.totalBackups === 0) {
+                $row.html(
+                    '<i class="fa-solid fa-circle-info" style="font-size: 13px; color: var(--text-muted);"></i>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">' +
+                    'No vanilla backups yet &mdash; backups are created automatically when server data is first regenerated after a WMO placement commit.</span>'
+                );
+                $panel.css('border-left', '3px solid var(--text-muted)');
+            } else {
+                var chips = '';
+                if (data.dirBinBackup)
+                    chips += '<span class="dbc-count-chip"><i class="fa-solid fa-check" style="color:var(--status-online);font-size:10px;"></i> dir_bin.vanilla</span> ';
+                if (data.vmapFiles > 0)
+                    chips += '<span class="dbc-count-chip"><i class="fa-solid fa-check" style="color:var(--status-online);font-size:10px;"></i> vmaps: <span class="count-val">' + data.vmapFiles + ' file(s)</span></span> ';
+                if (data.mmapFiles > 0)
+                    chips += '<span class="dbc-count-chip"><i class="fa-solid fa-check" style="color:var(--status-online);font-size:10px;"></i> mmaps: <span class="count-val">' + data.mmapFiles + ' file(s)</span></span> ';
+                if (data.clientVmapFiles > 0)
+                    chips += '<span class="dbc-count-chip"><i class="fa-solid fa-check" style="color:var(--status-online);font-size:10px;"></i> client vmaps: <span class="count-val">' + data.clientVmapFiles + ' file(s)</span></span> ';
+                if (data.clientMmapFiles > 0)
+                    chips += '<span class="dbc-count-chip"><i class="fa-solid fa-check" style="color:var(--status-online);font-size:10px;"></i> client mmaps: <span class="count-val">' + data.clientMmapFiles + ' file(s)</span></span> ';
+
+                $row.html(
+                    '<i class="fa-solid fa-shield-halved" style="font-size: 13px; color: var(--status-online);"></i>' +
+                    '<span style="font-size: 12.5px; color: var(--text-secondary);">Vanilla backups available &mdash; Restore Defaults in the ' +
+                    '<a href="/WorldViewer" style="color: var(--accent);">World Viewer</a> placement panel will use these.</span>' +
+                    '<div class="d-flex flex-wrap gap-2 mt-2">' + chips + '</div>'
+                );
+                $panel.css('border-left', '3px solid var(--status-online)');
+            }
+        }).fail(function () {
+            var $panel = $('#backupStatusPanel');
+            var $row = $('#backupStatusRow');
+            $row.html(
+                '<i class="fa-solid fa-circle-info" style="font-size: 13px; color: var(--text-muted);"></i>' +
+                '<span style="font-size: 12.5px; color: var(--text-secondary);">Backup status unavailable (World Viewer paths may not be configured)</span>'
+            );
+            $panel.css('border-left', '3px solid var(--text-muted)');
+        });
+    }
+
     // ===================== RELOAD DBC =====================
     $('#btnReloadDbc').on('click', function () {
         var $btn = $(this);
@@ -305,7 +367,10 @@ $(function () {
                 mapsDataPath: $('#cfgMapsDataPath').val() || '',
                 backupDirectory: $('#cfgBackupDir').val() || '',
                 vmangosSourcePath: $('#cfgSourcePath').val() || '',
-                vmangosSqlPath: $('#cfgSqlPath').val() || ''
+                vmangosSqlPath: $('#cfgSqlPath').val() || '',
+                extractorsPath: $('#cfgExtractorsPath').val() || '',
+                serverDataPath: $('#cfgServerDataPath').val() || '',
+                clientDataPath: $('#cfgVmangosClientDataPath').val() || ''
             },
             spellCreator: {
                 comfyUI: {
