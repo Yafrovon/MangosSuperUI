@@ -1,0 +1,152 @@
+@{
+    ViewData["Title"] = "3D World Editor";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <div>
+                <h1><i class="fa-solid fa-mountain-sun" style="color: var(--accent);"></i> 3D World Editor</h1>
+                <p>Place, transform, and edit terrain, doodads, and buildings from the game world</p>
+            </div>
+        </div>
+
+        <div class="content-body" style="padding: 0;">
+            <div class="card" style="margin: 0; border-radius: 0; overflow: hidden;">
+                <div class="card-body p-0" style="position: relative;">
+                    <!-- Toolbar -->
+                    <div class="we-toolbar" id="weToolbar">
+                        <select class="we-control" id="wePresetSelect">
+                            <option value="">Loading presets...</option>
+                        </select>
+                        <button class="we-control we-btn active" id="weLoadBtn">
+                            <i class="fa-solid fa-globe"></i> Load
+                        </button>
+                        <div class="we-separator"></div>
+                    </div>
+
+                    <!-- HUD -->
+                    <div class="we-hud" id="weHud">
+                        <span id="weFps">--</span> FPS &nbsp;|&nbsp;
+                        <span id="weDoodadCount">--</span> doodads &nbsp;|&nbsp;
+                        <span id="weWmoCount">--</span> WMOs &nbsp;|&nbsp;
+                        <span id="weModelCount">--</span> models
+                    </div>
+
+                    <!-- Status -->
+                    <div class="we-status" id="weStatus">Select a preset and click Load</div>
+
+                    <!-- Canvas -->
+                    <canvas id="weCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <style>
+        .content-body {
+            padding: 0 !important;
+        }
+
+        #weCanvas {
+            width: 100%;
+            height: calc(100vh - 130px);
+            display: block;
+            background: #1a1a2e;
+        }
+
+        .we-toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .we-control {
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(30, 37, 48, 0.85);
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: all 0.15s;
+        }
+
+            .we-control:hover {
+                background: rgba(50, 62, 78, 0.9);
+                color: #fff;
+            }
+
+        .we-btn.active {
+            background: var(--accent, #4a90d9);
+            border-color: var(--accent, #4a90d9);
+            color: #fff;
+        }
+
+        .we-separator {
+            width: 1px;
+            height: 22px;
+            background: rgba(255,255,255,0.12);
+            margin: 0 2px;
+        }
+
+        .we-hud {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.55);
+            color: #aaa;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            font: 11px/1.4 var(--font-mono, monospace);
+            z-index: 10;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+        }
+
+        .we-status {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.55);
+            color: #999;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm, 6px);
+            font-size: 12px;
+            z-index: 10;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+        }
+    </style>
+}
+
+@section Scripts {
+    @*
+        Air-gapped Three.js: vendor three@0.162.0 locally at
+        wwwroot/lib/three/. The import map below routes `import 'three'`
+        and `import 'three/addons/...'` to those files. See
+        wwwroot/js/worldeditor/README.md for the full vendor file list
+        (OrbitControls, TransformControls, EffectComposer, OutlinePass,
+        OutputPass, RenderPass, ShaderPass, MaskPass, CopyShader,
+        OutputShader, FXAAShader, LuminosityHighPassShader).
+    *@
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "/lib/three/build/three.module.js",
+            "three/addons/": "/lib/three/examples/jsm/",
+            "three-mesh-bvh": "/lib/three-mesh-bvh/index.js"
+          }
+        }
+    </script>
+    <script type="module" src="~/js/worldeditor/index.js" asp-append-version="true"></script>
+}

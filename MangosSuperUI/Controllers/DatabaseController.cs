@@ -635,6 +635,301 @@ public class DatabaseController : Controller
         return "\"" + escaped + "\"";
     }
 
+    // ===================== DEEP EXPORT (SQL) =====================
+
+    /// <summary>
+    /// POST /Database/ExportSqlPreview
+    /// Collects the source row + all inbound satellite rows (depth-1 inbound via curated edges).
+    /// Returns table names and row counts for preview.
+    /// Body: { db, table, pkColumns: [...], pkValues: [...] }
+    /// </summary>
+    [HttpPost]
+    public async Task<IActionResult> ExportSqlPreview([FromBody] ExportSqlRequest req)
+    {
+        if (req == null || string.IsNullOrEmpty(req.Db) || string.IsNullOrEmpty(req.Table))
+            return BadRequest(new { error = "Missing parameters" });
+        if (!IsValidDatabase(req.Db) || !IsValidTable(req.Db, req.Table))
+            return BadRequest(new { error = "Invalid database or table" });
+        if (req.PkColumns == null || req.PkValues == null || req.PkColumns.Length == 0 || req.PkColumns.Length != req.PkValues.Length)
+            return BadRequest(new { error = "Primary key columns/values required" });
+
+        try
+        {
+            var collected = await CollectEntityRows(req.Db, req.Table, req.PkColumns, req.PkValues);
+
+            var preview = collected.Select(kvp => new
+            {
+                db = kvp.Key.Split('.')[0],
+                table = kvp.Key.Split('.')[1],
+                rowCount = kvp.Value.Count
+            }).OrderByDescending(x => x.db == req.Db && x.table == req.Table ? 1 : 0)
+              .ThenBy(x => x.db)
+              .ThenBy(x => x.table)
+              .ToList();
+
+            return Json(new
+            {
+                totalTables = preview.Count,
+                totalRows = preview.Sum(p => p.rowCount),
+                tables = preview
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ExportSqlPreview failed: {Db}.{Table}", req.Db, req.Table);
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// POST /Database/ExportSql
+    /// Collects the source row + all satellite rows, generates a .sql file.
+    /// Body: { db, table, pkColumns: [...], pkValues: [...], insertMode: "INSERT IGNORE", excludeTables: ["mangos.locales_quest"] }
+    /// </summary>
+    [HttpPost]
+    public async Task<IActionResult> ExportSql([FromBody] ExportSqlRequest req)
+    {
+        if (req == null || string.IsNullOrEmpty(req.Db) || string.IsNullOrEmpty(req.Table))
+            return BadRequest(new { error = "Missing parameters" });
+        if (!IsValidDatabase(req.Db) || !IsValidTable(req.Db, req.Table))
+            return BadRequest(new { error = "Invalid database or table" });
+        if (req.PkColumns == null || req.PkValues == null || req.PkColumns.Length == 0 || req.PkColumns.Length != req.PkValues.Length)
+            return BadRequest(new { error = "Primary key columns/values required" });
+
+        try
+        {
+            var collected = await CollectEntityRows(req.Db, req.Table, req.PkColumns, req.PkValues);
+
+            // Remove excluded tables
+            if (req.ExcludeTables != null && req.ExcludeTables.Length > 0)
+            {
+                foreach (var ex in req.ExcludeTables)
+                    collected.Remove(ex);
+            }
+
+            var sql = GenerateSql(collected, req.InsertMode ?? "INSERT IGNORE", req.Db, req.Table);
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(sql);
+            var pkLabel = string.Join("_", req.PkValues.Select(v => v?.Replace(" ", "") ?? "null"));
+            var fileName = $"{req.Db}_{req.Table}_{pkLabel}_{DateTime.Now:yyyyMMdd_HHmmss}.sql";
+
+            return File(bytes, "application/sql; charset=utf-8", fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ExportSql failed: {Db}.{Table}", req.Db, req.Table);
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Collects an entity row + all its satellite/child rows via inbound curated edges.
+    /// 
+    /// For any entity (quest, creature, item, gameobject, etc.) the pattern is:
+    ///   1. Fetch the source row itself
+    ///   2. Find all inbound edges: tables whose columns reference this row's PK columns
+    ///   3. Fetch matching rows from each of those satellite tables
+    ///
+    /// No recursion, no depth — just the entity and everything that belongs to it.
+    /// The referenced entities (items, creatures, spells) are assumed to already exist
+    /// on the target server. If they're custom, they get exported separately.
+    /// </summary>
+    private async Task<Dictionary<string, List<IDictionary<string, object>>>> CollectEntityRows(
+        string startDb, string startTable, string[] pkColumns, string[] pkValues)
+    {
+        var collected = new Dictionary<string, List<IDictionary<string, object>>>(StringComparer.OrdinalIgnoreCase);
+
+        const int MAX_ROWS_PER_TABLE = 500;
+
+        // 1. Fetch the source row
+        var startKey = $"{startDb}.{startTable}";
+        using (var conn = GetConnection(startDb))
+        {
+            var whereClause = string.Join(" AND ", pkColumns.Select((c, i) => $"`{c}` = @pk{i}"));
+            var parameters = new DynamicParameters();
+            for (int i = 0; i < pkColumns.Length; i++)
+                parameters.Add($"pk{i}", pkValues[i]);
+
+            var rows = (await conn.QueryAsync($"SELECT * FROM `{startTable}` WHERE {whereClause}", parameters)).AsList();
+            if (rows.Count == 0) return collected;
+
+            collected[startKey] = rows.Select(r => (IDictionary<string, object>)r).ToList();
+        }
+
+        if (_edges == null) return collected;
+
+        // 2. For each PK column of the source row, find inbound edges
+        //    (tables that reference this PK) and fetch their rows.
+        //
+        //    Edge convention: from = referencing column, to = referenced column (PK)
+        //    Inbound = edge.to matches our column → edge.from is the satellite table's FK column
+        var sourceRow = collected[startKey][0];
+
+        for (int pkIdx = 0; pkIdx < pkColumns.Length; pkIdx++)
+        {
+            var pkCol = pkColumns[pkIdx];
+            var pkVal = pkValues[pkIdx];
+            var fullCol = $"{startDb}.{startTable}.{pkCol}";
+
+            foreach (var edge in _edges)
+            {
+                var to = edge.GetProperty("to").GetString()!;
+                if (!to.Equals(fullCol, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var from = edge.GetProperty("from").GetString()!;
+                var parts = from.Split('.');
+                if (parts.Length != 3) continue;
+
+                var satDb = parts[0];
+                var satTable = parts[1];
+                var satCol = parts[2];
+
+                // Don't loop back to the source table
+                if (satDb.Equals(startDb, StringComparison.OrdinalIgnoreCase)
+                    && satTable.Equals(startTable, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!IsValidDatabase(satDb) || !IsValidTable(satDb, satTable)) continue;
+                if (!IsValidColumn(satDb, satTable, satCol)) continue;
+
+                var satKey = $"{satDb}.{satTable}";
+
+                // Skip if already collected from a different PK column edge
+                if (collected.ContainsKey(satKey)) continue;
+
+                try
+                {
+                    using var conn = GetConnection(satDb);
+                    var result = (await conn.QueryAsync(
+                        $"SELECT * FROM `{satTable}` WHERE `{satCol}` = @val LIMIT {MAX_ROWS_PER_TABLE}",
+                        new { val = pkVal })).AsList();
+
+                    if (result.Count > 0)
+                    {
+                        collected[satKey] = result.Select(r => (IDictionary<string, object>)r).ToList();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Satellite query failed: {Table}.{Col}={Val}", satTable, satCol, pkVal);
+                }
+            }
+        }
+
+        return collected;
+    }
+
+    /// <summary>
+    /// Generate a .sql file from collected rows.
+    /// Groups by database, uses INSERT IGNORE / REPLACE INTO per user preference.
+    /// </summary>
+    private string GenerateSql(
+        Dictionary<string, List<IDictionary<string, object>>> collected,
+        string insertMode, string sourceDb, string sourceTable)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("-- ================================================================");
+        sb.AppendLine($"-- Deep Export: {sourceDb}.{sourceTable}");
+        sb.AppendLine($"-- Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"-- Tables: {collected.Count}, Rows: {collected.Values.Sum(l => l.Count)}");
+        sb.AppendLine($"-- Mode: {insertMode}");
+        sb.AppendLine("-- ================================================================");
+        sb.AppendLine();
+        sb.AppendLine("SET FOREIGN_KEY_CHECKS=0;");
+        sb.AppendLine("SET @OLD_SQL_MODE=@@SQL_MODE;");
+        sb.AppendLine("SET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';");
+        sb.AppendLine();
+
+        // Group tables by database
+        var byDb = collected.GroupBy(kvp => kvp.Key.Split('.')[0], StringComparer.OrdinalIgnoreCase);
+
+        foreach (var dbGroup in byDb.OrderBy(g => g.Key))
+        {
+            sb.AppendLine($"-- ----------------------------------------------------------------");
+            sb.AppendLine($"-- Database: {dbGroup.Key}");
+            sb.AppendLine($"-- ----------------------------------------------------------------");
+            sb.AppendLine();
+
+            foreach (var tableEntry in dbGroup.OrderBy(t => t.Key))
+            {
+                var tableName = tableEntry.Key.Split('.')[1];
+                var rows = tableEntry.Value;
+                if (rows.Count == 0) continue;
+
+                sb.AppendLine($"-- {tableName} ({rows.Count} row{(rows.Count != 1 ? "s" : "")})");
+
+                // Get column names from schema for consistent ordering
+                var schemaKey = tableEntry.Key;
+                List<string> colOrder;
+                if (_schemaMap!.TryGetValue(schemaKey, out var schemaEl))
+                {
+                    colOrder = new List<string>();
+                    foreach (var col in schemaEl.GetProperty("columns").EnumerateArray())
+                        colOrder.Add(col.GetProperty("name").GetString()!);
+                }
+                else
+                {
+                    colOrder = rows[0].Keys.ToList();
+                }
+
+                var colList = string.Join(", ", colOrder.Select(c => $"`{c}`"));
+                var insertVerb = insertMode switch
+                {
+                    "REPLACE" => "REPLACE",
+                    _ => "INSERT IGNORE"
+                };
+
+                foreach (var row in rows)
+                {
+                    var vals = colOrder.Select(c =>
+                    {
+                        row.TryGetValue(c, out var val);
+                        return SqlEscape(val);
+                    });
+
+                    sb.AppendLine($"{insertVerb} INTO `{dbGroup.Key}`.`{tableName}` ({colList}) VALUES ({string.Join(", ", vals)});");
+                }
+
+                sb.AppendLine();
+            }
+        }
+
+        sb.AppendLine("SET FOREIGN_KEY_CHECKS=1;");
+        sb.AppendLine("SET SQL_MODE=@OLD_SQL_MODE;");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Escape a value for use in a SQL INSERT statement.
+    /// </summary>
+    private static string SqlEscape(object? val)
+    {
+        if (val == null || val == DBNull.Value)
+            return "NULL";
+
+        if (val is bool b)
+            return b ? "1" : "0";
+
+        if (val is byte[] bytes)
+            return "0x" + BitConverter.ToString(bytes).Replace("-", "");
+
+        if (val is DateTime dt)
+            return "'" + dt.ToString("yyyy-MM-dd HH:mm:ss") + "'";
+
+        if (val is float or double or decimal)
+            return Convert.ToString(val, System.Globalization.CultureInfo.InvariantCulture)!;
+
+        if (val is int or long or short or uint or ulong or ushort or byte or sbyte)
+            return Convert.ToString(val)!;
+
+        // String value: escape single quotes and backslashes
+        var str = Convert.ToString(val) ?? "";
+        str = str.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\0", "");
+        return "'" + str + "'";
+    }
+
     /// <summary>
     /// POST /Database/Update — inline cell edit.
     /// Body: { db, table, pkColumns: [...], pkValues: [...], column, value }
@@ -860,5 +1155,15 @@ public class DatabaseController : Controller
         public string Table { get; set; } = "";
         public string[] PkColumns { get; set; } = Array.Empty<string>();
         public string[] PkValues { get; set; } = Array.Empty<string>();
+    }
+
+    public class ExportSqlRequest
+    {
+        public string Db { get; set; } = "";
+        public string Table { get; set; } = "";
+        public string[] PkColumns { get; set; } = Array.Empty<string>();
+        public string[] PkValues { get; set; } = Array.Empty<string>();
+        public string? InsertMode { get; set; } = "INSERT IGNORE";
+        public string[]? ExcludeTables { get; set; }
     }
 }

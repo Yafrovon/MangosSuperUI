@@ -548,6 +548,126 @@ public class SourceMapController : Controller
         return Json(result);
     }
 
+    // ──────────── FK Research (foreign-key relationship mining pipeline) ────────────
+    //
+    // These two endpoints power the offline FK mining pipeline at /opt/fk_mining/.
+    // They use the SourceIndexerService's string-literal inverted index to find
+    // every C++ function that references a given SQL table / column inside a
+    // quoted "..." literal. This is dramatically more accurate than grep-with-
+    // ranked-snippets because the LLM sees the actual loader, its full callers,
+    // and its full callees — not a guessed window of lines.
+
+    /// <summary>
+    /// GET or POST: find every indexed symbol whose body contains one or more
+    /// needle strings inside C++ string literals. Lightweight — no bodies returned.
+    ///
+    /// GET form:  /SourceMap/FindStringReferences?needles=loot_id&needles=creature_template&requireAll=true&max=50
+    /// POST form: JSON body matching FindStringReferencesRequest.
+    /// </summary>
+    [HttpGet]
+    public IActionResult FindStringReferences(
+        [FromQuery] string[] needles,
+        [FromQuery] bool requireAll = false,
+        [FromQuery] int max = 0)
+    {
+        if (needles == null || needles.Length == 0)
+            return BadRequest(new { error = "At least one 'needles' query parameter is required." });
+
+        if (_indexer.GetIndex() == null)
+            return NotFound(new { error = "No index. POST /SourceMap/Reindex first." });
+
+        var result = _indexer.FindStringReferences(needles, requireAll, max);
+        return Json(result);
+    }
+
+    [HttpPost]
+    public IActionResult FindStringReferencesPost([FromBody] FindStringReferencesRequest request)
+    {
+        if (request == null || request.Needles == null || request.Needles.Count == 0)
+            return BadRequest(new { error = "Request must include non-empty 'needles' array." });
+
+        if (_indexer.GetIndex() == null)
+            return NotFound(new { error = "No index. POST /SourceMap/Reindex first." });
+
+        var result = _indexer.FindStringReferences(request.Needles, request.RequireAll, request.MaxResults);
+        return Json(result);
+    }
+
+    /// <summary>
+    /// GET: find every indexed symbol whose body references the given struct
+    /// member names via `foo->member` or `foo.member` access patterns.
+    /// This is the FK Layer 2 lookup — used to find CONSUMERS of a struct field,
+    /// not just the loader.
+    ///
+    /// Example: /SourceMap/FindMemberReferences?needles=loot_id&max=20
+    /// </summary>
+    [HttpGet]
+    public IActionResult FindMemberReferences(
+        [FromQuery] string[] needles,
+        [FromQuery] bool requireAll = false,
+        [FromQuery] int max = 0)
+    {
+        if (needles == null || needles.Length == 0)
+            return BadRequest(new { error = "At least one 'needles' query parameter is required." });
+
+        if (_indexer.GetIndex() == null)
+            return NotFound(new { error = "No index. POST /SourceMap/Reindex first." });
+
+        var result = _indexer.FindMemberReferences(needles, requireAll, max);
+        return Json(result);
+    }
+
+    /// <summary>
+    /// POST: build a complete FK research bundle for a (db, table, column).
+    /// Returns prompt-ready code for the LLM auditor: the loader function(s),
+    /// their callers and callees, the containing class definitions, and a
+    /// cross-reference table listing which other candidate tables show up in
+    /// the same code paths.
+    ///
+    /// Body: FkResearchBundleRequest JSON.
+    /// </summary>
+    [HttpPost]
+    public IActionResult FkResearchBundle([FromBody] FkResearchBundleRequest request)
+    {
+        if (request == null)
+            return BadRequest(new { error = "Request body is required." });
+        if (string.IsNullOrWhiteSpace(request.Table) || string.IsNullOrWhiteSpace(request.Column))
+            return BadRequest(new { error = "Both 'table' and 'column' are required." });
+
+        if (_indexer.GetIndex() == null)
+            return NotFound(new { error = "No index. POST /SourceMap/Reindex first." });
+
+        var result = _indexer.BuildFkResearchBundle(request);
+        if (result == null)
+            return NotFound(new { error = "Bundle could not be built (index missing or empty)." });
+
+        return Json(result);
+    }
+
+    /// <summary>
+    /// Same as FkResearchBundle but returns the pre-formatted prompt text directly
+    /// as a .txt download — convenient for ad-hoc inspection or for piping into a
+    /// command-line LLM client.
+    /// </summary>
+    [HttpPost]
+    public IActionResult FkResearchBundleText([FromBody] FkResearchBundleRequest request)
+    {
+        if (request == null)
+            return BadRequest(new { error = "Request body is required." });
+        if (string.IsNullOrWhiteSpace(request.Table) || string.IsNullOrWhiteSpace(request.Column))
+            return BadRequest(new { error = "Both 'table' and 'column' are required." });
+        if (_indexer.GetIndex() == null)
+            return NotFound(new { error = "No index. POST /SourceMap/Reindex first." });
+
+        var result = _indexer.BuildFkResearchBundle(request);
+        if (result == null)
+            return NotFound(new { error = "Bundle could not be built." });
+
+        var safeName = $"fk_{request.Db}_{request.Table}_{request.Column}"
+            .Replace("/", "_").Replace("\\", "_").Replace(" ", "_");
+        return File(Encoding.UTF8.GetBytes(result.FormattedText), "text/plain", $"{safeName}_bundle.txt");
+    }
+
     // ──────────── Reindex ────────────
 
     [HttpPost]

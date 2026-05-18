@@ -251,7 +251,7 @@ $(function () {
     // ===================== VANILLA BACKUP STATUS =====================
 
     function loadBackupStatus() {
-        $.getJSON('/WorldViewer/BackupStatus', function (data) {
+        $.getJSON('/WorldEditor/BackupStatus', function (data) {
             var $panel = $('#backupStatusPanel');
             var $row = $('#backupStatusRow');
 
@@ -288,7 +288,7 @@ $(function () {
                 $row.html(
                     '<i class="fa-solid fa-shield-halved" style="font-size: 13px; color: var(--status-online);"></i>' +
                     '<span style="font-size: 12.5px; color: var(--text-secondary);">Vanilla backups available &mdash; Restore Defaults in the ' +
-                    '<a href="/WorldViewer" style="color: var(--accent);">World Viewer</a> placement panel will use these.</span>' +
+                    '<a href="/WorldEditor" style="color: var(--accent);">World Editor</a> placement panel will use these.</span>' +
                     '<div class="d-flex flex-wrap gap-2 mt-2">' + chips + '</div>'
                 );
                 $panel.css('border-left', '3px solid var(--status-online)');
@@ -298,7 +298,7 @@ $(function () {
             var $row = $('#backupStatusRow');
             $row.html(
                 '<i class="fa-solid fa-circle-info" style="font-size: 13px; color: var(--text-muted);"></i>' +
-                '<span style="font-size: 12.5px; color: var(--text-secondary);">Backup status unavailable (World Viewer paths may not be configured)</span>'
+                '<span style="font-size: 12.5px; color: var(--text-secondary);">Backup status unavailable (World Editor paths may not be configured)</span>'
             );
             $panel.css('border-left', '3px solid var(--text-muted)');
         });

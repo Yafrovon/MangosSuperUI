@@ -1,26 +1,44 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <Content Include="Controllers\BaselineController.cs" />
-  </ItemGroup>
+	<ItemGroup>
+		<Content Include="Controllers\BaselineController.cs" />
+		<Content Include="Services\BodyAtlasTextureService.cs" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Dapper" Version="2.1.72" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.5" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.5" />
-    <PackageReference Include="MySqlConnector" Version="2.5.0" />
-    <PackageReference Include="SkiaSharp" Version="3.119.2" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.2" />
-    <PackageReference Include="War3Net.Drawing.Blp" Version="6.0.2" />
-    <PackageReference Include="War3Net.IO.Mpq" Version="6.0.2" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Dapper" Version="2.1.72" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.5" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.5" />
+		<PackageReference Include="MySqlConnector" Version="2.5.0" />
+		<PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
+		<PackageReference Include="SkiaSharp" Version="3.119.2" />
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.2" />
+		<PackageReference Include="War3Net.Drawing.Blp" Version="6.0.2" />
+		<PackageReference Include="War3Net.IO.Mpq" Version="6.0.2" />
+	</ItemGroup>
 
+	<!-- Native StormLib binaries. Auto-discovered by .NET 8's DllImport
+       resolver via the runtimes/{rid}/native/ convention. Committing
+       these to the repo means anyone cloning SuperUI gets MPQ support
+       out of the box — no separate StormLib install step.
+       Condition="Exists(...)" so a missing platform binary (e.g. no
+       storm.dll yet) doesn't break the build on the other platform. -->
+	<ItemGroup>
+		<None Include="runtimes\linux-x64\native\libstorm.so" Condition="Exists('runtimes\linux-x64\native\libstorm.so')">
+			<Link>libstorm.so</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Include="runtimes\win-x64\native\storm.dll" Condition="Exists('runtimes\win-x64\native\storm.dll')">
+			<Link>storm.dll</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
 
 	<ItemGroup>
 		<Content Remove="wwwroot\item_models\**" />
@@ -29,7 +47,21 @@
 		<Content Remove="wwwroot\icons\**" />
 	</ItemGroup>
 
-	<!-- If you still want them available during local dev/build, add them back as None --><!--
+
+	<ItemGroup>
+		<Folder Include="wwwroot\character_models\" />
+		<Folder Include="wwwroot\character_textures\" />
+	</ItemGroup>
+
+
+	<ItemGroup>
+	  <Content Update="wwwroot\data\curated-relationships.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	</ItemGroup>
+
+	<!-- If you still want them available during local dev/build, add them back as None -->
+	<!--
 	<ItemGroup>
 		<None Include="wwwroot\item_models\**" />
 		<None Include="wwwroot\minimap\**" />

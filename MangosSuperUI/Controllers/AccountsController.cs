@@ -57,7 +57,7 @@ public class AccountsController : Controller
 
             if (status == "banned")
             {
-                where.Add("EXISTS (SELECT 1 FROM account_banned ab WHERE ab.account_id = a.id AND ab.active = 1)");
+                where.Add("EXISTS (SELECT 1 FROM account_banned ab WHERE ab.id = a.id AND ab.active = 1)");
             }
             else if (status == "muted")
             {
@@ -70,6 +70,10 @@ public class AccountsController : Controller
             else if (status == "online")
             {
                 where.Add("a.online = 1");
+            }
+            else if (status == "gm")
+            {
+                where.Add("a.gmlevel > 0");
             }
 
             var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
@@ -88,7 +92,7 @@ public class AccountsController : Controller
                        a.gmlevel AS gmLevel, a.locked, a.mutetime AS muteTime, a.online,
                        a.email, a.os, a.platform,
                        (SELECT COUNT(*) FROM characters.characters c WHERE c.account = a.id) AS characterCount,
-                       EXISTS (SELECT 1 FROM account_banned ab WHERE ab.account_id = a.id AND ab.active = 1) AS isBanned
+                       EXISTS (SELECT 1 FROM account_banned ab WHERE ab.id = a.id AND ab.active = 1) AS isBanned
                 FROM account a
                 {whereClause}
                 ORDER BY a.id ASC
@@ -137,25 +141,29 @@ public class AccountsController : Controller
         try
         {
             using var conn = _db.Realmd();
-            var stats = await conn.QueryFirstAsync<dynamic>(@"
+
+            // Typed result — MySQL returns COUNT(*) as long and SUM(CASE...) as decimal.
+            // Casting those off a dynamic via (int) throws at runtime, which was making
+            // every badge come back as 0 via the catch block.
+            var stats = await conn.QueryFirstAsync<SummaryRow>(@"
                 SELECT 
-                    COUNT(*) AS total,
-                    SUM(CASE WHEN online = 1 THEN 1 ELSE 0 END) AS online,
-                    SUM(CASE WHEN gmlevel > 0 THEN 1 ELSE 0 END) AS gm,
-                    SUM(CASE WHEN locked = 1 THEN 1 ELSE 0 END) AS locked,
-                    SUM(CASE WHEN mutetime > UNIX_TIMESTAMP() THEN 1 ELSE 0 END) AS muted
+                    COUNT(*) AS Total,
+                    SUM(CASE WHEN online = 1 THEN 1 ELSE 0 END) AS Online,
+                    SUM(CASE WHEN gmlevel > 0 THEN 1 ELSE 0 END) AS Gm,
+                    SUM(CASE WHEN locked = 1 THEN 1 ELSE 0 END) AS Locked,
+                    SUM(CASE WHEN mutetime > UNIX_TIMESTAMP() THEN 1 ELSE 0 END) AS Muted
                 FROM account");
 
             var banned = await conn.ExecuteScalarAsync<int>(
-                "SELECT COUNT(DISTINCT account_id) FROM account_banned WHERE active = 1");
+                "SELECT COUNT(DISTINCT id) FROM account_banned WHERE active = 1");
 
             return Json(new
             {
-                total = (int)(stats.total ?? 0),
-                online = (int)(stats.online ?? 0),
-                gm = (int)(stats.gm ?? 0),
-                locked = (int)(stats.locked ?? 0),
-                muted = (int)(stats.muted ?? 0),
+                total = (int)stats.Total,
+                online = (int)stats.Online,
+                gm = (int)stats.Gm,
+                locked = (int)stats.Locked,
+                muted = (int)stats.Muted,
                 banned
             });
         }
@@ -197,7 +205,7 @@ public class AccountsController : Controller
             var bans = await realmdConn.QueryAsync<BanHistoryRow>(
                 @"SELECT bandate AS banDate, unbandate AS unbanDate, bannedby AS bannedBy,
                          banreason AS banReason, active
-                  FROM account_banned WHERE account_id = @id ORDER BY bandate DESC",
+                  FROM account_banned WHERE id = @id ORDER BY bandate DESC",
                 new { id });
 
             // Audit history (last 20 actions on this account)
@@ -304,20 +312,42 @@ public class AccountsController : Controller
 
     private static string GetRaceName(int race) => race switch
     {
-        1 => "Human", 2 => "Orc", 3 => "Dwarf", 4 => "Night Elf",
-        5 => "Undead", 6 => "Tauren", 7 => "Gnome", 8 => "Troll",
+        1 => "Human",
+        2 => "Orc",
+        3 => "Dwarf",
+        4 => "Night Elf",
+        5 => "Undead",
+        6 => "Tauren",
+        7 => "Gnome",
+        8 => "Troll",
         _ => $"Unknown ({race})"
     };
 
     private static string GetClassName(int classId) => classId switch
     {
-        1 => "Warrior", 2 => "Paladin", 3 => "Hunter", 4 => "Rogue",
-        5 => "Priest", 7 => "Shaman", 8 => "Mage", 9 => "Warlock", 11 => "Druid",
+        1 => "Warrior",
+        2 => "Paladin",
+        3 => "Hunter",
+        4 => "Rogue",
+        5 => "Priest",
+        7 => "Shaman",
+        8 => "Mage",
+        9 => "Warlock",
+        11 => "Druid",
         _ => $"Unknown ({classId})"
     };
 }
 
 // ==================== DTOs ====================
+
+public class SummaryRow
+{
+    public long Total { get; set; }
+    public decimal Online { get; set; }
+    public decimal Gm { get; set; }
+    public decimal Locked { get; set; }
+    public decimal Muted { get; set; }
+}
 
 public class AccountListRow
 {

@@ -327,6 +327,7 @@ $(function () {
         html += '<button id="btnShowRels" title="Show relationships sidebar" disabled><i class="fa-solid fa-project-diagram"></i> Relationships</button>';
         html += '<button id="btnRelMap" title="Relationship map view" disabled><i class="fa-solid fa-sitemap"></i> Map</button>';
         html += '<button id="btnERDiagram" title="ER Diagram view"><i class="fa-solid fa-diagram-project"></i> ER Diagram</button>';
+        html += '<button id="btnExportSql" title="Export selected row + related data as .sql" disabled><i class="fa-solid fa-file-export"></i> Export SQL</button>';
         html += '</div>';
 
         // Column name toggle
@@ -424,6 +425,7 @@ $(function () {
         $('#btnRelMap').prop('disabled', !hasSelection);
         $('#btnCloneRow').prop('disabled', !hasSelection);
         $('#btnDeleteRow').prop('disabled', !hasSelection);
+        $('#btnExportSql').prop('disabled', !hasSelection);
     });
 
     // ===================== SORTING =====================
@@ -1442,6 +1444,192 @@ $(function () {
         if (parts.length !== 2) return;
         closeERDiagram();
         loadTable(parts[0], parts[1]);
+    });
+
+    // ===================== DEEP EXPORT SQL =====================
+
+    var exportPreviewData = null; // cached preview response
+
+    $(document).on('click', '#btnExportSql', function () {
+        if (!selectedRowPks || !schema) return;
+        showExportSqlModal();
+    });
+
+    function showExportSqlModal() {
+        $('#exportSqlModal').remove();
+        exportPreviewData = null;
+
+        var pkDesc = selectedRowPks.columns.map(function (c, i) {
+            return c + ' = ' + selectedRowPks.values[i];
+        }).join(', ');
+
+        var html = '<div id="exportSqlModal" class="db-modal-overlay">'
+            + '<div class="db-modal">'
+            + '<div class="db-modal-header">'
+            + '<span><i class="fa-solid fa-file-export" style="color: var(--accent);"></i> Export SQL</span>'
+            + '<button class="close-btn" id="btnCloseExportModal"><i class="fa-solid fa-xmark"></i></button>'
+            + '</div>'
+            + '<div class="db-modal-body">'
+            + '<div class="export-source-info">'
+            + '<span class="col-name">' + esc(currentDb) + '.' + esc(currentTable) + '</span>'
+            + ' &mdash; ' + esc(pkDesc)
+            + '</div>'
+            + '<div class="export-description">Exports this row and all rows from related tables that belong to it '
+            + '(translations, scripts, quest givers, loot entries, etc). '
+            + 'Referenced entities like items or creatures are assumed to already exist on the target server.</div>'
+            + '<div id="exportPreview" class="export-preview">'
+            + '<div class="rel-loading"><i class="fa-solid fa-spinner fa-spin"></i> Scanning related tables...</div>'
+            + '</div>'
+            + '<div class="export-option-row">'
+            + '<label>Insert mode</label>'
+            + '<select id="exportInsertMode">'
+            + '<option value="INSERT IGNORE" selected>INSERT IGNORE (skip existing)</option>'
+            + '<option value="REPLACE">REPLACE (overwrite existing)</option>'
+            + '</select>'
+            + '</div>'
+            + '<div class="export-actions">'
+            + '<button class="btn-accent" id="btnDoExportSql" disabled>'
+            + '<i class="fa-solid fa-download"></i> Download .sql'
+            + '</button>'
+            + '</div>'
+            + '</div>'
+            + '</div>'
+            + '</div>';
+
+        $('body').append(html);
+        loadExportPreview();
+    }
+
+    function loadExportPreview() {
+        $('#exportPreview').html('<div class="rel-loading"><i class="fa-solid fa-spinner fa-spin"></i> Scanning related tables...</div>');
+        $('#btnDoExportSql').prop('disabled', true);
+
+        $.ajax({
+            url: '/Database/ExportSqlPreview',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                db: currentDb,
+                table: currentTable,
+                pkColumns: selectedRowPks.columns,
+                pkValues: selectedRowPks.values.map(String)
+            }),
+            success: function (data) {
+                exportPreviewData = data;
+                renderExportPreview(data);
+            },
+            error: function (xhr) {
+                var msg = 'Preview failed';
+                try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) { }
+                $('#exportPreview').html('<div class="rel-loading" style="color: var(--status-error);">'
+                    + '<i class="fa-solid fa-exclamation-triangle"></i> ' + esc(msg) + '</div>');
+            }
+        });
+    }
+
+    function renderExportPreview(data) {
+        var html = '<div class="export-preview-summary">'
+            + '<span class="export-stat"><i class="fa-solid fa-table"></i> <span id="exportTableCount">'
+            + data.totalTables + '</span> tables</span>'
+            + '<span class="export-stat"><i class="fa-solid fa-bars"></i> <span id="exportRowCount">'
+            + data.totalRows.toLocaleString() + '</span> rows</span>'
+            + '</div>';
+
+        html += '<div class="export-table-list">';
+        data.tables.forEach(function (t) {
+            var isSource = t.db === currentDb && t.table === currentTable;
+            var tableKey = t.db + '.' + t.table;
+            html += '<div class="export-table-item' + (isSource ? ' source' : '') + '">'
+                + '<label class="export-table-check">'
+                + '<input type="checkbox" class="export-table-cb" data-key="' + esc(tableKey) + '" '
+                + 'data-rows="' + t.rowCount + '" checked'
+                + (isSource ? ' disabled' : '') + ' />'
+                + '<span class="export-table-name">'
+                + (isSource ? '<i class="fa-solid fa-bullseye" style="color: var(--accent); font-size: 9px; margin-right: 4px;"></i>' : '')
+                + esc(t.db) + '.<strong>' + esc(t.table) + '</strong></span>'
+                + '</label>'
+                + '<span class="export-table-count">' + t.rowCount.toLocaleString() + '</span>'
+                + '</div>';
+        });
+        html += '</div>';
+
+        $('#exportPreview').html(html);
+        $('#btnDoExportSql').prop('disabled', false);
+    }
+
+    // Update counts when checkboxes change
+    $(document).on('change', '.export-table-cb', function () {
+        if (!exportPreviewData) return;
+        var totalTables = 0;
+        var totalRows = 0;
+        $('.export-table-cb').each(function () {
+            if ($(this).is(':checked')) {
+                totalTables++;
+                totalRows += parseInt($(this).data('rows')) || 0;
+            }
+        });
+        $('#exportTableCount').text(totalTables);
+        $('#exportRowCount').text(totalRows.toLocaleString());
+    });
+
+    // Download SQL
+    $(document).on('click', '#btnDoExportSql', function () {
+        if (!selectedRowPks) return;
+
+        var btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Generating...');
+
+        var insertMode = $('#exportInsertMode').val() || 'INSERT IGNORE';
+
+        // Collect unchecked tables as exclusions
+        var excludeTables = [];
+        $('.export-table-cb:not(:checked)').each(function () {
+            excludeTables.push($(this).data('key'));
+        });
+
+        fetch('/Database/ExportSql', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                db: currentDb,
+                table: currentTable,
+                pkColumns: selectedRowPks.columns,
+                pkValues: selectedRowPks.values.map(String),
+                insertMode: insertMode,
+                excludeTables: excludeTables
+            })
+        }).then(function (resp) {
+            if (!resp.ok) throw new Error('Export failed');
+            var cd = resp.headers.get('Content-Disposition') || '';
+            var match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            var fileName = match ? match[1].replace(/['"]/g, '') : 'export.sql';
+            return resp.blob().then(function (blob) { return { blob: blob, fileName: fileName }; });
+        }).then(function (result) {
+            var url = URL.createObjectURL(result.blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = result.fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            btn.prop('disabled', false).html('<i class="fa-solid fa-download"></i> Download .sql');
+            showToast('SQL export downloaded', 'success');
+        }).catch(function (err) {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-download"></i> Download .sql');
+            showToast('Export failed: ' + err.message, 'error');
+        });
+    });
+
+    // Close modal
+    $(document).on('click', '#btnCloseExportModal', function () {
+        $('#exportSqlModal').remove();
+    });
+    $(document).on('click', '.db-modal-overlay', function (e) {
+        if ($(e.target).hasClass('db-modal-overlay')) {
+            $('#exportSqlModal').remove();
+        }
     });
 
     // ===================== BREADCRUMB NAVIGATION =====================

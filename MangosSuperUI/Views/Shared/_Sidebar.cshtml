@@ -15,8 +15,8 @@
         "home" or "console" or "players" or "accounts" or "realm" => "operations",
         "activity" or "serverlogs" or "livelogs" or "config" or "backup" => "server",
         "spells" or "patch" => "spells",
-        "worldmap" or "items" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
-        "worldviewer" => "world",
+        "items" or "gameobjects" or "loottuner" or "instances" or "lootifier" => "content",
+        "worldeditor" or "worldmap" => "world",
         "database" or "functiongraph" or "sourcemap" => "data",
         "downloads" => "downloads",
         "bots" => "bots",
@@ -164,10 +164,10 @@
                         World Map
                     </a>
                 </li>
-                <li class="sidebar-nav-item" data-nav-key="worldviewer">
-                    <a asp-controller="WorldViewer" asp-action="Index" class="@NavClass("WorldViewer")">
+                <li class="sidebar-nav-item" data-nav-key="worldeditor">
+                    <a asp-controller="WorldEditor" asp-action="Index" class="@NavClass("WorldEditor")">
                         <i class="fa-solid fa-mountain-sun"></i>
-                        3D World Viewer
+                        3D World Editor
                     </a>
                 </li>
             </ul>

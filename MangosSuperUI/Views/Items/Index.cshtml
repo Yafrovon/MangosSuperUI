@@ -89,11 +89,16 @@
 
             <!-- Results -->
             <div class="row" id="mainLayout">
-                <!-- Item List -->
+                <!-- Left column: results (collapsible) + 3D character viewer -->
                 <div class="col-lg-7" id="colList">
-                    <div class="card">
+                    <div class="card" id="resultsCard">
                         <div class="card-header d-flex align-items-center justify-content-between">
-                            <span><i class="fa-solid fa-box-open" style="color: var(--accent);"></i> Results</span>
+                            <span>
+                                <i class="fa-solid fa-box-open" style="color: var(--accent);"></i> Results
+                                <button id="btnToggleResults" class="btn-toggle-results" title="Expand / collapse results">
+                                    <i class="fa-solid fa-chevron-up chevron"></i>
+                                </button>
+                            </span>
                             <span class="text-muted" style="font-size: 12px;" id="resultInfo"></span>
                         </div>
                         <div class="card-body p-0" id="itemListContainer">
@@ -117,6 +122,46 @@
                                 <option value="200">200</option>
                                 <option value="500">500</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <!-- 3D Character Viewer Card -->
+                    <div class="card mt-3" id="characterCard" style="display: none;">
+                        <div class="card-header d-flex align-items-center justify-content-between">
+                            <span>
+                                <i class="fa-solid fa-user" style="color: var(--accent);"></i> Try On
+                                <span class="cv-controls-hint" title="Hold Ctrl and scroll to zoom toward your cursor. Right-click + drag to pan.">
+                                    <kbd>Ctrl</kbd> + click to move model left/right/up/down
+                                </span>
+                            </span>
+                            <div class="d-flex gap-2">
+                                <button class="btn-sm btn-outline-subtle" id="btnExpandViewer" title="Expand viewer to full width (hides item detail)">
+                                    <i class="fa-solid fa-expand"></i>
+                                </button>
+                                <button class="btn-sm btn-outline-subtle" id="btnStripGear" title="Strip back to default clothes">
+                                    <i class="fa-solid fa-broom"></i> Strip
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <!-- Race + Gender toolbar -->
+                            <div id="cvRaceToolbar" class="cv-race-toolbar-wrap"></div>
+
+                            <!-- Canvas wrapper. Position: relative so the
+                                 animation control panel + tier-set side
+                                 panel can absolute-position over it. -->
+                            <div class="cv-canvas-wrap">
+                                <canvas id="char-preview-canvas"
+                                        data-glb-url=""
+                                        data-skin-url=""></canvas>
+                                <aside id="cvTierSidePanel" class="cv-tier-side"></aside>
+                                <button id="btnTierToggle" class="cv-tier-toggle" title="Show / hide tier sets">
+                                    <i class="fa-solid fa-shield-halved"></i>
+                                </button>
+                            </div>
+
+                            <!-- Equipped items list (chips with unequip buttons) -->
+                            <div id="cvEquippedList" class="cv-equipped-list"></div>
                         </div>
                     </div>
                 </div>
@@ -156,6 +201,21 @@
                             <button class="btn-reset-og" id="btnResetItemOG">
                                 <i class="fa-solid fa-rotate-left"></i> Reset to Original
                             </button>
+                        </div>
+
+                        <!-- Item Textures Panel -->
+                        <div id="itemTexturePanel" style="display:none; border-top: 1px solid var(--border-light);">
+                            <div class="texture-panel-header" id="itemTextureToggle">
+                                <i class="fa-solid fa-palette"></i> Model Textures
+                                <i class="fa-solid fa-chevron-down chevron" style="margin-left:auto;font-size:11px;color:var(--text-muted);transition:transform 0.2s;"></i>
+                            </div>
+                            <div class="texture-panel-body" id="itemTextureBody">
+                                <div id="itemTextureContent">
+                                    <div class="text-center p-2 text-muted" style="font-size: 12px;">
+                                        Click an item to view textures
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -365,6 +425,29 @@
         .edit-toast.error { background: var(--status-error); color: white; }
         @@keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+        /* ── Item Texture Panel ── */
+        .texture-panel-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; user-select: none; transition: background var(--transition-fast); }
+        .texture-panel-header:hover { background: var(--bg-input); }
+        .texture-panel-header.collapsed .chevron { transform: rotate(-90deg); }
+        .texture-panel-body { padding: 8px 14px 14px; }
+        .texture-panel-body.collapsed { display: none; }
+        .item-texture-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+        .item-texture-card { border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; transition: all var(--transition-fast); background: var(--bg-body); }
+        .item-texture-card:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); transform: translateY(-1px); }
+        .item-texture-preview { width: 100%; aspect-ratio: 1; object-fit: contain; image-rendering: pixelated; background: var(--bg-input); display: block; }
+        .item-texture-info { padding: 6px 8px; border-top: 1px solid var(--border-light); }
+        .item-texture-name { font-size: 10px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .item-texture-meta { font-size: 9px; color: var(--text-muted); margin-top: 1px; }
+        .btn-retexture { position: absolute; top: 4px; right: 4px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); width: 22px; height: 22px; font-size: 10px; cursor: pointer; opacity: 0; transition: opacity var(--transition-fast); display: flex; align-items: center; justify-content: center; }
+        .item-texture-card { position: relative; }
+        .item-texture-card:hover .btn-retexture { opacity: 1; }
+        .btn-retexture:hover { background: var(--accent-hover); transform: scale(1.1); }
+        .retex-mode-btn.active { border-color: var(--accent); background: var(--accent-subtle); }
+        .texture-overlay { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; cursor: pointer; animation: fadeIn 0.15s ease-out; }
+        .texture-overlay-content { max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; }
+        .retexture-dialog { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px; max-width: 420px; width: 90vw; }
+        @@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
         /* ── 3D Model Preview ── */
         .model-preview-container { width: 100%; height: 200px; background: var(--bg-input); border-radius: var(--radius-sm); border: 1px solid var(--border); overflow: hidden; margin-bottom: 12px; }
         .model-preview-container model-viewer { width: 100%; height: 100%; }
@@ -386,10 +469,184 @@
         .page-size-sep { color: var(--border); font-size: 16px; margin: 0 2px; }
         .page-size-select { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 3px 6px; font-size: 12px; cursor: pointer; }
         .page-size-select:focus { border-color: var(--accent); outline: none; }
+
+        /* ── 3D Character Viewer (Items page integration) ───────────────── */
+        /* Collapse toggle in results card header */
+        .btn-toggle-results { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; margin-left: 6px; font-size: 11px; transition: color var(--transition-fast); }
+        .btn-toggle-results:hover { color: var(--accent); }
+        .btn-toggle-results .chevron { transition: transform 0.2s; }
+        #resultsCard.collapsed .btn-toggle-results .chevron { transform: rotate(180deg); }
+        /* When collapsed, the results card shrinks to ~3 rows tall with internal scroll */
+        #resultsCard.collapsed #itemListContainer { max-height: 168px; overflow-y: auto; }
+        #resultsCard.collapsed #paginationBar { display: none !important; }
+
+        /* Character card */
+        #characterCard .cv-canvas-wrap { position: relative; width: 100%; height: 480px; background: #222; overflow: hidden; }
+        #characterCard #char-preview-canvas { width: 100%; height: 100%; display: block; }
+
+        /* Inline controls hint in the Try On header — explains the
+           non-obvious zoom keybinding. cursor:help lets the title attr
+           expand the hint to also cover panning, which is even less
+           discoverable. */
+        .cv-controls-hint { margin-left: 10px; font-size: 11px; font-weight: 400; color: var(--text-muted); cursor: help; }
+        .cv-controls-hint kbd { background: var(--bg-input); border: 1px solid var(--border-light); border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-primary); margin: 0 2px; }
+
+        /* Expanded mode — viewer card takes full row width and gets extra
+           height. Triggered by JS adding .viewer-expanded to #mainLayout.
+           Hiding the detail column with display:none rather than removing
+           it from the DOM means the user's selected item / clone state
+           isn't lost when they toggle back. */
+        #mainLayout.viewer-expanded > #colDetail { display: none; }
+        #mainLayout.viewer-expanded > #colList { flex: 0 0 100%; max-width: 100%; }
+        #mainLayout.viewer-expanded #characterCard .cv-canvas-wrap { height: 620px; }
+        /* In expanded mode, also widen the tier side panel a bit so the
+           pieces breathe and the class column can show full names. */
+        #mainLayout.viewer-expanded .cv-tier-side { width: 180px; }
+
+        /* Race + Gender toolbar */
+        .cv-race-toolbar-wrap { padding: 8px 10px; border-bottom: 1px solid var(--border-light); background: var(--bg-body); }
+        .cv-race-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+        .cv-race-group { display: flex; align-items: center; gap: 3px; background: var(--bg-input); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 2px 4px 2px 8px; }
+        .cv-race-label { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
+        .cv-race-btn { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 3px 8px; font-size: 11.5px; font-weight: 600; border-radius: 3px; transition: all var(--transition-fast); }
+        .cv-race-btn:hover { background: var(--accent-subtle); color: var(--accent); }
+        .cv-race-btn.active { background: var(--accent); color: white; }
+
+        /* Equipped chips list */
+        .cv-equipped-list { padding: 8px 10px; border-top: 1px solid var(--border-light); display: flex; flex-wrap: wrap; gap: 6px; min-height: 36px; }
+        .equipped-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-input); border: 1px solid var(--border-light); border-radius: 8px; padding: 5px 5px 5px 10px; font-size: 11.5px; }
+        .equipped-slot { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0; }
+        .equipped-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.2; }
+        .equipped-name { color: var(--text-primary); max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+        .equipped-meta { color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; letter-spacing: 0.2px; }
+        .equipped-remove { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; border-radius: 50%; transition: all var(--transition-fast); flex-shrink: 0; }
+        .equipped-remove:hover { background: var(--status-error); color: white; }
+
+        /* Tier picker — side panel inside the canvas wrap */
+        /* Anchored to the right edge of the canvas wrap, full height,
+           ~140px wide. Translates off-screen when .collapsed. The toggle
+           button (top-right of canvas) flips both this and its own
+           rotation indicator. */
+        .cv-tier-side { position: absolute; top: 0; right: 0; bottom: 0; width: 152px;
+                        background: rgba(20, 20, 24, 0.92); border-left: 1px solid var(--border-light);
+                        padding: 8px 6px; display: flex; flex-direction: column; gap: 4px;
+                        overflow-y: auto; transition: transform 0.18s ease-out;
+                        backdrop-filter: blur(4px); z-index: 5; }
+        .cv-tier-side.collapsed { transform: translateX(100%); }
+        .cv-tier-side-header { font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+                               color: var(--accent); font-weight: 700; padding: 2px 4px 4px;
+                               border-bottom: 1px solid var(--border-light); margin-bottom: 15px; }
+        .cv-tier-side-row { display: grid; grid-template-columns: 26px repeat(5, 1fr);
+                            gap: 3px; align-items: center; }
+        .cv-tier-side-class { font-size: 11px; font-weight: 700; color: #eee;
+                              text-align: center; padding: 4px 0;
+                              background: rgba(255,255,255,0.04); border-radius: 3px;
+                              cursor: help; }
+        /* Class icon — replaces the text abbreviation. Same 26px column
+           width as .cv-tier-side-class (matches the grid template above).
+           image-rendering:pixelated keeps the low-res WoW icons crisp
+           rather than blurrily upscaled. */
+        .cv-tier-side-class-icon { width: 24px; height: 24px;
+                                   display: block; margin: 0 auto;
+                                   border-radius: 3px;
+                                   border: 1px solid rgba(255,255,255,0.06);
+                                   image-rendering: pixelated;
+                                   cursor: help; }
+        .cv-tier-side-btn { background: var(--bg-input); border: 1px solid var(--border-light);
+                            color: var(--text-primary); cursor: pointer;
+                            padding: 4px 0; font-size: 10.5px; font-weight: 600;
+                            border-radius: 3px; transition: all var(--transition-fast);
+                            min-width: 0; }
+        .cv-tier-side-btn:hover:not(:disabled) { background: var(--accent-subtle);
+                                                 border-color: var(--accent); color: var(--accent); }
+        .cv-tier-side-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+        /* Toggle button on canvas — small floating square top-right */
+        .cv-tier-toggle { position: absolute; top: 8px; right: 8px; z-index: 10;
+                          width: 30px; height: 30px; padding: 0;
+                          background: rgba(20, 20, 24, 0.85); color: var(--accent);
+                          border: 1px solid var(--border-light); border-radius: 4px;
+                          cursor: pointer; font-size: 13px;
+                          transition: all var(--transition-fast); backdrop-filter: blur(4px); }
+        .cv-tier-toggle:hover { background: var(--accent); color: white; }
+        .cv-tier-toggle.panel-collapsed { color: var(--text-muted); }
     </style>
 }
 
 @section Scripts {
     <script type="module" src="~/lib/model-viewer.min.js"></script>
     <script src="~/js/items.js" asp-append-version="true"></script>
+
+    @*
+        Character viewer integration. Same import map / vendored-three
+        pattern used by the standalone Views/Items/CharacterPreview.cshtml
+        page. The character-panel module is items-page-specific glue; it
+        owns the race toolbar, tier picker modal, and equip-on-click
+        plumbing. The viewer modules themselves are unchanged from the
+        CharacterPreview build.
+    *@
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "/lib/three/build/three.module.js",
+            "three/addons/": "/lib/three/examples/jsm/"
+          }
+        }
+    </script>
+    <script type="module" asp-append-version="true">
+        import { mountItemsCharacterPanel } from '/js/items-character-panel.js';
+
+        // Show the character card on first user interaction with the
+        // results (i.e. when they click an item). We could mount eagerly,
+        // but keeping the GLB fetch off the initial page paint is nicer
+        // when the user is just browsing.
+        const characterCard = document.getElementById('characterCard');
+        const resultsCard = document.getElementById('resultsCard');
+
+        const panel = mountItemsCharacterPanel({
+            canvas: document.getElementById('char-preview-canvas'),
+            raceToolbarEl: document.getElementById('cvRaceToolbar'),
+            tierSideEl: document.getElementById('cvTierSidePanel'),
+            tierToggleBtnEl: document.getElementById('btnTierToggle'),
+            stripBtnEl: document.getElementById('btnStripGear'),
+            equippedListEl: document.getElementById('cvEquippedList'),
+        });
+
+        // Reveal the character card the first time an item is selected.
+        // Also collapse the results card so the viewer has vertical room.
+        document.addEventListener('cv:item-selected', () => {
+            characterCard.style.display = '';
+            resultsCard.classList.add('collapsed');
+        }, { once: false });
+
+        // Toggle button on results card header — lets the user re-expand
+        // results to browse more without losing their dress-up state.
+        document.getElementById('btnToggleResults')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            resultsCard.classList.toggle('collapsed');
+        });
+
+        // Expand viewer to full width (hides the right-side detail panel).
+        // Toggling fires a window resize event so the WebGL renderer
+        // resizes its drawing buffer to match the new canvas width — without
+        // this, the canvas stretches via CSS but the 3D content stays at
+        // the old resolution and looks blurry/letterboxed.
+        document.getElementById('btnExpandViewer')?.addEventListener('click', (e) => {
+            const layout = document.getElementById('mainLayout');
+            const expanded = layout.classList.toggle('viewer-expanded');
+            // Swap icon + tooltip to reflect the new state.
+            const icon = e.currentTarget.querySelector('i');
+            if (icon) {
+                icon.classList.toggle('fa-expand', !expanded);
+                icon.classList.toggle('fa-compress', expanded);
+            }
+            e.currentTarget.title = expanded
+                ? 'Collapse viewer (show item detail)'
+                : 'Expand viewer to full width (hides item detail)';
+            // Defer the resize event one frame so the new column widths
+            // have actually applied. setTimeout(0) is enough — we need
+            // the layout to settle, not a real animation frame.
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+        });
+    </script>
 }

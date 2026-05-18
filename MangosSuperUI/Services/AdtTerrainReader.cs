@@ -45,6 +45,7 @@ public static class AdtTerrainReader
     private static readonly uint MAGIC_MCAL = ChunkId("MCAL");
     private static readonly uint MAGIC_MCSH = ChunkId("MCSH");
     private static readonly uint MAGIC_MCVT = ChunkId("MCVT");
+    private static readonly uint MAGIC_MCLQ = ChunkId("MCLQ");
 
     // ADT grid constants — same as VmangosMapParser
     public const int CHUNKS_PER_SIDE = 16;
@@ -62,6 +63,14 @@ public static class AdtTerrainReader
 
     // MCNK header size (128 bytes before sub-chunks)
     private const int MCNK_HEADER_SIZE = 128;
+
+    // MCLQ liquid block size
+    //   float min_height + float max_height
+    //   + 9*9 vertices × (4 bytes water/magma meta + 4 bytes height) = 648 bytes
+    //   + 8*8 tile flag bytes = 64 bytes
+    //   + uint32 n_flowvs + 2 × 38-byte flowv = 80 bytes
+    //   = 800 bytes total per liquid layer
+    private const int MCLQ_LAYER_SIZE = 4 + 4 + 9 * 9 * 8 + 8 * 8 + 4 + 2 * 38;
 
     // ═══════════════════════════════════════════════════════════════════
     // PUBLIC API — High-level extraction from MPQ
@@ -196,32 +205,41 @@ public static class AdtTerrainReader
         if (chunks.TryGetValue(MAGIC_MTEX, out var mtex))
             result.Textures = ParseMtex(data, mtex.offset, mtex.size);
 
-        // MMDX — M2 doodad filename table (null-separated strings)
-        // MMID — byte offsets into MMDX (uint32 per entry)
-        // MDDF nameId field indexes MMID, not MMDX directly.
-        // We build an offset→string lookup so MDDF can resolve model paths correctly.
-        Dictionary<uint, string>? mmdxLookup = null;
-        if (chunks.TryGetValue(MAGIC_MMDX, out var mmdx))
-        {
-            var mmdxNames = ParseNullSeparatedStrings(data, mmdx.offset, mmdx.size);
-            mmdxLookup = BuildOffsetStringLookup(data, mmdx.offset, mmdx.size, mmdxNames);
-        }
+        // ── M2 doodad path resolution ─────────────────────────────────────
+        // MMDX:  null-separated path strings, one per unique M2.
+        // MMID:  uint32[] of byte offsets into MMDX (one per registered M2).
+        // MDDF.nameId is an INDEX into MMID (not a byte offset into MMDX).
+        //   path = MMDX_at_byte(MMID[MDDF.nameId])
+        // Dense zones (Westfall, Duskwood, etc.) revealed that the old
+        // "offset lookup with sequential-index fallback" approach silently
+        // mis-resolves entries whenever a real MMDX byte offset happens to
+        // collide with one of the fallback index values. We now read MMID
+        // properly. If MMID is missing (shouldn't happen on vanilla 1.12.1),
+        // the offset-lookup fallback is still used.
+        uint[]? mmidOffsets = null;
+        if (chunks.TryGetValue(MAGIC_MMID, out var mmid))
+            mmidOffsets = ParseUint32Array(data, mmid.offset, mmid.size);
 
-        // MWMO — WMO filename table + MWID offset lookup (same pattern as MMDX/MMID)
-        Dictionary<uint, string>? mwmoLookup = null;
+        Dictionary<uint, string>? mmdxByOffset = null;
+        if (chunks.TryGetValue(MAGIC_MMDX, out var mmdx))
+            mmdxByOffset = BuildOffsetStringMap(data, mmdx.offset, mmdx.size);
+
+        // ── WMO path resolution (same shape: MWMO + MWID + MODF) ──────────
+        uint[]? mwidOffsets = null;
+        if (chunks.TryGetValue(MAGIC_MWID, out var mwid))
+            mwidOffsets = ParseUint32Array(data, mwid.offset, mwid.size);
+
+        Dictionary<uint, string>? mwmoByOffset = null;
         if (chunks.TryGetValue(MAGIC_MWMO, out var mwmo))
-        {
-            var mwmoNames = ParseNullSeparatedStrings(data, mwmo.offset, mwmo.size);
-            mwmoLookup = BuildOffsetStringLookup(data, mwmo.offset, mwmo.size, mwmoNames);
-        }
+            mwmoByOffset = BuildOffsetStringMap(data, mwmo.offset, mwmo.size);
 
         // MDDF — doodad placements
-        if (chunks.TryGetValue(MAGIC_MDDF, out var mddf) && mmdxLookup != null)
-            result.Doodads = ParseMddf(data, mddf.offset, mddf.size, mmdxLookup);
+        if (chunks.TryGetValue(MAGIC_MDDF, out var mddf) && mmdxByOffset != null)
+            result.Doodads = ParseMddf(data, mddf.offset, mddf.size, mmidOffsets, mmdxByOffset);
 
         // MODF — WMO placements
-        if (chunks.TryGetValue(MAGIC_MODF, out var modf) && mwmoLookup != null)
-            result.Wmos = ParseModf(data, modf.offset, modf.size, mwmoLookup);
+        if (chunks.TryGetValue(MAGIC_MODF, out var modf) && mwmoByOffset != null)
+            result.Wmos = ParseModf(data, modf.offset, modf.size, mwidOffsets, mwmoByOffset);
 
         // MCNK — terrain chunks (256 per ADT, 16×16 grid)
         // Each MCNK has its own sub-chunks including MCLY (layers) and MCAL (alpha)
@@ -1046,7 +1064,9 @@ public static class AdtTerrainReader
     }
 
     /// <summary>
-    /// Parse a null-separated string table (used by MTEX, MMDX, MWMO).
+    /// Parse a null-separated string table. Used by MTEX (texture filenames).
+    /// MMDX / MWMO use BuildOffsetStringMap instead, because MMID / MWID
+    /// reference strings by their byte offset within the chunk data.
     /// </summary>
     private static List<string> ParseNullSeparatedStrings(byte[] data, int offset, int size)
     {
@@ -1071,39 +1091,55 @@ public static class AdtTerrainReader
     }
 
     /// <summary>
-    /// Build a lookup from byte-offset-within-chunk → string value.
-    /// MDDF/MODF nameId fields are byte offsets into MMDX/MWMO, not string indices.
-    /// This maps each string's starting byte offset (relative to chunk data start) to the string.
+    /// Build a map from { byte offset within chunk data → string } for a
+    /// null-separated string blob (MMDX / MWMO).
+    ///
+    /// The byte offset is the value MMID / MWID entries point at — so a MODF
+    /// or MDDF entry resolves by:
+    ///   path = map[ MWID[nameId] ]   (for WMOs)
+    ///   path = map[ MMID[nameId] ]   (for M2 doodads)
+    ///
+    /// Unlike the original implementation, this map does NOT also include
+    /// fallback sequential-index keys. The old fallback masked the real bug
+    /// (treating MODF.nameId as a byte offset directly) and produced silent
+    /// wrong-string resolution whenever a real string-start offset happened
+    /// to equal one of the fallback index values.
     /// </summary>
-    private static Dictionary<uint, string> BuildOffsetStringLookup(byte[] data, int chunkDataOffset, int chunkDataSize, List<string> parsedStrings)
+    private static Dictionary<uint, string> BuildOffsetStringMap(byte[] data, int chunkDataOffset, int chunkDataSize)
     {
-        var lookup = new Dictionary<uint, string>();
+        var map = new Dictionary<uint, string>();
         int end = Math.Min(chunkDataOffset + chunkDataSize, data.Length);
         int strStart = chunkDataOffset;
-        int strIdx = 0;
 
         for (int i = chunkDataOffset; i < end; i++)
         {
             if (data[i] == 0)
             {
-                if (i > strStart && strIdx < parsedStrings.Count)
+                if (i > strStart)
                 {
                     uint offsetInChunk = (uint)(strStart - chunkDataOffset);
-                    lookup[offsetInChunk] = parsedStrings[strIdx];
-                    strIdx++;
+                    map[offsetInChunk] = Encoding.ASCII.GetString(data, strStart, i - strStart);
                 }
                 strStart = i + 1;
             }
         }
+        return map;
+    }
 
-        // Also add sequential index mapping as fallback (some ADTs use index, not offset)
-        for (int i = 0; i < parsedStrings.Count; i++)
-        {
-            if (!lookup.ContainsKey((uint)i))
-                lookup[(uint)i] = parsedStrings[i];
-        }
-
-        return lookup;
+    /// <summary>
+    /// Read a packed uint32[] from an IFF chunk's data region. Used for MMID
+    /// and MWID — each entry is a byte offset into the corresponding string
+    /// blob (MMDX / MWMO).
+    /// </summary>
+    private static uint[] ParseUint32Array(byte[] data, int offset, int size)
+    {
+        int count = size / 4;
+        int end = Math.Min(offset + count * 4, data.Length);
+        int actual = Math.Max(0, (end - offset) / 4);
+        var arr = new uint[actual];
+        for (int i = 0; i < actual; i++)
+            arr[i] = BitConverter.ToUInt32(data, offset + i * 4);
+        return arr;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1112,8 +1148,17 @@ public static class AdtTerrainReader
 
     /// <summary>
     /// Parse MDDF chunk: 36-byte doodad placement entries.
+    ///
+    /// nameId is an index into MMID. MMID[nameId] is the byte offset of the
+    /// path string inside MMDX. The two-step indirection (rather than nameId
+    /// being a direct byte offset) is what the file format actually specifies
+    /// — see wowdev.wiki ADT chunk reference.
+    ///
+    /// mmidOffsets may be null on legacy/non-vanilla ADTs that omit MMID;
+    /// in that case we treat nameId as a direct byte offset into MMDX as a
+    /// last-resort fallback.
     /// </summary>
-    private static List<DoodadPlacement> ParseMddf(byte[] data, int offset, int size, Dictionary<uint, string> modelLookup)
+    private static List<DoodadPlacement> ParseMddf(byte[] data, int offset, int size, uint[]? mmidOffsets, Dictionary<uint, string> mmdxByOffset)
     {
         var result = new List<DoodadPlacement>();
         int entrySize = 36;
@@ -1135,8 +1180,13 @@ public static class AdtTerrainReader
             ushort scale = BitConverter.ToUInt16(data, pos + 32);
             // ushort flags = BitConverter.ToUInt16(data, pos + 34);
 
-            // nameId is a byte offset into MMDX chunk data. Look up via offset→string map.
-            string modelPath = modelLookup.TryGetValue(nameId, out var name)
+            uint mmdxOffset;
+            if (mmidOffsets != null && nameId < mmidOffsets.Length)
+                mmdxOffset = mmidOffsets[nameId];
+            else
+                mmdxOffset = nameId; // legacy fallback
+
+            string modelPath = mmdxByOffset.TryGetValue(mmdxOffset, out var name)
                 ? name
                 : $"Unknown_{nameId}";
 
@@ -1162,8 +1212,20 @@ public static class AdtTerrainReader
 
     /// <summary>
     /// Parse MODF chunk: 64-byte WMO placement entries.
+    ///
+    /// nameId is an index into MWID; MWID[nameId] is the byte offset of the
+    /// path string inside MWMO. This was discovered the hard way in Session 50
+    /// for the write path (committing custom WMO placements) — same rule
+    /// applies on the read path, which previously assumed nameId was a direct
+    /// byte offset and silently misresolved entries in any zone where MODF
+    /// nameIds collided with real MWMO byte offsets (Westfall, Duskwood,
+    /// most of Eastern Kingdoms outside Elwynn).
+    ///
+    /// mwidOffsets may be null on legacy/non-vanilla ADTs that omit MWID;
+    /// in that case we treat nameId as a direct byte offset into MWMO as a
+    /// last-resort fallback.
     /// </summary>
-    private static List<WmoInstance> ParseModf(byte[] data, int offset, int size, Dictionary<uint, string> modelLookup)
+    private static List<WmoInstance> ParseModf(byte[] data, int offset, int size, uint[]? mwidOffsets, Dictionary<uint, string> mwmoByOffset)
     {
         var result = new List<WmoInstance>();
         int entrySize = 64;
@@ -1189,9 +1251,15 @@ public static class AdtTerrainReader
             float bbMaxY = BitConverter.ToSingle(data, pos + 48);
             float bbMaxZ = BitConverter.ToSingle(data, pos + 52);
             // ushort flags = BitConverter.ToUInt16(data, pos + 56);
-            // ushort doodadSet = BitConverter.ToUInt16(data, pos + 58);
+            ushort doodadSet = BitConverter.ToUInt16(data, pos + 58);
 
-            string modelPath = modelLookup.TryGetValue(nameId, out var name)
+            uint mwmoOffset;
+            if (mwidOffsets != null && nameId < mwidOffsets.Length)
+                mwmoOffset = mwidOffsets[nameId];
+            else
+                mwmoOffset = nameId; // legacy fallback
+
+            string modelPath = mwmoByOffset.TryGetValue(mwmoOffset, out var name)
                 ? name
                 : $"Unknown_{nameId}";
 
@@ -1209,7 +1277,8 @@ public static class AdtTerrainReader
                 BbMinZ = bbMinZ,
                 BbMaxX = bbMaxX,
                 BbMaxY = bbMaxY,
-                BbMaxZ = bbMaxZ
+                BbMaxZ = bbMaxZ,
+                DoodadSet = doodadSet
             });
         }
 
@@ -1281,6 +1350,9 @@ public static class AdtTerrainReader
         uint ofsLayer = BitConverter.ToUInt32(data, mcnkDataStart + 0x1C);
         uint ofsAlpha = BitConverter.ToUInt32(data, mcnkDataStart + 0x24);
         uint sizeAlpha = BitConverter.ToUInt32(data, mcnkDataStart + 0x28);
+        // MCLQ — per-chunk liquid (water/lava/slime). Vanilla 1.x stores liquid here.
+        uint ofsLiquid = BitConverter.ToUInt32(data, mcnkDataStart + 0x60);
+        uint sizeLiquid = BitConverter.ToUInt32(data, mcnkDataStart + 0x64);
 
         // Parse MCLY (texture layers)
         if (ofsLayer > 0 && mcnkBase + ofsLayer + 8 <= data.Length)
@@ -1308,6 +1380,24 @@ public static class AdtTerrainReader
             {
                 // Some ADTs store MCAL data directly without IFF header
                 ParseMcal(data, mcalPos, (int)sizeAlpha, chunk.Layers);
+            }
+        }
+
+        // Parse MCLQ (liquid layers).
+        //   if (sizeLiquid > 8) → MCLQ block exists.
+        //   At mcnkBase + ofsLiquid: 4-byte 'MCLQ' magic + 4-byte size + N×800-byte mclq layers
+        //   N = (sizeLiquid - 8) / sizeof(mclq) = (sizeLiquid - 8) / 800
+        if (sizeLiquid > 8 && ofsLiquid > 0 && mcnkBase + ofsLiquid + 8 <= data.Length)
+        {
+            int mclqPos = mcnkBase + (int)ofsLiquid;
+            if (BitConverter.ToUInt32(data, mclqPos) == MAGIC_MCLQ)
+            {
+                int layerCount = ((int)sizeLiquid - 8) / MCLQ_LAYER_SIZE;
+                if (layerCount > 0)
+                {
+                    int payloadStart = mclqPos + 8;
+                    chunk.Liquid = ParseMclqLayers(data, payloadStart, layerCount);
+                }
             }
         }
 
@@ -1342,6 +1432,77 @@ public static class AdtTerrainReader
         }
 
         return layers;
+    }
+
+    /// <summary>
+    /// Parse MCLQ liquid layers from inside an MCNK chunk (vanilla 1.x format).
+    ///
+    /// Per-layer 800-byte struct `mclq`:
+    ///   +0   float min_height                       (4)
+    ///   +4   float max_height                       (4)
+    ///   +8   mclq_vertex vertices[9*9]              (648 = 81 × 8 bytes/vertex)
+    ///           each vertex: 4 bytes (water_vert | magma_vert union) + float height
+    ///   +656 mclq_tile tiles[8*8]                   (64 bytes, 1 each)
+    ///           bitpacked: bits 0-2 liquid_type, bit 3 dont_render,
+    ///                       bit 4 flag_0x10, bit 5 flag_0x20, bit 6 fishable, bit 7 fatigue
+    ///   +720 uint32 n_flowvs                        (4)
+    ///   +724 mclq_flowvs flowvs[2]                  (76 = 2 × 38, always present)
+    ///   =800
+    ///
+    /// We pull min/max height, the 81 vertex heights, the 64 tile-render flags,
+    /// and the dominant liquid_type code. Flow data is ignored.
+    /// </summary>
+    private static List<MclqLayer> ParseMclqLayers(byte[] data, int payloadStart, int layerCount)
+    {
+        var result = new List<MclqLayer>(layerCount);
+        int pos = payloadStart;
+        for (int li = 0; li < layerCount; li++)
+        {
+            if (pos + MCLQ_LAYER_SIZE > data.Length) break;
+
+            float minH = BitConverter.ToSingle(data, pos + 0);
+            float maxH = BitConverter.ToSingle(data, pos + 4);
+
+            // 9×9 vertices, each 8 bytes: 4 bytes water/magma metadata + 4 bytes float height.
+            var heights = new float[81];
+            int vbase = pos + 8;
+            for (int i = 0; i < 81; i++)
+            {
+                int vp = vbase + i * 8;
+                // bytes [vp .. vp+3] = water/magma meta (depth, flow_0, flow_1, filler) — skip.
+                heights[i] = BitConverter.ToSingle(data, vp + 4);
+            }
+
+            // 8×8 tile flag bytes start after the 81-vertex block.
+            int tbase = vbase + 81 * 8;
+            var tileRender = new bool[64];
+            byte dominantType = 0;
+            for (int i = 0; i < 64; i++)
+            {
+                byte b = data[tbase + i];
+                bool dontRender = (b & 0x08) != 0;
+                tileRender[i] = !dontRender;
+                if (!dontRender)
+                {
+                    // bits 0..2 are the liquid_type code.
+                    // case 1 → ocean, 3 → slime, 4 → river/water, 6 → magma.
+                    byte t = (byte)(b & 0x07);
+                    if (t != 0) dominantType = t;
+                }
+            }
+
+            result.Add(new MclqLayer
+            {
+                LiquidType = dominantType,
+                MinHeight = minH,
+                MaxHeight = maxH,
+                VertexHeights = heights,
+                TileRender = tileRender,
+            });
+
+            pos += MCLQ_LAYER_SIZE;
+        }
+        return result;
     }
 
     /// <summary>
@@ -1404,25 +1565,50 @@ public static class AdtTerrainReader
 
             if (rawAlpha == null) continue;
 
-            // Always output 64×64. If raw is 2048 bytes (32×64), upscale by doubling each column.
+            byte[] fullAlpha;
+
+            // 2048-byte format: 64×64 grid of 4-bit alpha values, two per byte.
+            // Each byte stores y+0 in low nibble, y+1 in high nibble. Convert to
+            // 8-bit by replicating the 4 bits (v | v<<4), so 0xA → 0xAA.
+            //
+            // The previous implementation treated this as 32×64 8-bit stretched
+            // horizontally — that doubled effective alpha resolution loss and
+            // misaligned values, producing artifacts especially at chunk seams.
             if (rawAlpha.Length == ALPHA_SIZE_HALF * ALPHA_SIZE_FULL)
             {
-                var full = new byte[ALPHA_SIZE_FULL * ALPHA_SIZE_FULL];
-                for (int row = 0; row < ALPHA_SIZE_FULL; row++)
+                fullAlpha = new byte[ALPHA_SIZE_FULL * ALPHA_SIZE_FULL];
+                int inIdx = 0;
+                for (int x = 0; x < ALPHA_SIZE_FULL; x++)
                 {
-                    for (int col = 0; col < ALPHA_SIZE_HALF; col++)
+                    for (int y = 0; y < ALPHA_SIZE_FULL; y += 2)
                     {
-                        byte val = rawAlpha[row * ALPHA_SIZE_HALF + col];
-                        full[row * ALPHA_SIZE_FULL + col * 2] = val;
-                        full[row * ALPHA_SIZE_FULL + col * 2 + 1] = val;
+                        byte packed = rawAlpha[inIdx++];
+                        byte lower = (byte)(packed & 0x0F);
+                        byte upper = (byte)((packed >> 4) & 0x0F);
+                        fullAlpha[x * ALPHA_SIZE_FULL + y + 0] = (byte)(lower | (lower << 4));
+                        fullAlpha[x * ALPHA_SIZE_FULL + y + 1] = (byte)(upper | (upper << 4));
                     }
                 }
-                layer.AlphaMap = full;
+
+                // Old-format alpha maps have garbage in the last row and last column —
+                // it's padding the encoder never wrote real data to.
+                // Without this fix, chunk boundaries show as a hard line.
+                for (int e = 0; e < ALPHA_SIZE_FULL; e++)
+                {
+                    fullAlpha[e * ALPHA_SIZE_FULL + 63] = fullAlpha[e * ALPHA_SIZE_FULL + 62];
+                    fullAlpha[63 * ALPHA_SIZE_FULL + e] = fullAlpha[62 * ALPHA_SIZE_FULL + e];
+                }
+                fullAlpha[63 * ALPHA_SIZE_FULL + 63] = fullAlpha[62 * ALPHA_SIZE_FULL + 62];
             }
             else
             {
-                layer.AlphaMap = rawAlpha;
+                // bigAlpha (4096 bytes): already 64×64 at 8 bits per texel, no
+                // transform needed. The garbage-edge fix does NOT apply to this
+                // format — bigAlpha encodes real data in every texel.
+                fullAlpha = rawAlpha;
             }
+
+            layer.AlphaMap = fullAlpha;
         }
     }
 
@@ -1492,6 +1678,34 @@ public static class AdtTerrainReader
         public int IndexX { get; set; }
         public int IndexY { get; set; }
         public MclyLayer[] Layers { get; set; } = Array.Empty<MclyLayer>();
+
+        /// <summary>
+        /// MCLQ liquid layers for this chunk (null = no water, normally 1 layer when present).
+        /// Each layer has a 9×9 vertex grid and 8×8 tile mask.
+        /// </summary>
+        public List<MclqLayer>? Liquid { get; set; }
+    }
+
+    /// <summary>One MCLQ liquid layer inside an MCNK chunk (vanilla 1.x format).</summary>
+    public class MclqLayer
+    {
+        /// <summary>
+        /// Liquid type code from the per-tile bits 0..2. Common values:
+        ///   1 = ocean, 3 = slime, 4 = river, 6 = magma
+        /// </summary>
+        public byte LiquidType { get; set; }
+
+        public float MinHeight { get; set; }
+        public float MaxHeight { get; set; }
+
+        /// <summary>9×9 vertex heights in WoW world Z, row-major (z*9+x).</summary>
+        public float[] VertexHeights { get; set; } = Array.Empty<float>();
+
+        /// <summary>
+        /// 8×8 tile-render mask, row-major (z*8+x). True = render this tile (water visible),
+        /// false = dont_render bit was set (hole in the water surface).
+        /// </summary>
+        public bool[] TileRender { get; set; } = Array.Empty<bool>();
     }
 
     /// <summary>Texture layer definition from MCLY (16 bytes).</summary>
@@ -1554,6 +1768,13 @@ public static class AdtTerrainReader
         public float BbMaxX { get; set; }
         public float BbMaxY { get; set; }
         public float BbMaxZ { get; set; }
+
+        /// <summary>
+        /// Which doodad set inside the WMO root to activate for this placement.
+        /// Set 0 is conventionally the always-active "Set_$DefaultGlobal".
+        /// Some WMOs ship multiple sets (e.g. day/night, intact/destroyed).
+        /// </summary>
+        public ushort DoodadSet { get; set; }
     }
 
     /// <summary>Composite splat map result with texture assignments.</summary>

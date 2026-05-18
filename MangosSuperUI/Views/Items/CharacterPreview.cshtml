@@ -1,0 +1,89 @@
+@{
+    ViewBag.Title = "Character Preview — " + ViewBag.Race + " " + ViewBag.Gender;
+    string glbUrl = ViewBag.GlbUrl ?? "";
+    string skinUrl = ViewBag.SkinUrl ?? "";
+    string race = ViewBag.Race ?? "Human";
+    string gender = ViewBag.Gender ?? "Male";
+    uint displayId = ViewBag.DisplayId ?? 0u;
+}
+
+@*
+    Session B verification view.
+    Inline module from Session A is gone — all client logic lives in
+    wwwroot/js/character-viewer/{index,viewer,loader,dresser,compositor}.js
+    using the same import-map / vendored-three pattern as worldeditor.
+
+    Sessions C and D extend dresser.js and compositor.js. The Razor view does
+    not need to change for those sessions.
+*@
+
+<style>
+    .char-preview-page { display: flex; gap: 1rem; align-items: stretch; min-height: 600px; }
+    .char-preview-viewer { flex: 1; background: #222; border: 1px solid #333; position: relative; }
+    .char-preview-side { width: 320px; padding: 12px; background: #1a1a1a; color: #ddd; font-family: ui-monospace, monospace; font-size: 12px; overflow-y: auto; }
+    .char-preview-side h3 { margin: 8px 0 4px; color: #88c; font-size: 13px; }
+    .char-preview-side pre { white-space: pre-wrap; word-wrap: break-word; }
+    .char-preview-error { color: #f88; padding: 12px; }
+</style>
+
+<div class="char-preview-page">
+    <div class="char-preview-viewer">
+        @if (string.IsNullOrEmpty(glbUrl))
+        {
+            <div class="char-preview-error">
+                <strong>Character GLB could not be generated.</strong><br/>
+                Check the server log for details (race=@race, gender=@gender).
+            </div>
+        }
+        else
+        {
+            @* data-skin-url carries the versioned skin PNG URL so equip.js
+               doesn't have to reverse-engineer the CacheVersionRegistry stamp. *@
+            <canvas id="char-preview-canvas" style="width:100%;height:100%;display:block;"
+                    data-glb-url="@glbUrl"
+                    data-skin-url="@skinUrl"></canvas>
+        }
+    </div>
+    <aside class="char-preview-side">
+        <h3>Inputs</h3>
+        <pre>race=@race
+gender=@gender
+displayId=@displayId
+glbUrl=@glbUrl
+skinUrl=@skinUrl</pre>
+        <h3>Session B verification</h3>
+        <pre>Console:
+  cv.bones.length
+  cv.attachments[1]                  // HandRight
+  cv.geosets[1300]                   // foot default (if present)
+  cv.geosets[1300].userData.geosetId // 1300
+
+Modules:
+  /js/character-viewer/index.js
+  /js/character-viewer/viewer.js
+  /js/character-viewer/loader.js
+  /js/character-viewer/dresser.js    // C stub
+  /js/character-viewer/compositor.js // C stub</pre>
+        <h3>Bones / attachments / geosets (live)</h3>
+        <pre id="char-preview-stats">(loading…)</pre>
+    </aside>
+</div>
+
+@if (!string.IsNullOrEmpty(glbUrl))
+{
+    @section Scripts {
+        @*
+            Same import map / vendored-three pattern as worldeditor.
+            All three.js + addons are served from /lib/three/.
+        *@
+        <script type="importmap">
+            {
+              "imports": {
+                "three": "/lib/three/build/three.module.js",
+                "three/addons/": "/lib/three/examples/jsm/"
+              }
+            }
+        </script>
+        <script type="module" src="~/js/character-viewer/index.js" asp-append-version="true"></script>
+    }
+}

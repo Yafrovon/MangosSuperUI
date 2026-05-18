@@ -79,7 +79,7 @@
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
             server: ['activity', 'serverlogs', 'livelogs', 'config', 'backup'],
             spells: ['spells', 'patch', 'visuallab'],
-            world: ['worldmap', 'worldviewer'],
+            world: ['worldmap', 'worldeditor'],
             content: ['items', 'gameobjects', 'loottuner', 'instances', 'lootifier'],
             bots: ['bots-dashboard'],
             data: ['database', 'sourcemap'],

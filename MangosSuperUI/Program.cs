@@ -45,6 +45,14 @@ builder.Services.AddSingleton<SpellRecipeService>();
 builder.Services.AddSingleton<ComfyUIDispatcher>();
 builder.Services.AddSingleton<VanillaBlpService>();
 builder.Services.AddSingleton<SpellDnaService>();
+builder.Services.AddSingleton<MpqReaderService>();
+builder.Services.AddSingleton<CharacterModelService>();
+builder.Services.AddSingleton<BodyAtlasTextureService>();
+builder.Services.AddSingleton<CacheVersionRegistry>();
+builder.Services.AddSingleton<CharacterSkinCompositor>();
+
+builder.Services.AddScoped<ItemTextureService>();
+builder.Services.AddScoped<ItemRetextureService>();
 
 // ---------- BotLogic: Behavioral Engine ----------
 
@@ -75,10 +83,19 @@ builder.Services.AddSignalR();
 
 var app = builder.Build();
 
-// ---------- Database Bootstrap ----------
-// Ensures vmangos_admin DB + tables exist before any request can hit AuditService.
-// Never throws — logs errors and sets AdminDbReady = false for dashboard to display.
-var dbInit = app.Services.GetRequiredService<DbInitializationService>();
+using (var scope = app.Services.CreateScope())
+{
+    var retexService = scope.ServiceProvider.GetRequiredService<ItemRetextureService>();
+    retexService.LoadExistingRetexturesAsync().GetAwaiter().GetResult();
+
+    var registry = scope.ServiceProvider.GetRequiredService<CacheVersionRegistry>();
+    registry.SweepAllOnStartup();
+}
+
+    // ---------- Database Bootstrap ----------
+    // Ensures vmangos_admin DB + tables exist before any request can hit AuditService.
+    // Never throws — logs errors and sets AdminDbReady = false for dashboard to display.
+    var dbInit = app.Services.GetRequiredService<DbInitializationService>();
 await dbInit.InitializeAsync();
 
 // ---------- Pipeline ----------

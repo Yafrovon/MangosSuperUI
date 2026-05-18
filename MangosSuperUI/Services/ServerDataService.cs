@@ -109,6 +109,16 @@ public class ServerDataService
     private string GetServerVmapsDir() => Path.Combine(GetServerDataDir(), "vmaps");
     private string GetServerMmapsDir() => Path.Combine(GetServerDataDir(), "mmaps");
 
+    /// <summary>
+    /// Phase 8: maps directory containing VMaNGOS .map heightmap files.
+    /// Sculpted terrain overwrites these files; vanilla backups allow restore.
+    /// </summary>
+    private string GetMapsDir()
+    {
+        return _config.GetValue<string>("Vmangos:MapsDataPath")
+            ?? "/home/wowvmangos/wowclient/maps";
+    }
+
     // ════════════════════════════════════════════════════════════════
     // MAIN PIPELINE
     // ════════════════════════════════════════════════════════════════
@@ -203,6 +213,10 @@ public class ServerDataService
             string vmapAssemblerPath = Path.Combine(extractorsDir, "VMapAssembler");
             string vmapOutputDir = Path.Combine(clientDir, "vmaps");
 
+            // VMapAssembler does NOT create its own output directory — must exist before invocation.
+            // Otherwise it fails with "Cannot open .../000.vmtree" and "error converting *.wmo".
+            Directory.CreateDirectory(vmapOutputDir);
+
             var vmapResult = await RunProcess(
                 vmapAssemblerPath,
                 $"\"{buildingsDir}\" \"{vmapOutputDir}\"",
@@ -241,6 +255,9 @@ public class ServerDataService
             string mmapOutputDir = Path.Combine(clientDir, "mmaps");
             string serverMmapsDir = GetServerMmapsDir();
             int threadCount = Environment.ProcessorCount;
+
+            // MoveMapGenerator does NOT create its own output directory — must exist before invocation.
+            Directory.CreateDirectory(mmapOutputDir);
 
             foreach (var (mapId, tileX, tileY) in affectedTiles)
             {
@@ -667,8 +684,8 @@ public class ServerDataService
             Log($"Restored dir_bin from vanilla baseline ({new FileInfo(dirBinPath).Length:N0} bytes)");
         }
 
-        // Scan vmaps and mmaps for .vanilla backup files
-        string[] dirs = { GetServerVmapsDir(), GetServerMmapsDir() };
+        // Scan vmaps, mmaps, and maps for .vanilla backup files
+        string[] dirs = { GetServerVmapsDir(), GetServerMmapsDir(), GetMapsDir() };
         foreach (string dir in dirs)
         {
             if (!Directory.Exists(dir)) continue;
@@ -748,18 +765,22 @@ public class ServerDataService
         result.VmapFiles = CountVanillaFiles(GetServerVmapsDir());
         result.MmapFiles = CountVanillaFiles(GetServerMmapsDir());
 
+        // Phase 8: maps/ directory (.map heightmap files)
+        int mapFiles = CountVanillaFiles(GetMapsDir());
+
         // Client-side vmaps/ and mmaps/ (extraction output)
         string clientDir = GetClientDir();
         result.ClientVmapFiles = CountVanillaFiles(Path.Combine(clientDir, "vmaps"));
         result.ClientMmapFiles = CountVanillaFiles(Path.Combine(clientDir, "mmaps"));
 
         result.TotalBackups = (result.DirBinBackup ? 1 : 0)
-            + result.VmapFiles + result.MmapFiles
+            + result.VmapFiles + result.MmapFiles + mapFiles
             + result.ClientVmapFiles + result.ClientMmapFiles;
 
         // Include the paths so the UI can show where backups live
         result.ServerVmapsDir = GetServerVmapsDir();
         result.ServerMmapsDir = GetServerMmapsDir();
+        result.MapsDir = GetMapsDir();
         result.ClientVmapsDir = Path.Combine(clientDir, "vmaps");
         result.ClientMmapsDir = Path.Combine(clientDir, "mmaps");
         result.BuildingsDir = GetBuildingsDir();
@@ -1020,6 +1041,7 @@ public class BackupStatusResult
     public int TotalBackups { get; set; }
     public string? ServerVmapsDir { get; set; }
     public string? ServerMmapsDir { get; set; }
+    public string? MapsDir { get; set; }
     public string? ClientVmapsDir { get; set; }
     public string? ClientMmapsDir { get; set; }
     public string? BuildingsDir { get; set; }

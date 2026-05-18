@@ -268,8 +268,313 @@ $(function () {
 
             // Load OG changelog
             loadItemChangelog(entry);
+
+            // Load textures from MPQ
+            var did = item.display_id || 0;
+            loadItemTextures(did);
+
+            // 3D character viewer integration — fire-and-forget event the
+            // items-character-panel module listens for. Only equippable
+            // items with a valid displayId are forwarded; consumables and
+            // trade goods (inventory_type=0) are skipped so the viewer
+            // doesn't try to dress a character in a potion.
+            if (did > 0 && item.inventory_type > 0) {
+                document.dispatchEvent(new CustomEvent('cv:item-selected', {
+                    detail: {
+                        itemId: item.entry,
+                        displayId: did,
+                        inventoryType: item.inventory_type,
+                        name: item.name,
+                    },
+                }));
+            }
         });
     }
+
+    // ===================== ITEM TEXTURES =====================
+
+    function loadItemTextures(displayId) {
+        if (!displayId || displayId <= 0) {
+            $('#itemTexturePanel').hide();
+            return;
+        }
+
+        $('#itemTexturePanel').show();
+        $('#itemTextureContent').html(
+            '<div class="text-center p-2" style="font-size: 12px; color: var(--text-muted);">' +
+            '<i class="fa-solid fa-spinner fa-spin"></i> Extracting textures from MPQ...</div>'
+        );
+
+        loadTextureGrid(displayId, '#itemTextureContent');
+    }
+
+    function loadEditTextures(displayId) {
+        if (!displayId || displayId <= 0) {
+            $('#editTextureContent').html(
+                '<div class="text-center p-2" style="font-size:11px;color:var(--text-muted);">No display ID</div>');
+            return;
+        }
+
+        $('#editTextureContent').html(
+            '<div class="text-center p-2" style="font-size: 11px; color: var(--text-muted);">' +
+            '<i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>'
+        );
+
+        loadTextureGrid(displayId, '#editTextureContent');
+    }
+
+    function loadTextureGrid(displayId, targetSelector) {
+        $.getJSON('/Items/TextureInfo', { displayId: displayId }, function (data) {
+            if (!data.found || !data.textures || data.textures.length === 0) {
+                $(targetSelector).html(
+                    '<div class="text-center p-2" style="font-size: 11px; color: var(--text-muted);">' +
+                    'No textures found for this model</div>'
+                );
+                return;
+            }
+
+            var html = '';
+
+            // Model info header
+            html += '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; padding: 0 2px;">' +
+                '<span style="color: var(--accent);">' + esc(data.modelName) + '</span>' +
+                ' · ' + data.vertexCount.toLocaleString() + 'v/' + data.triangleCount.toLocaleString() + 't' +
+                ' · ' + (data.m2Size / 1024).toFixed(0) + 'KB' +
+                '</div>';
+
+            // Texture grid
+            html += '<div class="item-texture-grid">';
+
+            data.textures.forEach(function (tex) {
+                var sizeLabel = tex.width + '×' + tex.height;
+                var formatLabel = tex.format + (tex.alphaDepth > 0 ? ' α' + tex.alphaDepth : '');
+                var blpKB = (tex.blpFileSize / 1024).toFixed(0);
+
+                html += '<div class="item-texture-card" data-mpq-path="' + esc(tex.mpqPath) + '" ' +
+                    'data-tex-index="' + tex.index + '" data-width="' + tex.width + '" data-height="' + tex.height + '" ' +
+                    'data-format="' + esc(tex.format) + '" title="' + esc(tex.mpqPath) + '">';
+
+                if (tex.hasPreview) {
+                    html += '<img class="item-texture-preview" src="' + esc(tex.previewUrl) + '" ' +
+                        'alt="' + esc(tex.filename) + '" loading="lazy" />';
+                } else {
+                    html += '<div class="item-texture-preview" style="display:flex;align-items:center;justify-content:center;' +
+                        'background:var(--bg-input);color:var(--text-muted);font-size:10px;">No preview</div>';
+                }
+
+                html += '<div class="item-texture-info">' +
+                    '<div class="item-texture-name" title="' + esc(tex.filename) + '">' + esc(tex.filename) + '</div>' +
+                    '<div class="item-texture-meta">' + sizeLabel + ' · ' + formatLabel + ' · ' + blpKB + 'KB</div>' +
+                    '<button class="btn-retexture" title="AI Retexture"><i class="fa-solid fa-wand-magic-sparkles"></i></button>' +
+                    '</div>';
+
+                html += '</div>';
+            });
+
+            html += '</div>';
+
+            $(targetSelector).html(html);
+        }).fail(function () {
+            $(targetSelector).html(
+                '<div class="text-center p-2" style="font-size: 11px; color: var(--status-error);">' +
+                'Failed to load textures</div>'
+            );
+        });
+    }
+
+    // Texture card click → show full-size preview in a modal overlay
+    $(document).on('click', '.item-texture-card', function (e) {
+        // Don't open overlay if they clicked the retexture button
+        if ($(e.target).closest('.btn-retexture').length) return;
+
+        var $img = $(this).find('.item-texture-preview');
+        if (!$img.is('img')) return;
+
+        var src = $img.attr('src');
+        var filename = $(this).find('.item-texture-name').text();
+        var meta = $(this).find('.item-texture-meta').text();
+        var mpqPath = $(this).data('mpq-path');
+
+        // Simple overlay
+        var overlay = $('<div class="texture-overlay">' +
+            '<div class="texture-overlay-content">' +
+            '<img src="' + esc(src) + '" style="max-width:100%;max-height:70vh;image-rendering:pixelated;border-radius:4px;" />' +
+            '<div style="margin-top:10px;text-align:center;">' +
+            '<div style="font-size:14px;font-weight:600;color:var(--text-primary);">' + esc(filename) + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + esc(meta) + '</div>' +
+            '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;word-break:break-all;">' + esc(mpqPath) + '</div>' +
+            '</div>' +
+            '</div>' +
+            '</div>');
+
+        overlay.on('click', function () { $(this).remove(); });
+        $('body').append(overlay);
+    });
+
+    // ===================== RETEXTURE =====================
+
+    // Right-click on texture card → show retexture dialog
+    $(document).on('click', '.btn-retexture', function (e) {
+        e.stopPropagation();
+        var $card = $(this).closest('.item-texture-card');
+        var mpqPath = $card.data('mpq-path');
+        var filename = $card.find('.item-texture-name').text();
+        var width = $card.data('width');
+        var height = $card.data('height');
+        var format = $card.data('format');
+
+        var itemName = currentDetailItem ? (currentDetailItem.name || '') : '';
+
+        // Show retexture modal
+        var modal = $('<div class="texture-overlay" id="retextureOverlay">' +
+            '<div class="retexture-dialog">' +
+            '<div style="font-size:15px;font-weight:600;margin-bottom:12px;color:var(--text-primary);">' +
+            '<i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent);"></i> Retexture: ' + esc(filename) + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">' +
+            width + '×' + height + ' · ' + esc(format) + ' · ' + esc(mpqPath) + '</div>' +
+
+            // Mode toggle
+            '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary);cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);flex:1;transition:all 0.15s;" class="retex-mode-btn" data-mode="scratch">' +
+            '<input type="radio" name="retexMode" value="scratch" style="accent-color:var(--accent);"> Generate from scratch</label>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary);cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);flex:1;transition:all 0.15s;" class="retex-mode-btn active" data-mode="modify">' +
+            '<input type="radio" name="retexMode" value="modify" checked style="accent-color:var(--accent);"> Modify existing</label>' +
+            '</div>' +
+
+            // Denoise slider (hidden by default, shown for modify mode)
+            '<div id="retexDenoiseRow" style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:3px;">' +
+            'Modification Strength: <span id="retexDenoiseVal">0.50</span></label>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="font-size:10px;color:var(--text-muted);">Subtle</span>' +
+            '<input type="range" id="retexDenoise" min="10" max="95" value="50" style="flex:1;accent-color:var(--accent);" />' +
+            '<span style="font-size:10px;color:var(--text-muted);">Major</span>' +
+            '</div>' +
+            '</div>' +
+
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:3px;">Style Direction</label>' +
+            '<input type="text" id="retextureStyle" class="form-input" placeholder="e.g. dark corrupted, frost-enchanted, golden holy" style="margin-bottom:10px;" />' +
+            '<label style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:3px;">Custom Prompt (optional — bypasses Ollama, sent directly to Flux)</label>' +
+            '<textarea id="retexturePrompt" class="form-input" rows="3" placeholder="⚠ Must describe a FLAT TEXTURE, not an object. e.g. \'flat 2D texture, dark obsidian surface with gold inlay borders, hand-painted WoW style, no perspective\'" style="margin-bottom:14px;resize:vertical;"></textarea>' +
+            '<div class="d-flex gap-2 justify-content-end">' +
+            '<button class="btn-sm btn-outline-subtle" id="retextureCancel">Cancel</button>' +
+            '<button class="btn-sm btn-accent" id="retextureGo" ' +
+            'data-mpq="' + esc(mpqPath) + '" data-filename="' + esc(filename) + '">' +
+            '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button>' +
+            '</div>' +
+            '<div id="retextureStatus" style="margin-top:12px;display:none;"></div>' +
+            '</div></div>');
+
+        modal.on('click', function (ev) {
+            if ($(ev.target).hasClass('texture-overlay')) $(this).remove();
+        });
+        $('body').append(modal);
+    });
+
+    $(document).on('click', '#retextureCancel', function () {
+        $('#retextureOverlay').remove();
+    });
+
+    // Mode toggle: show/hide denoise slider
+    $(document).on('change', 'input[name="retexMode"]', function () {
+        var isModify = $(this).val() === 'modify';
+        $('#retexDenoiseRow').toggle(isModify);
+        $('.retex-mode-btn').removeClass('active');
+        $(this).closest('.retex-mode-btn').addClass('active');
+    });
+
+    // Denoise slider label update
+    $(document).on('input', '#retexDenoise', function () {
+        $('#retexDenoiseVal').text(($(this).val() / 100).toFixed(2));
+    });
+
+    $(document).on('click', '#retextureGo', function () {
+        var $btn = $(this);
+        var mpqPath = $btn.data('mpq');
+        var filename = $btn.data('filename');
+        var style = $('#retextureStyle').val() || '';
+        var customPrompt = $('#retexturePrompt').val() || '';
+        var itemName = currentDetailItem ? (currentDetailItem.name || '') : '';
+        var displayId = currentDetailItem ? (currentDetailItem.display_id || 0) : 0;
+        var modifyExisting = $('input[name="retexMode"]:checked').val() === 'modify';
+        var denoise = modifyExisting ? parseInt($('#retexDenoise').val()) / 100.0 : 1.0;
+
+        if (!displayId) {
+            showToast('No item selected', 'error');
+            return;
+        }
+
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Generating...');
+        $('#retextureStatus').show().html(
+            '<div style="font-size:11px;color:var(--text-muted);">' +
+            '<i class="fa-solid fa-spinner fa-spin"></i> Sending to Ollama + Flux pipeline... This may take 30-60s.' +
+            '</div>');
+
+        $.ajax({
+            url: '/Items/Retexture',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                displayId: displayId,
+                itemName: itemName,
+                originalBlpFilename: filename,
+                originalMpqPath: mpqPath,
+                styleDirection: style,
+                customPrompt: customPrompt || null,
+                modifyExisting: modifyExisting,
+                denoiseStrength: denoise
+            }),
+            success: function (data) {
+                if (data.success) {
+                    var html = '<div style="font-size:12px;color:var(--status-online);font-weight:600;margin-bottom:8px;">' +
+                        '<i class="fa-solid fa-check"></i> Retexture complete!</div>';
+
+                    if (data.previewUrl) {
+                        html += '<img src="' + esc(data.previewUrl) + '?t=' + Date.now() + '" style="max-width:100%;border-radius:4px;image-rendering:pixelated;margin-bottom:8px;" />';
+                    }
+
+                    html += '<div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">' +
+                        data.originalWidth + '×' + data.originalHeight + ' ' + esc(data.originalFormat || '') +
+                        ' · BLP: ' + (data.blpSize / 1024).toFixed(1) + 'KB</div>';
+
+                    if (data.newDisplayId > 0) {
+                        html += '<div style="font-size:11px;color:var(--accent);margin-bottom:8px;font-weight:600;">' +
+                            'New Display ID: ' + data.newDisplayId + '</div>';
+
+                        // If in edit mode, offer to apply the new displayId
+                        if (editMode && editEntry) {
+                            html += '<button class="btn-sm btn-accent" id="btnApplyNewDisplayId" data-did="' + data.newDisplayId + '" style="margin-bottom:8px;">' +
+                                '<i class="fa-solid fa-arrow-right"></i> Apply to this item</button> ';
+                        }
+                    }
+
+                    if (data.prompt) {
+                        html += '<div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;font-style:italic;word-break:break-word;">' +
+                            'Prompt: "' + esc(data.prompt.substring(0, 150)) + (data.prompt.length > 150 ? '...' : '') + '"</div>';
+                    }
+
+                    if (data.patchUrl) {
+                        var patchFile = data.patchUrl.split('/').pop();
+                        html += '<a href="/Items/DownloadPatch?file=' + encodeURIComponent(patchFile) + '" class="btn-sm btn-accent" download="' + esc(patchFile) + '" style="text-decoration:none;display:inline-block;">' +
+                            '<i class="fa-solid fa-download"></i> Download ' + esc(patchFile) + '</a>';
+                    }
+
+                    $('#retextureStatus').html(html);
+                    $btn.prop('disabled', false).html('<i class="fa-solid fa-wand-magic-sparkles"></i> Generate Another');
+                } else {
+                    $('#retextureStatus').html(
+                        '<div style="font-size:11px;color:var(--status-error);">' +
+                        '<i class="fa-solid fa-triangle-exclamation"></i> ' + esc(data.error || 'Unknown error') + '</div>');
+                    $btn.prop('disabled', false).html('<i class="fa-solid fa-wand-magic-sparkles"></i> Retry');
+                }
+            },
+            error: function () {
+                $('#retextureStatus').html(
+                    '<div style="font-size:11px;color:var(--status-error);">Request failed</div>');
+                $btn.prop('disabled', false).html('<i class="fa-solid fa-wand-magic-sparkles"></i> Retry');
+            }
+        });
+    });
 
     // ===================== ITEM CHANGELOG =====================
 
@@ -388,6 +693,11 @@ $(function () {
         }
         h += '</div></div>';
 
+        // Model Textures in edit form (retexture-capable)
+        h += '<div class="edit-field"><label>Model Textures</label>';
+        h += '<div id="editTextureContent"><div class="text-center p-2 text-muted" style="font-size:11px;">Loading textures...</div></div>';
+        h += '</div>';
+
         h += field('Item Class', buildClassDropdown(item.class));
         h += field('Description', '<textarea id="editFieldDescription" placeholder="Orange flavor text shown in-game">' + esc(item.description || '') + '</textarea>');
         h += sectionEnd();
@@ -484,6 +794,12 @@ $(function () {
 
         // Update header icon
         $('#editHeaderIcon').attr('src', iconPath || '/icons/inv_misc_questionmark.png');
+
+        // Load textures into edit form
+        var editDisplayId = item.display_id || 0;
+        if (editDisplayId > 0) {
+            loadEditTextures(editDisplayId);
+        }
 
         // Wire DPS preview
         updateDpsPreview();
@@ -870,7 +1186,7 @@ $(function () {
     }
 
     function selectIcon(cell) {
-         var displayIds = JSON.parse($(cell).attr('data-display-ids') || '[]');
+        var displayIds = JSON.parse($(cell).attr('data-display-ids') || '[]');
         var iconName = $(cell).data('icon-name');
         if (displayIds.length === 0) return;
 
@@ -1156,10 +1472,35 @@ $(function () {
         checkItemModel(did);
     });
 
+    // ── Apply retextured displayId to item in edit mode ──
+    $(document).on('click', '#btnApplyNewDisplayId', function () {
+        var newDid = $(this).data('did');
+        if (!newDid || !editMode) return;
+
+        $('#editFieldDisplayId').val(newDid);
+        // Update the icon picker display too
+        var $trigger = $('.icon-picker-trigger');
+        if ($trigger.length) {
+            $trigger.find('.change-text').text('Display ID: ' + newDid);
+        }
+
+        showToast('Display ID updated to ' + newDid + ' — Save to apply', 'success');
+        $('#retextureOverlay').remove();
+
+        // Reload textures and model preview for the new displayId
+        loadEditTextures(newDid);
+    });
+
     // ── Changelog toggle ──
     $('#itemChangelogToggle').on('click', function () {
         $(this).toggleClass('collapsed');
         $('#itemChangelogBody').toggleClass('collapsed');
+    });
+
+    // ── Texture panel toggle ──
+    $('#itemTextureToggle').on('click', function () {
+        $(this).toggleClass('collapsed');
+        $('#itemTextureBody').toggleClass('collapsed');
     });
 
     // ── Reset to OG ──

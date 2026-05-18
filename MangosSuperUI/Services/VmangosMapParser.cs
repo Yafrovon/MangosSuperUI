@@ -366,32 +366,73 @@ public static class VmangosMapParser
 
     public class LiquidResult
     {
-        public byte OffsetX { get; set; }   // start chunk X (0-15)
-        public byte OffsetY { get; set; }   // start chunk Y (0-15)
-        public byte Width { get; set; }     // chunks wide
-        public byte Height { get; set; }    // chunks tall
-        public float LiquidLevel { get; set; } // base/flat water height
-        public ushort LiquidFlags { get; set; }
-        public ushort LiquidType { get; set; }
-        public float[]? Heights { get; set; } // per-vertex heights if variable, null if flat
-        public byte[]? CellFlags { get; set; } // per-cell flags: 0x0F = no liquid
+        // CELL coordinates (0..127, not chunk 0..15). The extractor uses
+        // ADT_GRID_SIZE=128 cells per side for the liquid mask.
+        public byte OffsetX { get; set; }
+        public byte OffsetY { get; set; }
+        // Vertex-grid dimensions (= cell-grid-size + 1). Heights[] has Width*Height entries.
+        public byte Width { get; set; }
+        public byte Height { get; set; }
+        // Base/min liquid height — NOT the water surface! This is minHeight from
+        // the writer, with empty cells pre-filled to CONF_use_minHeight (-500.0).
+        // Useful only as a fallback when Heights[] has no data for a given cell.
+        public float LiquidLevel { get; set; }
+        public byte HeaderFlags { get; set; }        // 0x01 = NO_TYPE, 0x02 = NO_HEIGHT
+        public byte GlobalLiquidFlags { get; set; }  // type byte when NO_TYPE
+        public ushort LiquidType { get; set; }       // entry id when NO_TYPE
+
+        // Per-vertex heights in a Width × Height grid spanning the cell-bounding-box
+        // of liquid cells. Most entries are sentinel (-500.0); real water heights
+        // live inside the chunk regions that have CellFlags != 0.
+        public float[]? Heights { get; set; }
+
+        // 16×16 per-chunk liquid type byte. THIS is the authoritative "does this
+        // chunk have liquid" mask. Indexed [chunkRow*16 + chunkCol] over the
+        // FULL tile chunk grid (not the cell-bounding-box).
+        //   byte == 0    → no liquid in this chunk
+        //   byte nonzero → liquid present (0x08=water, 0x02=ocean, 0x01=magma,
+        //                  0x04=slime, 0x10=deep, 0x20=wmo-water)
+        // null when NO_TYPE is set (then every chunk in the cell-bbox region
+        // uses GlobalLiquidFlags).
+        public byte[]? CellFlags { get; set; }
+
+        // 16×16 per-chunk liquid entry id (LiquidType DBC). null when NO_TYPE.
+        public ushort[]? LiquidEntry { get; set; }
     }
 
     /// <summary>
     /// Parse liquid data from a VMaNGOS .map file.
     ///
-    /// VMaNGOS liquid format (from GridMapDefines.h / GridMap.cpp):
-    ///   At liquidMapOffset → GridMapLiquidHeader:
-    ///     uint32 fourcc       "MLIQ"
-    ///     uint16 flags
-    ///     uint16 liquidType
-    ///     uint8  offsetX      (chunk start X)
-    ///     uint8  offsetY      (chunk start Y)
-    ///     uint8  width        (chunks wide, 0 = no liquid)
-    ///     uint8  height       (chunks tall)
-    ///     float  liquidLevel  (base height)
-    ///   Then if !(flags & 0x01): float[(width+1)*(height+1)] liquid heights per vertex
-    ///   Then: uint8[width*height] liquid flags per cell
+    /// Byte layout (verified against vmangos/src/game/Maps/GridMap.cpp
+    /// loadGridMapLiquidData() and GridMapDefines.h GridMapLiquidHeader):
+    ///
+    ///   At liquidMapOffset:
+    ///     uint32 fourcc        "MLIQ"          (+0)
+    ///     uint8  flags                          (+4)   header flags
+    ///     uint8  liquidFlags                    (+5)   default liquid type byte (used when NO_TYPE)
+    ///     uint16 liquidType                     (+6)   default liquid entry id   (used when NO_TYPE)
+    ///     uint8  offsetX                        (+8)   start chunk X in 0..15
+    ///     uint8  offsetY                        (+9)   start chunk Y
+    ///     uint8  width                          (+10)  chunk-region width  in 1..16
+    ///     uint8  height                         (+11)  chunk-region height
+    ///     float  liquidLevel                    (+12)  base/global height
+    ///                                                  (= 16 bytes header total)
+    ///
+    ///   if !(flags &amp; MAP_LIQUID_NO_TYPE = 0x01):
+    ///     uint16[16*16] liquidEntry             (512 bytes) per-chunk liquid id
+    ///     uint8 [16*16] liquidFlags             (256 bytes) per-chunk liquid type byte
+    ///   (else: every chunk in the region implicitly uses header.liquidFlags / header.liquidType)
+    ///
+    ///   if !(flags &amp; MAP_LIQUID_NO_HEIGHT = 0x02):
+    ///     float[width*height] heights           per-cell height (NOT per-vertex)
+    ///   (else: every cell uses liquidLevel)
+    ///
+    /// VMaNGOS per-chunk semantics (from GridMap::getLiquidStatus):
+    ///   uint8 cellByte = m_liquidFlags[chunkRow*16 + chunkCol]
+    ///                  (or m_liquidGlobalFlags when NO_TYPE)
+    ///   if (cellByte == 0) → no liquid in this chunk
+    ///   nonzero → liquid present (bits 0x01=magma, 0x02=ocean, 0x04=slime,
+    ///             0x08=water, 0x10=deep, 0x20=wmo-water)
     /// </summary>
     public static LiquidResult? ParseLiquid(string mapFilePath)
     {
@@ -403,23 +444,26 @@ public static class VmangosMapParser
     {
         if (data == null || data.Length < HEADER_SIZE) return null;
 
-        // Validate magic
+        // Validate file magic
         if (data[0] != 'M' || data[1] != 'A' || data[2] != 'P' || data[3] != 'S')
             return null;
 
         uint liquidMapOffset = BitConverter.ToUInt32(data, 24);
         uint liquidMapSize = BitConverter.ToUInt32(data, 28);
 
+        // Need at least the 16-byte MLIQ header
         if (liquidMapOffset == 0 || liquidMapSize == 0 || liquidMapOffset + 16 > data.Length)
             return null;
 
         int pos = (int)liquidMapOffset;
 
-        // Validate fourcc "MLIQ"
+        // Validate MLIQ fourcc
         if (data[pos] != 'M' || data[pos + 1] != 'L' || data[pos + 2] != 'I' || data[pos + 3] != 'Q')
             return null;
 
-        ushort flags = BitConverter.ToUInt16(data, pos + 4);
+        // Header (matches GridMapLiquidHeader byte-for-byte)
+        byte headerFlags = data[pos + 4];
+        byte globalLiqFlg = data[pos + 5];
         ushort liquidType = BitConverter.ToUInt16(data, pos + 6);
         byte offsetX = data[pos + 8];
         byte offsetY = data[pos + 9];
@@ -430,34 +474,45 @@ public static class VmangosMapParser
 
         if (width == 0 || height == 0) return null;
 
-        float[]? heights = null;
-        bool noHeight = (flags & 0x0001) != 0;
+        const byte MAP_LIQUID_NO_TYPE = 0x01;
+        const byte MAP_LIQUID_NO_HEIGHT = 0x02;
 
-        if (!noHeight)
+        // Per-chunk arrays come first (BEFORE heights), only when NO_TYPE is clear.
+        // The fixed sizes are 16*16 — NOT width*height. Indexed [chunkRow*16+chunkCol].
+        ushort[]? liquidEntry = null;
+        byte[]? cellFlags = null;
+        if ((headerFlags & MAP_LIQUID_NO_TYPE) == 0)
         {
-            // Variable height: (width+1)*(height+1) floats for vertex grid
-            int vertCount = (width + 1) * (height + 1);
-            int needed = vertCount * 4;
-            if (pos + needed <= data.Length)
+            const int chunkGridCount = 16 * 16; // 256 chunks
+            int entryBytes = chunkGridCount * 2;
+            int flagBytes = chunkGridCount * 1;
+            if (pos + entryBytes + flagBytes > data.Length)
+                return null; // truncated file
+            liquidEntry = new ushort[chunkGridCount];
+            for (int i = 0; i < chunkGridCount; i++)
             {
-                heights = new float[vertCount];
-                for (int i = 0; i < vertCount; i++)
-                {
-                    heights[i] = BitConverter.ToSingle(data, pos);
-                    pos += 4;
-                }
+                liquidEntry[i] = BitConverter.ToUInt16(data, pos);
+                pos += 2;
             }
+            cellFlags = new byte[chunkGridCount];
+            Array.Copy(data, pos, cellFlags, 0, chunkGridCount);
+            pos += chunkGridCount;
         }
 
-        // Per-cell flags: width*height bytes
-        // 0x0F = no liquid in this cell (or flag == 0 means has liquid)
-        // VMaNGOS GridMap.cpp: if (liquid_flags[idx] != 0x0F) → cell has liquid
-        byte[]? cellFlags = null;
-        int cellCount = width * height;
-        if (pos + cellCount <= data.Length)
+        // Per-cell heights (one float per cell, not per vertex)
+        float[]? heights = null;
+        if ((headerFlags & MAP_LIQUID_NO_HEIGHT) == 0)
         {
-            cellFlags = new byte[cellCount];
-            Array.Copy(data, pos, cellFlags, 0, cellCount);
+            int cellCount = width * height;
+            int needed = cellCount * 4;
+            if (pos + needed > data.Length)
+                return null; // truncated
+            heights = new float[cellCount];
+            for (int i = 0; i < cellCount; i++)
+            {
+                heights[i] = BitConverter.ToSingle(data, pos);
+                pos += 4;
+            }
         }
 
         return new LiquidResult
@@ -467,10 +522,12 @@ public static class VmangosMapParser
             Width = width,
             Height = height,
             LiquidLevel = liquidLevel,
-            LiquidFlags = flags,
+            HeaderFlags = headerFlags,
+            GlobalLiquidFlags = globalLiqFlg,
             LiquidType = liquidType,
             Heights = heights,
-            CellFlags = cellFlags
+            CellFlags = cellFlags,
+            LiquidEntry = liquidEntry,
         };
     }
 }

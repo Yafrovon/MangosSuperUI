@@ -328,6 +328,75 @@ public class ComfyUIDispatcher : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // IMAGE UPLOAD (for img2img workflows)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Upload an image to a ComfyUI node's input folder.
+    /// Returns the filename as stored by ComfyUI (may differ from input),
+    /// or null on failure. The returned filename is what LoadImage node expects.
+    /// </summary>
+    public async Task<(string? Filename, ComfyNode? Node)> UploadImageAsync(
+        byte[] imageBytes, string filename, CancellationToken ct = default)
+    {
+        await EnsurePoolSeededAsync(ct);
+
+        // Upload to all nodes so any can pick up the workflow
+        foreach (var node in _nodes)
+        {
+            try
+            {
+                using var form = new MultipartFormDataContent();
+                var imageContent = new ByteArrayContent(imageBytes);
+                imageContent.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+                form.Add(imageContent, "image", filename);
+                form.Add(new StringContent("true"), "overwrite");
+
+                var resp = await _http.PostAsync($"{node.BaseUrl}/upload/image", form, ct);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var json = JsonSerializer.Deserialize<JsonElement>(
+                        await resp.Content.ReadAsStringAsync(ct));
+                    var storedName = json.GetProperty("name").GetString() ?? filename;
+
+                    _logger.LogInformation(
+                        "ComfyUI Dispatch: Uploaded '{File}' to {Node} → '{Stored}'",
+                        filename, node.Name, storedName);
+
+                    return (storedName, node);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "ComfyUI Dispatch: Upload failed on {Node}: {Status}",
+                        node.Name, resp.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "ComfyUI Dispatch: Upload error on {Node}", node.Name);
+            }
+        }
+
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Upload an image file from disk to all ComfyUI nodes.
+    /// </summary>
+    public async Task<string?> UploadImageFileAsync(
+        string filePath, CancellationToken ct = default)
+    {
+        if (!File.Exists(filePath)) return null;
+        var bytes = await File.ReadAllBytesAsync(filePath, ct);
+        var filename = Path.GetFileName(filePath);
+        var (storedName, _) = await UploadImageAsync(bytes, filename, ct);
+        return storedName;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // HEALTH / DIAGNOSTICS
     // ═══════════════════════════════════════════════════════════════════
 

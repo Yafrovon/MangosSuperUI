@@ -658,7 +658,7 @@
             }
 
             // Navigate to the World Viewer with coordinates
-            var url = '/WorldViewer?mapId=' + mapId +
+            var url = '/WorldEditor?mapId=' + mapId +
                 '&gridX=' + gridX + '&gridY=' + gridY +
                 '&worldX=' + w.x.toFixed(1) + '&worldY=' + w.y.toFixed(1);
             window.location.href = url;

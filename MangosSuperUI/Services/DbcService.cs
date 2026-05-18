@@ -45,6 +45,18 @@ public class DbcService
     public IReadOnlyDictionary<uint, SpellDbcEntry> SpellEntries { get; private set; }
         = new Dictionary<uint, SpellDbcEntry>();
 
+    /// <summary>displayId → model info (model names + texture names from DBC fields [1-4]).
+    /// Used by ItemTextureService to resolve displayId → M2 file path.</summary>
+    public IReadOnlyDictionary<uint, ItemModelDbc> ItemModelInfos { get; private set; }
+        = new Dictionary<uint, ItemModelDbc>();
+
+    /// <summary>All rows of CharSections.dbc (vanilla 1.12 character-creation
+    /// texture table). Queried via GetDefaultFaceSection — and future helpers
+    /// for skin tones / hair styles. Used by CharacterSkinCompositor to layer
+    /// face textures onto the body atlas.</summary>
+    public IReadOnlyList<CharSectionDbc> CharacterSections { get; private set; }
+        = Array.Empty<CharSectionDbc>();
+
     // ── Status / diagnostics ──────────────────────────────────────────────
 
     public bool IsLoaded { get; private set; }
@@ -79,11 +91,211 @@ public class DbcService
         return "/icons/inv_misc_questionmark.png";
     }
 
+    /// <summary>Resolve a displayId to its model info (model names + texture names).</summary>
+    public ItemModelDbc? GetItemModelInfo(uint displayId)
+    {
+        if (ItemModelInfos.TryGetValue(displayId, out var info))
+            return info;
+        return null;
+    }
+
+    /// <summary>
+    /// Find the default Face row for a given (race, gender) — BaseSection=Face (1),
+    /// VariationIndex=0, ColorIndex=0. This is the vanilla character-creation
+    /// "default appearance" preset. Returns null if no row matches.
+    ///
+    /// Used by CharacterSkinCompositor to resolve face_lower (TextureName1)
+    /// and face_upper (TextureName2) for the default skin PNG.
+    /// </summary>
+    public CharSectionDbc? GetDefaultFaceSection(uint race, uint sex)
+    {
+        foreach (var row in CharacterSections)
+        {
+            if (row.Race == race && row.Sex == sex
+                && row.BaseSection == 1     // Face
+                && row.VariationIndex == 0
+                && row.ColorIndex == 0)
+                return row;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Find the default Hair row for a given (race, gender) — BaseSection=Hair (3),
+    /// VariationIndex=0 (hair style 0), ColorIndex=0 (hair color 0). Returns
+    /// null if no row matches.
+    ///
+    /// Used by CharacterModelService to bind the hair color BLP
+    /// (TextureName1) to the M2 texture slot Type=6 (TEX_COMPONENT_CHAR_HAIR).
+    /// Without this, hair geosets fall through to the body atlas in
+    /// SkinnedGlbWriter's material assignment, producing the
+    /// "face-painted-on-hair" artifact visible on Dwarf/Tauren etc.
+    ///
+    /// CharSections Hair row textures:
+    ///   TextureName1 — hair color BLP (the one we want for the hair slot)
+    ///   TextureName2 — sideburns / lower-hair overlay (painted onto
+    ///                  FACE_LOWER in vanilla — future session)
+    ///   TextureName3 — eyebrows / upper-hair overlay (painted onto
+    ///                  FACE_UPPER in vanilla — future session)
+    /// </summary>
+    public CharSectionDbc? GetDefaultHairSection(uint race, uint sex)
+    {
+        foreach (var row in CharacterSections)
+        {
+            if (row.Race == race && row.Sex == sex
+                && row.BaseSection == 3     // Hair
+                && row.VariationIndex == 0
+                && row.ColorIndex == 0)
+                return row;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Register a custom ItemDisplayInfo entry at runtime.
+    /// Clones the icon and model info from an existing displayId so the new
+    /// displayId is fully functional in SuperUI (icon lookup, texture extraction,
+    /// GLB generation) without requiring a restart or DBC reload.
+    /// Called by ItemRetextureService after creating a retexture.
+    /// </summary>
+    public void RegisterCustomDisplayEntry(uint newDisplayId, uint sourceDisplayId,
+        string? customModelName = null, string? customTextureName = null)
+    {
+        // Clone icon from source
+        if (ItemDisplayIcons is Dictionary<uint, string> iconDict)
+        {
+            if (iconDict.TryGetValue(sourceDisplayId, out var iconName))
+                iconDict[newDisplayId] = iconName;
+        }
+
+        // Clone model info from source, with optional overrides
+        if (ItemModelInfos is Dictionary<uint, ItemModelDbc> modelDict)
+        {
+            if (modelDict.TryGetValue(sourceDisplayId, out var sourceModel))
+            {
+                var custom = new ItemModelDbc
+                {
+                    ModelName1 = customModelName ?? sourceModel.ModelName1,
+                    ModelName2 = sourceModel.ModelName2,
+                    TextureName1 = customTextureName ?? sourceModel.TextureName1,
+                    TextureName2 = sourceModel.TextureName2,
+                    // Session C: clone (don't share reference) the array
+                    // fields so a future RegisterCustomDisplayEntry call
+                    // can't accidentally mutate the source row.
+                    BodyTextures = sourceModel.BodyTextures != null
+                        ? (string[])sourceModel.BodyTextures.Clone()
+                        : new string[8],
+                    GeosetGroup = sourceModel.GeosetGroup != null
+                        ? (int[])sourceModel.GeosetGroup.Clone()
+                        : new int[3],
+                    // Session L: scalars — no clone needed, just copy.
+                    HelmetGeosetVis1 = sourceModel.HelmetGeosetVis1,
+                    HelmetGeosetVis2 = sourceModel.HelmetGeosetVis2,
+                    // Session N: inherit the source's item visual so a
+                    // retextured Thunderfury still produces lightning.
+                    ItemVisualId = sourceModel.ItemVisualId,
+                };
+                modelDict[newDisplayId] = custom;
+            }
+        }
+
+        // Invalidate reverse icon cache
+        _iconToDisplayIds = null;
+
+        _logger.LogInformation(
+            "DbcService: Registered custom displayId {New} (cloned from {Source}, model={Model})",
+            newDisplayId, sourceDisplayId, customModelName ?? "(same)");
+    }
+
     /// <summary>Re-read all DBC files (e.g., after path change in Settings).</summary>
     public void Reload()
     {
         _iconToDisplayIds = null; // Invalidate reverse cache
         Load();
+    }
+
+    // ── Session N diagnostic ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Raw-byte dump of a single ItemDisplayInfo.dbc row plus a histogram of
+    /// non-zero values at each field index across the full table.
+    ///
+    /// Built to settle the "field 22 = m_itemVisual?" question empirically
+    /// when Thunderfury's displayId 30606 came back with itemVisualId=0
+    /// even though it visibly carries lightning in-game. Two things to look
+    /// at in the response:
+    ///
+    ///   1. row.fields[22] — the value we currently call itemVisualId. If
+    ///      it's 0 for 30606 but non-zero for other "visually flashy"
+    ///      displayIds (e.g. Sulfuras displayId 34471), the offset is right
+    ///      and Thunderfury just doesn't bind its visual through this DBC.
+    ///   2. histogram[i] — count of non-zero values at field i across all
+    ///      rows. The "m_itemVisual" column should have a handful of hundreds
+    ///      of hits — not zero, not tens of thousands. If field [22] shows
+    ///      0 hits but field [21] or [23] shows ~hundreds, we have the
+    ///      wrong offset.
+    /// </summary>
+    public object DumpItemDisplayInfoRow(uint displayId)
+    {
+        var path = Path.Combine(DbcPath, "ItemDisplayInfo.dbc");
+        if (!File.Exists(path))
+            return new { error = $"File not found: {path}" };
+
+        var (records, stringBlock, recordSize) = ReadDbcFile(path);
+        int recordCount = records.Length / recordSize;
+        int fieldCount = recordSize / 4;
+
+        // Build the histogram in a single pass, capture the target row.
+        var histogram = new int[fieldCount];
+        object? targetRow = null;
+        uint? minId = null, maxId = null;
+
+        for (int i = 0; i < recordCount; i++)
+        {
+            int offset = i * recordSize;
+            uint id = BitConverter.ToUInt32(records, offset);
+            if (minId == null || id < minId) minId = id;
+            if (maxId == null || id > maxId) maxId = id;
+
+            for (int f = 0; f < fieldCount; f++)
+            {
+                uint v = BitConverter.ToUInt32(records, offset + f * 4);
+                if (v != 0) histogram[f]++;
+            }
+
+            if (id == displayId)
+            {
+                var fields = new uint[fieldCount];
+                for (int f = 0; f < fieldCount; f++)
+                    fields[f] = BitConverter.ToUInt32(records, offset + f * 4);
+                // Decode each stringref to its string value so we can tell
+                // stringrefs from real integer fields at a glance.
+                var strings = new string[fieldCount];
+                for (int f = 0; f < fieldCount; f++)
+                    strings[f] = ReadString(stringBlock, fields[f]);
+                targetRow = new
+                {
+                    found = true,
+                    id,
+                    rowOffset = offset,
+                    fields,
+                    strings,
+                };
+            }
+        }
+
+        return new
+        {
+            file = path,
+            recordCount,
+            fieldCount,
+            recordSize,
+            stringBlockSize = stringBlock.Length,
+            minId,
+            maxId,
+            histogram,  // histogram[i] = how many rows have a non-zero value at field i
+            row = targetRow ?? (object)new { found = false, displayId },
+        };
     }
 
     // ── Reverse icon lookup (for icon picker) ──────────────────────────────
@@ -138,11 +350,13 @@ public class DbcService
         try
         {
             ItemDisplayIcons = LoadItemDisplayInfo(Path.Combine(DbcPath, "ItemDisplayInfo.dbc"));
+            ItemModelInfos = LoadItemModelInfo(Path.Combine(DbcPath, "ItemDisplayInfo.dbc"));
             SpellIcons = LoadSpellIcon(Path.Combine(DbcPath, "SpellIcon.dbc"));
             SpellDurations = LoadSpellDuration(Path.Combine(DbcPath, "SpellDuration.dbc"));
             SpellCastTimes = LoadSpellCastTimes(Path.Combine(DbcPath, "SpellCastTimes.dbc"));
             SpellRanges = LoadSpellRange(Path.Combine(DbcPath, "SpellRange.dbc"));
             SpellEntries = LoadSpellEntries(Path.Combine(DbcPath, "Spell.dbc"));
+            CharacterSections = LoadCharSections(Path.Combine(DbcPath, "CharSections.dbc"));
 
             IsLoaded = true;
             _logger.LogInformation("DbcService: Loaded successfully — {Counts}",
@@ -402,6 +616,246 @@ public class DbcService
     // ── WDBC file reader ──────────────────────────────────────────────────
 
     /// <summary>
+    /// ItemDisplayInfo.dbc — parse model + texture names + geoset/body-atlas
+    /// fields for Session C dressing.
+    ///
+    /// Vanilla 1.12.1 layout (23 fields, 92 bytes per record). Empirically
+    /// verified by dumping all 23 fields across robes, plate chests, cloth,
+    /// boots, gloves, and a trade good (Red Dye), plus a histogram of small
+    /// int values at every field index over all 29,604 records. The layout
+    /// matches mangos-zero r558 and TrinityCore's 3.3.5a doc minus the
+    /// post-vanilla second inventory icon stringref:
+    ///
+    ///   [0]      m_ID                              uint32
+    ///   [1-2]    m_modelName[0..1]                 stringref each
+    ///   [3-4]    m_modelTexture[0..1]              stringref each
+    ///   [5]      m_inventoryIcon                   stringref (single in vanilla)
+    ///   [6-8]    m_geosetGroup[0..2]               uint32 each
+    ///   [9]      m_spellVisualID                   uint32 (sparse, ~0.04%)
+    ///   [10]     m_groundModel?                    uint32 (sparse, ~2%)
+    ///   [11]     m_groupSoundIndex                 uint32 (~69%, values 7-16
+    ///                                                       are armor sound groups)
+    ///   [12-13]  m_helmetGeosetVis[0..1]           uint32 each (~4%, helms only)
+    ///   [14-21]  m_texture[0..7]                   stringref each
+    ///   [22]     m_itemVisual                      uint32 (~1.2%) — Session N:
+    ///                                              indexes ItemVisuals.dbc for
+    ///                                              lightning/glow/ribbon effects.
+    ///
+    /// m_texture slot layout (suffix → body part):
+    ///   slot 0 (_AU) ArmUpper       shoulders/biceps
+    ///   slot 1 (_AL) ArmLower       forearms
+    ///   slot 2 (_HA) Hand           hand/wrist
+    ///   slot 3 (_TU) TorsoUpper     chest
+    ///   slot 4 (_TL) TorsoLower     belly/waist
+    ///   slot 5 (_LU) LegUpper       thigh / robe upper
+    ///   slot 6 (_LL) LegLower       shin / robe lower (boots paint here)
+    ///   slot 7 (_FO) Foot           foot (boots paint here)
+    ///
+    /// NOTE: an earlier draft of this parser used a -2 shift (texture base
+    /// = field 12) which happened to produce visually correct output for
+    /// chests because the compositor's SLOT_TO_REGION started at slot 2.
+    /// The shift was wrong-for-the-right-reason; corrected to the real
+    /// layout so slot indices match TrinityCore's doc and we get access
+    /// to LegLower and Foot for boot textures.
+    /// </summary>
+    private Dictionary<uint, ItemModelDbc> LoadItemModelInfo(string filePath)
+    {
+        var dict = new Dictionary<uint, ItemModelDbc>();
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("DbcService: File not found for model info: {File}", filePath);
+            LoadedCounts["ItemModelInfo"] = 0;
+            return dict;
+        }
+
+        var (records, stringBlock, recordSize) = ReadDbcFile(filePath);
+        int recordCount = records.Length / recordSize;
+
+        // Sanity check the schema — if recordSize changes (different DBC
+        // version) we want to know loudly rather than silently parse garbage.
+        if (recordSize != 92)
+        {
+            _logger.LogWarning(
+                "DbcService: ItemDisplayInfo.dbc recordSize={Size} (expected 92 for vanilla 1.12). " +
+                "Field offsets in LoadItemModelInfo may be incorrect.", recordSize);
+        }
+
+        for (int i = 0; i < recordCount; i++)
+        {
+            int offset = i * recordSize;
+
+            uint id = BitConverter.ToUInt32(records, offset + 0 * 4);
+            uint modelName1Ofs = BitConverter.ToUInt32(records, offset + 1 * 4);
+            uint modelName2Ofs = BitConverter.ToUInt32(records, offset + 2 * 4);
+            uint texName1Ofs = BitConverter.ToUInt32(records, offset + 3 * 4);
+            uint texName2Ofs = BitConverter.ToUInt32(records, offset + 4 * 4);
+
+            // Skip field 5 (m_inventoryIcon) — already parsed by LoadItemDisplayInfo.
+
+            // Fields 6-8: m_geosetGroup[0..2]. Variants are small ints 0-5.
+            int geosetGroup0 = BitConverter.ToInt32(records, offset + 6 * 4);
+            int geosetGroup1 = BitConverter.ToInt32(records, offset + 7 * 4);
+            int geosetGroup2 = BitConverter.ToInt32(records, offset + 8 * 4);
+
+            // Skip fields 9-11: m_spellVisualID, m_groundModel(?), m_groupSoundIndex.
+
+            // Fields 12-13: m_helmetGeosetVis[0..1]. Drives hair / facial-hair
+            // hiding when a helm is equipped. Encoding is reverse-engineered
+            // empirically (see ItemModelDbc.HelmetGeosetVis1/2 docstring).
+            // Always populated even for non-helm rows because the DBC has
+            // them everywhere — the consumer decides whether they're
+            // meaningful based on inventory_type.
+            uint helmetGeosetVis1 = BitConverter.ToUInt32(records, offset + 12 * 4);
+            uint helmetGeosetVis2 = BitConverter.ToUInt32(records, offset + 13 * 4);
+
+            // Fields 14-21: m_texture[0..7] body-atlas texture partial names.
+            var bodyTextures = new string[8];
+            for (int t = 0; t < 8; t++)
+            {
+                uint texOfs = BitConverter.ToUInt32(records, offset + (14 + t) * 4);
+                bodyTextures[t] = ReadString(stringBlock, texOfs);
+            }
+
+            // Session N: field 22 — m_itemVisual. Indexes ItemVisuals.dbc.
+            // Non-zero on ~1.2% of rows (Thunderfury, Sulfuras, enchanted
+            // weapons, glowing staves, etc). Empirically verified by the
+            // field-21 histogram pass — the original parser already checked
+            // this offset for the schema doc above, so no re-probing needed.
+            uint itemVisualId = BitConverter.ToUInt32(records, offset + 22 * 4);
+
+            string modelName1 = ReadString(stringBlock, modelName1Ofs);
+            string modelName2 = ReadString(stringBlock, modelName2Ofs);
+            string texName1 = ReadString(stringBlock, texName1Ofs);
+            string texName2 = ReadString(stringBlock, texName2Ofs);
+
+            // Store the entry if it has ANY identifying data — model name,
+            // model texture, body atlas texture, OR a non-zero geoset group.
+            // Body-atlas-only items (e.g. plate gauntlets with no separate
+            // model) have empty modelName but populated bodyTextures +
+            // geosetGroup; without this expanded filter they were silently
+            // dropped from the dictionary.
+            bool hasModelOrTex =
+                !string.IsNullOrEmpty(modelName1) || !string.IsNullOrEmpty(modelName2) ||
+                !string.IsNullOrEmpty(texName1) || !string.IsNullOrEmpty(texName2);
+            bool hasBodyTex = bodyTextures.Any(s => !string.IsNullOrEmpty(s));
+            bool hasGeosetGroup = geosetGroup0 != 0 || geosetGroup1 != 0 || geosetGroup2 != 0;
+
+            if (hasModelOrTex || hasBodyTex || hasGeosetGroup)
+            {
+                dict[id] = new ItemModelDbc
+                {
+                    ModelName1 = modelName1,
+                    ModelName2 = modelName2,
+                    TextureName1 = texName1,
+                    TextureName2 = texName2,
+                    BodyTextures = bodyTextures,
+                    GeosetGroup = new[] { geosetGroup0, geosetGroup1, geosetGroup2 },
+                    HelmetGeosetVis1 = helmetGeosetVis1,
+                    HelmetGeosetVis2 = helmetGeosetVis2,
+                    // Session N: itemVisualId for lightning/glow effect lookup.
+                    ItemVisualId = itemVisualId,
+                };
+            }
+        }
+
+        LoadedCounts["ItemModelInfo"] = dict.Count;
+        _logger.LogInformation(
+            "DbcService: Parsed {Count} ItemModelInfo entries (with model/texture/geoset refs)",
+            dict.Count);
+        return dict;
+    }
+
+    /// <summary>
+    /// CharSections.dbc — vanilla 1.12, 10 fields × 40 bytes per record.
+    /// Field layout verified against /home/wowvmangos/vmangos/run/data/5875/dbc/CharSections.dbc
+    /// (3671 records, 198,838-byte string block)
+    ///
+    /// All rows are kept — no filtering at parse time. Callers query via
+    /// GetDefaultFaceSection (and future helpers for skin tones / hair styles).
+    /// </summary>
+    private List<CharSectionDbc> LoadCharSections(string filePath)
+    {
+        var list = new List<CharSectionDbc>();
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("DbcService: CharSections.dbc not found at {Path}", filePath);
+            LoadedCounts["CharSections"] = 0;
+            return list;
+        }
+
+        var (records, stringBlock, recordSize) = ReadDbcFile(filePath);
+        int recordCount = records.Length / recordSize;
+
+        if (recordSize != 40)
+        {
+            _logger.LogWarning(
+                "DbcService: CharSections.dbc recordSize={Size} (expected 40 for vanilla 1.12). " +
+                "Field offsets in LoadCharSections may be incorrect.", recordSize);
+        }
+
+        for (int i = 0; i < recordCount; i++)
+        {
+            int offset = i * recordSize;
+            uint id = BitConverter.ToUInt32(records, offset + 0);
+            uint race = BitConverter.ToUInt32(records, offset + 4);
+            uint sex = BitConverter.ToUInt32(records, offset + 8);
+            uint baseSec = BitConverter.ToUInt32(records, offset + 12);
+            uint varIdx = BitConverter.ToUInt32(records, offset + 16);
+            uint colorIdx = BitConverter.ToUInt32(records, offset + 20);
+            uint tex1Ofs = BitConverter.ToUInt32(records, offset + 24);
+            uint tex2Ofs = BitConverter.ToUInt32(records, offset + 28);
+            uint tex3Ofs = BitConverter.ToUInt32(records, offset + 32);
+            uint flags = BitConverter.ToUInt32(records, offset + 36);
+
+            list.Add(new CharSectionDbc(
+                id, race, sex, baseSec, varIdx, colorIdx,
+                ReadString(stringBlock, tex1Ofs),
+                ReadString(stringBlock, tex2Ofs),
+                ReadString(stringBlock, tex3Ofs),
+                flags));
+        }
+
+        LoadedCounts["CharSections"] = list.Count;
+        _logger.LogInformation("DbcService: Parsed {Count} CharSections entries", list.Count);
+
+        // Session R: log the default Face row for each (race, gender) so we
+        // can verify the schema parsed correctly without a separate dump
+        // endpoint. Expect ~16 lines, strings looking like
+        // "Character\Human\Male\HumanMaleFaceLower00_00". If strings are
+        // empty or garbled, the field offsets are wrong — investigate
+        // before trusting CharacterSkinCompositor output.
+        var defaultFaces = list
+            .Where(r => r.BaseSection == 1 && r.VariationIndex == 0 && r.ColorIndex == 0)
+            .OrderBy(r => r.Race).ThenBy(r => r.Sex)
+            .Take(16);
+        foreach (var f in defaultFaces)
+        {
+            _logger.LogInformation(
+                "  CharSections default face: race={Race} sex={Sex} faceLower='{T1}' faceUpper='{T2}'",
+                f.Race, f.Sex, f.TextureName1, f.TextureName2);
+        }
+
+        // Session S: same diagnostic for Hair rows (BaseSection=3). Used by
+        // CharacterModelService to bind a per-race-gender hair texture to
+        // the M2's CHAR_HAIR slot, so hair geosets stop sampling the body
+        // atlas (the "face-painted-on-dwarf-hair" bug).
+        var defaultHair = list
+            .Where(r => r.BaseSection == 3 && r.VariationIndex == 0 && r.ColorIndex == 0)
+            .OrderBy(r => r.Race).ThenBy(r => r.Sex)
+            .Take(16);
+        foreach (var h in defaultHair)
+        {
+            _logger.LogInformation(
+                "  CharSections default hair: race={Race} sex={Sex} hairColor='{T1}' lowerOverlay='{T2}' upperOverlay='{T3}'",
+                h.Race, h.Sex, h.TextureName1, h.TextureName2, h.TextureName3);
+        }
+
+        return list;
+    }
+
+    // ── WDBC file reader (original, unchanged) ──────────────────────────────────────────────────
+
+    /// <summary>
     /// Reads a WDBC file and returns the raw record bytes, string block, and record size.
     /// Header: 4 bytes magic ("WDBC"), 4 bytes recordCount, 4 bytes fieldCount,
     ///         4 bytes recordSize, 4 bytes stringBlockSize.
@@ -494,3 +948,34 @@ public record SpellDbcEntry(
     uint SpellLevel,
     string Description = ""
 );
+
+/// <summary>
+/// One row of vanilla CharSections.dbc (10 fields, 40 bytes per record,
+/// confirmed empirically against /home/wowvmangos/vmangos/run/data/5875/dbc/CharSections.dbc).
+///
+/// Field layout:
+///   [0] ID
+///   [1] Race          — CharRaces.dbc id (1=Human, 2=Orc, 3=Dwarf,
+///                       4=NightElf, 5=Scourge, 6=Tauren, 7=Gnome, 8=Troll)
+///   [2] Sex           — 0=Male, 1=Female
+///   [3] BaseSection   — CharacterSectionType enum: 0=Skin, 1=Face,
+///                       2=FacialHair, 3=Hair, 4=Underwear
+///   [4] VariationIndex — Face-shape / hair-style choice. Default = 0.
+///   [5] ColorIndex    — Skin tone / hair color choice. Default = 0.
+///   [6-8] TextureName[0..2] — three stringrefs. For BaseSection=Face:
+///                              [0] = face_lower BLP partial path
+///                              [1] = face_upper BLP partial path
+///                              [2] = empty in vanilla
+///   [9] Flags
+/// </summary>
+public record CharSectionDbc(
+    uint Id,
+    uint Race,
+    uint Sex,
+    uint BaseSection,
+    uint VariationIndex,
+    uint ColorIndex,
+    string TextureName1,
+    string TextureName2,
+    string TextureName3,
+    uint Flags);

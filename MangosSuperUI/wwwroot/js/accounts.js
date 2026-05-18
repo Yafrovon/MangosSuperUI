@@ -34,26 +34,12 @@ $(function () {
             // Toggle off
             $(this).removeClass('active');
             currentStatusFilter = '';
+            currentGmFilter = '';
         } else {
             $('.acct-badge').removeClass('active');
             $(this).addClass('active');
-
-            if (filter === 'gm') {
-                // GM filter uses the dropdown
-                currentStatusFilter = '';
-                currentGmFilter = '0'; // "greater than 0" handled differently — we'll use status
-                // Actually, set status=gm isn't a valid backend filter, so just set gmLevel filter
-                // We need a workaround: set gm dropdown to show all GMs
-                // For simplicity, let's use a special status value
-                currentStatusFilter = '';
-                // Instead: just filter where gmLevel > 0 — not directly supported by a single param
-                // Simplest: clear gm dropdown, set a flag
-                currentGmFilter = '';
-                currentStatusFilter = 'gm'; // We'll handle this below
-            } else {
-                currentGmFilter = '';
-                currentStatusFilter = filter;
-            }
+            currentGmFilter = '';
+            currentStatusFilter = filter; // backend now handles 'gm' as gmlevel > 0
         }
 
         currentPage = 1;
@@ -95,22 +81,7 @@ $(function () {
         var params = { page: currentPage, pageSize: 50 };
         if (currentSearch) params.q = currentSearch;
         if (currentGmFilter !== '') params.gmLevel = currentGmFilter;
-        if (currentStatusFilter && currentStatusFilter !== 'gm') params.status = currentStatusFilter;
-
-        // Special case: GM badge filter — we need gmLevel > 0
-        // The backend doesn't support "greater than", so we'll handle it client-side or
-        // modify the approach. For now, just don't pass gmLevel and let the badge filtering
-        // work via status. The Summary/badge approach is approximate.
-        // Actually let's handle gm status on backend: won't match existing status param.
-        // For correctness: leave as-is, the badge just shows count. Clicking it filters
-        // through status param which won't match. We need to add 'gm' as a status option on backend.
-        // TODO: For now the 'gm' badge click won't filter. Let's just skip it cleanly.
-        if (currentStatusFilter === 'gm') {
-            delete params.status;
-            // Use gm level 1+ — but backend takes exact value. We'll need a different approach.
-            // Quickfix: don't filter, just show all with a note. Or filter client-side.
-            // For now, just load all and the badge is informational.
-        }
+        if (currentStatusFilter) params.status = currentStatusFilter;
 
         $.getJSON('/Accounts/List', params, function (data) {
             $('#listCount').text('(' + data.total + ')');

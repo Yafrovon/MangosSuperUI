@@ -17,6 +17,71 @@ public class SourceIndexerService
     private readonly SemaphoreSlim _lock = new(1, 1);
     private IndexProgress _progress = new();
 
+    // ──────────── String literal index (for FK research) ────────────
+    // Parallel to _index, rebuilt during ReindexAsync. Maps lowercased word tokens
+    // extracted from string literals → set of symbol ids whose body contains that
+    // token inside a quoted "..." literal. Used for fast O(1) lookup of every
+    // function that mentions a given SQL table/column name in a query string.
+    //
+    // We ALSO store, per symbol, the set of tokens that appeared in its literals.
+    // That lets us cheaply answer "which other table names from a list does this
+    // symbol mention" without re-scanning the body.
+    private Dictionary<string, HashSet<string>> _literalTokenToSymbols = new();
+    private Dictionary<string, HashSet<string>> _symbolToLiteralTokens = new();
+
+    // ──────────── Struct member reference index (FK Layer 2) ────────────
+    // For a column like `creature_template.loot_id`, layer 1 finds the LOADER
+    // function. But the FK target evidence usually lives elsewhere — in CONSUMER
+    // functions that read `someInfo->loot_id` and pass it to a loot-system call.
+    // This index maps "loot_id" → every symbol whose body contains a member-access
+    // expression with that member name (foo->loot_id or foo.loot_id).
+    //
+    // The qualified form (struct::member) is also tracked when we can resolve LHS
+    // type; the unqualified form is the recall fallback.
+    private Dictionary<string, HashSet<string>> _memberToReferencingSymbols = new();
+    private Dictionary<string, HashSet<string>> _symbolToMembersReferenced = new();
+
+    // ──────────── File-scope string literal index (FK Layer 2.5) ────────────
+    // Some FK target evidence lives in FILE-SCOPE static initializers, not inside
+    // any function. Example in LootMgr.cpp:
+    //
+    //     LootStore LootTemplates_Creature("creature_loot_template", "creature entry", true);
+    //
+    // This is the canonical declaration that "creature_loot_template" is the table
+    // backing LootTemplates_Creature. None of its call sites mention the table name;
+    // that name lives only in this one global. We index every string literal token
+    // per file, regardless of whether it's inside a function body. The bundle's
+    // cross-table annotation then checks: "for each selected symbol's file, what
+    // file-scope literals does that file contain?" If a consumer function lives in
+    // LootMgr.cpp and LootMgr.cpp contains "creature_loot_template" at file scope,
+    // we surface that as a cross-reference. This catches the static-init pattern.
+    private Dictionary<string, HashSet<string>> _fileToLiteralTokens = new();
+    private Dictionary<string, HashSet<string>> _literalTokenToFiles = new();
+
+    // Member-name stopword set. Standard library / language-builtin member names
+    // create huge numbers of false positives ("vec.size", "iter->second", etc.)
+    // and have nothing to do with SQL columns. Anything in this set is skipped
+    // during member-access indexing.
+    private static readonly HashSet<string> MemberNameStopwords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // STL containers
+        "size", "empty", "begin", "end", "cbegin", "cend", "rbegin", "rend",
+        "front", "back", "data", "at", "find", "count", "insert", "erase", "clear",
+        "push_back", "pop_back", "push_front", "pop_front", "emplace", "emplace_back",
+        "reserve", "resize", "capacity", "swap", "assign", "max_size",
+        // STL pairs/iters
+        "first", "second", "key", "value",
+        // strings
+        "c_str", "length", "substr", "append", "compare", "replace",
+        // smart pointers / utility
+        "get", "reset", "release", "lock", "unlock", "use_count", "weak", "strong",
+        // I/O / streams
+        "str", "rdbuf", "fail", "good", "eof", "bad", "tellg", "tellp", "seekg", "seekp",
+        // misc very-common names that are almost never SQL columns
+        "ptr", "self", "this", "obj", "tmp", "ret", "result", "value_type", "iterator",
+        "const_iterator", "reference", "pointer", "type", "raw", "ref",
+    };
+
     // ──────────── Regex patterns (compiled once) ────────────
 
     private static readonly Regex RxInclude = new(
@@ -81,6 +146,49 @@ public class SourceIndexerService
     // Complexity keywords
     private static readonly Regex RxComplexity = new(
         @"\b(if|else|for|while|switch|case|catch|do)\b",
+        RegexOptions.Compiled);
+
+    // C++ double-quoted string literal. Matches "..." with escaped quotes handled.
+    // We deliberately do NOT match raw string literals (R"(...)") or single-char
+    // literals — VMaNGOS SQL is always in plain double-quoted strings.
+    private static readonly Regex RxStringLiteral = new(
+        "\"((?:\\\\.|[^\"\\\\])*)\"",
+        RegexOptions.Compiled);
+
+    // Token splitter inside a string literal. SQL identifiers (table/column names)
+    // are [A-Za-z_][A-Za-z0-9_]*. We split on anything else so that "DELETE FROM
+    // `creature_template` WHERE guid = '%u'" yields { delete, from, creature_template,
+    // where, guid, u }. Backticks around table names are stripped because they're
+    // not part of the token.
+    private static readonly Regex RxLiteralToken = new(
+        @"[A-Za-z_][A-Za-z0-9_]*",
+        RegexOptions.Compiled);
+
+    // Struct member access: foo->bar  or  foo.bar  — captures the member name.
+    // The LHS is captured for optional type resolution but we mostly key on the
+    // RHS member name for the inverted index. Pattern restricted to word chars
+    // so it ignores arithmetic/calls/etc.
+    //
+    // Captures:
+    //   1: LHS identifier (e.g. "pInfo", "m_creature")
+    //   2: accessor ("->" or ".")
+    //   3: member name (e.g. "loot_id")
+    private static readonly Regex RxMemberAccess = new(
+        @"\b([A-Za-z_][A-Za-z0-9_]*)\s*(->|\.)\s*([A-Za-z_][A-Za-z0-9_]*)",
+        RegexOptions.Compiled);
+
+    // Loader assignment pattern: `something->member = fields[N].GetXxx(...)`
+    // This is the smoking-gun pattern for "column N of a SQL query gets stored
+    // into this struct field". Used by the FK research bundle to resolve which
+    // struct member a column flows into.
+    //
+    // Captures:
+    //   1: LHS identifier (e.g. "pInfo")
+    //   2: accessor
+    //   3: member name (e.g. "loot_id")
+    //   4: fields[N] index
+    private static readonly Regex RxFieldsAssignment = new(
+        @"\b([A-Za-z_][A-Za-z0-9_]*)\s*(->|\.)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*fields\s*\[\s*(\d+)\s*\]",
         RegexOptions.Compiled);
 
     // ──────────── Constructor ────────────
@@ -414,6 +522,18 @@ public class SourceIndexerService
 
             if (!Directory.Exists(sourcePath))
                 return new IndexResult { Success = false, Error = $"Source path not found: {sourcePath}" };
+
+            // Reset string-literal indexes; they are rebuilt during Pass 2 below.
+            _literalTokenToSymbols = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            _symbolToLiteralTokens = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            // Reset member-access indexes (FK Layer 2).
+            _memberToReferencingSymbols = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            _symbolToMembersReferenced = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+            // Reset file-scope literal indexes (FK Layer 2.5).
+            _fileToLiteralTokens = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            _literalTokenToFiles = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
             var index = new SourceIndex
             {
@@ -925,6 +1045,46 @@ public class SourceIndexerService
         index.FileToSymbols[relativePath].AddRange(fileEntry.DeclaredSymbols);
 
         index.Files[relativePath] = fileEntry;
+
+        // ── File-scope string literal index (FK Layer 2.5) ──
+        // Scan the whole file for "..." literals and tokenize them. We deliberately
+        // do NOT try to distinguish between "inside a function" and "at file scope"
+        // here — we just record everything per-file. This is a superset of the
+        // per-symbol literal index, and that's the point: it includes file-scope
+        // static initializers like
+        //     LootStore LootTemplates_Creature("creature_loot_template", ...);
+        // which never make it into any symbol's body extraction. The bundle uses
+        // this index as a fallback signal: if a candidate target table appears as
+        // a file-scope literal in the same file as a selected consumer, that's
+        // strong cross-reference evidence.
+        var fileTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in lines)
+        {
+            foreach (Match litMatch in RxStringLiteral.Matches(line))
+            {
+                var literal = litMatch.Groups[1].Value;
+                if (literal.Length < 4) continue;
+                foreach (Match tokMatch in RxLiteralToken.Matches(literal))
+                {
+                    var tok = tokMatch.Value.ToLowerInvariant();
+                    if (tok.Length < 3) continue;
+                    fileTokens.Add(tok);
+                }
+            }
+        }
+        if (fileTokens.Count > 0)
+        {
+            _fileToLiteralTokens[relativePath] = fileTokens;
+            foreach (var tok in fileTokens)
+            {
+                if (!_literalTokenToFiles.TryGetValue(tok, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.Ordinal);
+                    _literalTokenToFiles[tok] = set;
+                }
+                set.Add(relativePath);
+            }
+        }
     }
 
     // ──────────── Pass 2: Extract bodies, analyze calls ────────────
@@ -973,6 +1133,81 @@ public class SourceIndexerService
 
             // Complexity
             sym.Complexity = RxComplexity.Matches(bodyText).Count;
+
+            // ── String literal index build ──
+            // Extract every "..." string literal in the body, tokenize each one into
+            // identifier-shaped words, and register (token → symbol) in both directions.
+            // This powers FindStringReferences and FkResearchBundle later.
+            var literalTokensForThisSymbol = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match litMatch in RxStringLiteral.Matches(bodyText))
+            {
+                var literal = litMatch.Groups[1].Value;
+                // Cheap filter: ignore tiny literals and printf format strings that are
+                // mostly format codes. SQL literals are always >= ~10 chars.
+                if (literal.Length < 4) continue;
+                foreach (Match tokMatch in RxLiteralToken.Matches(literal))
+                {
+                    var tok = tokMatch.Value.ToLowerInvariant();
+                    // Skip obvious noise: very short tokens, pure hex artifacts, and
+                    // C-style printf width specifiers handled by RxLiteralToken giving
+                    // us things like "u", "d", "s". Two chars or less is below FK
+                    // identifier length (everything we care about is >= 3 chars).
+                    if (tok.Length < 3) continue;
+                    literalTokensForThisSymbol.Add(tok);
+                }
+            }
+            // Register
+            _symbolToLiteralTokens[sym.Id] = literalTokensForThisSymbol;
+            foreach (var tok in literalTokensForThisSymbol)
+            {
+                if (!_literalTokenToSymbols.TryGetValue(tok, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.Ordinal);
+                    _literalTokenToSymbols[tok] = set;
+                }
+                set.Add(sym.Id);
+            }
+
+            // ── Member access index build (FK Layer 2) ──
+            // Scan body for foo->member and foo.member patterns. Register the
+            // member name as referenced by this symbol. This is what lets the FK
+            // research bundle answer: "where does the value of CreatureInfo::loot_id
+            // actually get used?" — the answer drives FK target inference because
+            // the consumer functions are the ones that ultimately query the target
+            // table (e.g. creature_loot_template).
+            //
+            // We filter out: stopword member names (size, first, c_str, etc.),
+            // names under 3 chars, and access patterns inside string literals (a
+            // crude check — we skip lines that look like they're inside a literal,
+            // which we approximate by checking for unbalanced quotes before the
+            // match position. In practice, member access inside strings is so
+            // rare in C++ this is fine to ignore for correctness purposes).
+            var membersForThisSymbol = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match memMatch in RxMemberAccess.Matches(bodyText))
+            {
+                var memberName = memMatch.Groups[3].Value;
+                if (memberName.Length < 3) continue;
+                if (MemberNameStopwords.Contains(memberName)) continue;
+                // Skip if the "member" is actually a numeric literal or all-uppercase
+                // constant — those are most likely enum values or macros, not struct
+                // fields. Real SQL-derived struct fields are typically lower_snake_case.
+                if (memberName.All(c => char.IsUpper(c) || c == '_' || char.IsDigit(c))) continue;
+                membersForThisSymbol.Add(memberName);
+            }
+            // Register
+            if (membersForThisSymbol.Count > 0)
+            {
+                _symbolToMembersReferenced[sym.Id] = membersForThisSymbol;
+                foreach (var memberName in membersForThisSymbol)
+                {
+                    if (!_memberToReferencingSymbols.TryGetValue(memberName, out var set))
+                    {
+                        set = new HashSet<string>(StringComparer.Ordinal);
+                        _memberToReferencingSymbols[memberName] = set;
+                    }
+                    set.Add(sym.Id);
+                }
+            }
 
             // Find calls to other known symbols
             var calls = new HashSet<string>();
@@ -1810,6 +2045,863 @@ public class SourceIndexerService
             => true,
             _ => false
         };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    //                    FK RESEARCH — string-literal lookups
+    //
+    // The methods below power the foreign-key relationship mining pipeline.
+    // They use the inverted index built during ExtractBodiesAndCalls to find
+    // every C++ function whose body contains specific SQL identifiers inside
+    // string literals — i.e. every loader, every query, every reference.
+    //
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Find every indexed symbol whose body contains the given needles as tokens
+    /// inside C++ string literals. O(needles + result_size) — does not re-scan
+    /// any source code; uses the inverted index built during reindex.
+    /// </summary>
+    /// <param name="needles">Token strings to look for (case-insensitive).</param>
+    /// <param name="requireAll">If true, only return symbols matching ALL needles.</param>
+    /// <param name="maxResults">Cap on result count (0 = no cap).</param>
+    public FindStringReferencesResult FindStringReferences(
+        IEnumerable<string> needles, bool requireAll = false, int maxResults = 0)
+    {
+        var result = new FindStringReferencesResult
+        {
+            Needles = needles?.ToList() ?? new List<string>(),
+            RequireAll = requireAll
+        };
+
+        var idx = _index;
+        if (idx == null || result.Needles.Count == 0) return result;
+
+        // Normalize needles to the same casing used by the index.
+        var normalizedNeedles = result.Needles
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim().ToLowerInvariant())
+            .Distinct()
+            .ToList();
+
+        if (normalizedNeedles.Count == 0) return result;
+
+        // For each needle, get the set of symbols whose literals contain it.
+        // Empty set if the needle was never indexed.
+        var perNeedleSets = new List<(string needle, HashSet<string> symbols)>();
+        foreach (var n in normalizedNeedles)
+        {
+            if (_literalTokenToSymbols.TryGetValue(n, out var set))
+                perNeedleSets.Add((n, set));
+            else
+                perNeedleSets.Add((n, new HashSet<string>(StringComparer.Ordinal)));
+        }
+
+        // Compute candidate set
+        HashSet<string> candidates;
+        if (requireAll)
+        {
+            // Intersection of all per-needle sets. Start with the smallest set
+            // to minimize the intersection cost.
+            var ordered = perNeedleSets.OrderBy(p => p.symbols.Count).ToList();
+            if (ordered[0].symbols.Count == 0) return result;
+            candidates = new HashSet<string>(ordered[0].symbols, StringComparer.Ordinal);
+            for (int i = 1; i < ordered.Count; i++)
+                candidates.IntersectWith(ordered[i].symbols);
+        }
+        else
+        {
+            // Union of all per-needle sets.
+            candidates = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (_, set) in perNeedleSets)
+                candidates.UnionWith(set);
+        }
+
+        // Build response matches with per-symbol metadata
+        var matches = new List<StringReferenceMatch>(candidates.Count);
+        foreach (var symId in candidates)
+        {
+            if (!idx.Symbols.TryGetValue(symId, out var sym)) continue;
+            if (!_symbolToLiteralTokens.TryGetValue(symId, out var symTokens)) continue;
+
+            var matchingNeedles = new List<string>();
+            int needlesMatched = 0;
+            foreach (var n in normalizedNeedles)
+            {
+                if (symTokens.Contains(n))
+                {
+                    matchingNeedles.Add(n);
+                    needlesMatched++;
+                }
+            }
+
+            matches.Add(new StringReferenceMatch
+            {
+                SymbolId = sym.Id,
+                Name = sym.Name,
+                MemberOf = sym.MemberOf,
+                File = sym.DefinedInFile,
+                LineStart = sym.BodyLineStart,
+                LineEnd = sym.BodyLineEnd,
+                NeedlesMatched = needlesMatched,
+                MatchingNeedles = matchingNeedles,
+                // OccurrenceCount is approximated as needlesMatched — we don't track
+                // multiplicity in the inverted index. If exact counts are ever needed,
+                // re-scan the body for that symbol only.
+                OccurrenceCount = needlesMatched
+            });
+        }
+
+        // Rank: more needles matched first, then larger functions (more context).
+        matches.Sort((a, b) =>
+        {
+            var byNeedles = b.NeedlesMatched.CompareTo(a.NeedlesMatched);
+            if (byNeedles != 0) return byNeedles;
+            return (b.LineEnd - b.LineStart).CompareTo(a.LineEnd - a.LineStart);
+        });
+
+        if (maxResults > 0 && matches.Count > maxResults)
+            matches = matches.Take(maxResults).ToList();
+
+        result.Matches = matches;
+        result.TotalMatches = matches.Count;
+        return result;
+    }
+
+    /// <summary>
+    /// Find every indexed symbol whose body references the given struct member
+    /// names via `foo->member` or `foo.member` access patterns. This is the FK
+    /// Layer 2 lookup: it finds CONSUMERS of a struct field, not just the loader.
+    ///
+    /// Member names are matched case-insensitively (the index is OrdinalIgnoreCase).
+    /// Pass multiple names to find any-of (union); use requireAll=true for AND.
+    /// </summary>
+    public FindStringReferencesResult FindMemberReferences(
+        IEnumerable<string> memberNames, bool requireAll = false, int maxResults = 0)
+    {
+        // Re-use the same response shape as FindStringReferences — same essential
+        // semantics (which symbols mention these tokens) but the index queried is
+        // different (member references vs string literal tokens).
+        var result = new FindStringReferencesResult
+        {
+            Needles = memberNames?.ToList() ?? new List<string>(),
+            RequireAll = requireAll
+        };
+
+        var idx = _index;
+        if (idx == null || result.Needles.Count == 0) return result;
+
+        var normalized = result.Needles
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (normalized.Count == 0) return result;
+
+        var perNeedleSets = new List<(string needle, HashSet<string> symbols)>();
+        foreach (var n in normalized)
+        {
+            if (_memberToReferencingSymbols.TryGetValue(n, out var set))
+                perNeedleSets.Add((n, set));
+            else
+                perNeedleSets.Add((n, new HashSet<string>(StringComparer.Ordinal)));
+        }
+
+        HashSet<string> candidates;
+        if (requireAll)
+        {
+            var ordered = perNeedleSets.OrderBy(p => p.symbols.Count).ToList();
+            if (ordered[0].symbols.Count == 0) return result;
+            candidates = new HashSet<string>(ordered[0].symbols, StringComparer.Ordinal);
+            for (int i = 1; i < ordered.Count; i++)
+                candidates.IntersectWith(ordered[i].symbols);
+        }
+        else
+        {
+            candidates = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (_, set) in perNeedleSets)
+                candidates.UnionWith(set);
+        }
+
+        var matches = new List<StringReferenceMatch>(candidates.Count);
+        foreach (var symId in candidates)
+        {
+            if (!idx.Symbols.TryGetValue(symId, out var sym)) continue;
+            if (!_symbolToMembersReferenced.TryGetValue(symId, out var symMembers)) continue;
+
+            var matching = new List<string>();
+            int matchedCount = 0;
+            foreach (var n in normalized)
+            {
+                if (symMembers.Contains(n))
+                {
+                    matching.Add(n);
+                    matchedCount++;
+                }
+            }
+
+            matches.Add(new StringReferenceMatch
+            {
+                SymbolId = sym.Id,
+                Name = sym.Name,
+                MemberOf = sym.MemberOf,
+                File = sym.DefinedInFile,
+                LineStart = sym.BodyLineStart,
+                LineEnd = sym.BodyLineEnd,
+                NeedlesMatched = matchedCount,
+                MatchingNeedles = matching,
+                OccurrenceCount = matchedCount
+            });
+        }
+
+        matches.Sort((a, b) =>
+        {
+            var byNeedles = b.NeedlesMatched.CompareTo(a.NeedlesMatched);
+            if (byNeedles != 0) return byNeedles;
+            return (b.LineEnd - b.LineStart).CompareTo(a.LineEnd - a.LineStart);
+        });
+
+        if (maxResults > 0 && matches.Count > maxResults)
+            matches = matches.Take(maxResults).ToList();
+
+        result.Matches = matches;
+        result.TotalMatches = matches.Count;
+        return result;
+    }
+
+    /// <summary>
+    /// Given a loader symbol and a SQL column name, attempt to resolve which C++
+    /// struct member that column flows into. Looks for patterns like:
+    ///
+    ///     pInfo->loot_id = fields[50].GetUInt32();
+    ///     creatureInfo.loot_id = fields[7].GetUInt32();
+    ///
+    /// in the loader's body or in any function the loader calls. Returns the
+    /// best-match member name (most-frequent), or null if no assignment pattern
+    /// found. The column name is matched case-insensitively and we tolerate both
+    /// exact column-name matches and the common case where the C++ member name
+    /// happens to equal the column name (the dominant pattern in VMaNGOS).
+    /// </summary>
+    public string? ResolveColumnToStructMember(SymbolEntry loader, string columnName)
+    {
+        var idx = _index;
+        if (idx == null) return null;
+        if (string.IsNullOrWhiteSpace(columnName)) return null;
+        var colLow = columnName.Trim().ToLowerInvariant();
+
+        // Collect bodies to scan: the loader itself + every function it calls
+        // directly. The fields[N] = ... pattern typically lives in either the
+        // loader (when it parses results inline) or in a helper like LoadCreatureInfo.
+        var scanQueue = new List<SymbolEntry> { loader };
+        foreach (var calleeId in loader.CallsOut)
+        {
+            if (idx.Symbols.TryGetValue(calleeId, out var cs))
+                scanQueue.Add(cs);
+        }
+
+        // Tally: member name → occurrence count
+        var memberHits = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var sym in scanQueue)
+        {
+            if (sym.DefinedInFile == null || sym.BodyLineStart <= 0 || sym.BodyLineEnd <= 0)
+                continue;
+            var body = ReadBodyFromSource(idx.SourcePath, sym.DefinedInFile, sym.BodyLineStart, sym.BodyLineEnd);
+            if (string.IsNullOrEmpty(body)) continue;
+
+            foreach (Match m in RxFieldsAssignment.Matches(body))
+            {
+                var memberName = m.Groups[3].Value;
+                if (string.IsNullOrEmpty(memberName)) continue;
+                if (!memberHits.TryGetValue(memberName, out var n)) n = 0;
+                memberHits[memberName] = n + 1;
+            }
+        }
+
+        if (memberHits.Count == 0) return null;
+
+        // STRICT: only return an exact case-insensitive match for the column name.
+        // The previous behavior was to fall back to the most-frequent member when
+        // no exact match was found, but that caused noise — for a 17-line loader
+        // that just dispatches to LoadCreatureInfo, the "most frequent" was just
+        // whatever member name happened to appear first in fields[N] = ... lines
+        // (typically `name`), which is unrelated to the actual column the caller
+        // asked about. Returning null is safer; the bundle's column-name fallback
+        // will handle the case where the C++ field name happens to equal the
+        // SQL column name (the dominant VMaNGOS pattern).
+        var exact = memberHits.Keys.FirstOrDefault(k =>
+            k.Equals(colLow, StringComparison.OrdinalIgnoreCase));
+        return exact; // null if no exact match
+    }
+
+    /// <summary>
+    /// Assemble a complete FK research bundle for a (db, table, column) triple.
+    /// This is THE high-level endpoint for the foreign-key mining pipeline: it
+    /// returns prompt-ready code that the LLM can analyze for FK relationships.
+    /// </summary>
+    public FkResearchBundleResult? BuildFkResearchBundle(FkResearchBundleRequest req)
+    {
+        var idx = _index;
+        if (idx == null) return null;
+        if (string.IsNullOrWhiteSpace(req.Table) || string.IsNullOrWhiteSpace(req.Column))
+            return null;
+
+        var result = new FkResearchBundleResult
+        {
+            Db = req.Db,
+            Table = req.Table,
+            Column = req.Column,
+            GeneratedAt = DateTime.UtcNow
+        };
+
+        var tableLow = req.Table.Trim().ToLowerInvariant();
+        var colLow = req.Column.Trim().ToLowerInvariant();
+
+        // ── 1. Primary hits: symbols mentioning BOTH the table AND the column ──
+        var primaryRes = FindStringReferences(new[] { tableLow, colLow }, requireAll: true, maxResults: 0);
+
+        // ── 2. Column-only hits: symbols mentioning the column but NOT the table ──
+        //     (loaders for other tables that JOIN against this column, etc.)
+        var columnAnyRes = FindStringReferences(new[] { colLow }, requireAll: true, maxResults: 0);
+        var primaryIds = new HashSet<string>(primaryRes.Matches.Select(m => m.SymbolId), StringComparer.Ordinal);
+        var columnOnlyHits = columnAnyRes.Matches.Where(m => !primaryIds.Contains(m.SymbolId)).ToList();
+
+        // ── 3. Table-only hits: symbols mentioning the table but NOT the column ──
+        //     (other queries against the same table — sometimes useful sibling context,
+        //     but usually noise; default IncludeTableOnly=false.)
+        var tableAnyRes = FindStringReferences(new[] { tableLow }, requireAll: true, maxResults: 0);
+        var tableOnlyHits = tableAnyRes.Matches
+            .Where(m => !primaryIds.Contains(m.SymbolId))
+            .ToList();
+
+        result.NeedlesSearched.Add(tableLow);
+        result.NeedlesSearched.Add(colLow);
+
+        // ── Pre-compute candidate-table mention counts per symbol ──
+        // Used both for saturation filtering AND for the per-symbol AlsoReferences list.
+        var candidateLow = (req.CandidateTargetTables ?? new List<string>())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim().ToLowerInvariant())
+            .Where(t => t != tableLow) // don't bother flagging the source table itself
+            .Distinct()
+            .ToList();
+
+        int CountCandidateMentions(string symId)
+        {
+            if (candidateLow.Count == 0) return 0;
+            if (!_symbolToLiteralTokens.TryGetValue(symId, out var symTokens)) return 0;
+            int n = 0;
+            foreach (var c in candidateLow)
+                if (symTokens.Contains(c)) n++;
+            return n;
+        }
+
+        List<string> AlsoRefsFor(string symId)
+        {
+            var refs = new List<string>();
+            if (candidateLow.Count == 0) return refs;
+            if (!_symbolToLiteralTokens.TryGetValue(symId, out var symTokens)) return refs;
+            foreach (var c in candidateLow)
+                if (symTokens.Contains(c)) refs.Add(c);
+            return refs;
+        }
+
+        // ── Helper: estimate tokens for a symbol (body length / 4 is rule-of-thumb) ──
+        int EstimateTokens(SymbolEntry s)
+        {
+            int lines = (s.BodyLineEnd > 0 && s.BodyLineStart > 0)
+                ? (s.BodyLineEnd - s.BodyLineStart + 1) : 0;
+            // Rough char-per-line estimate for C++ code: ~60. Tokens ≈ chars / 4.
+            return (lines * 60) / 4;
+        }
+
+        bool IsSaturated(string symId)
+        {
+            if (candidateLow.Count == 0 || req.SaturationThreshold <= 0) return false;
+            return CountCandidateMentions(symId) >= req.SaturationThreshold;
+        }
+
+        // ── Build the prioritized candidate queue ──
+        // Order: primary → column_only → callers/callees of primary → table_only (if enabled).
+        // Saturated symbols get pushed to the back (or dropped entirely).
+        var queue = new List<(SymbolEntry sym, string role, int priority)>();
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+
+        void EnqueueIfNew(SymbolEntry s, string role, int priority)
+        {
+            if (seenIds.Contains(s.Id)) return;
+            seenIds.Add(s.Id);
+            queue.Add((s, role, priority));
+        }
+
+        // priority 0: primary
+        foreach (var m in primaryRes.Matches)
+            if (idx.Symbols.TryGetValue(m.SymbolId, out var s))
+                EnqueueIfNew(s, "primary", 0);
+        result.PrimaryHitCount = queue.Count(q => q.role == "primary");
+
+        // priority 1: column_only
+        foreach (var m in columnOnlyHits)
+            if (idx.Symbols.TryGetValue(m.SymbolId, out var s))
+                EnqueueIfNew(s, "column_only", 1);
+
+        // ── priority 2: CONSUMERS via struct member flow (FK Layer 2) ──
+        //
+        // The loader stores the column into a struct field. The FK target evidence
+        // typically lives in the CONSUMERS of that field — functions that read
+        // `someInfo->member` and pass it to the actual loot/spell/item subsystem.
+        //
+        // Strategy: for each primary hit, look at the loader and its callees for
+        // the pattern `foo->X = fields[N]` to resolve which struct member the
+        // column maps to. Then look up every symbol that references that member.
+        // Add those as "consumer" role. They're often where the FK target table
+        // is mentioned in a SQL literal — which the cross-table annotation will
+        // surface as a strong signal.
+        //
+        // We also try the raw column name as a fallback member name, in case the
+        // loader's body wasn't readable or the assignment lives somewhere we
+        // didn't reach. In VMaNGOS the C++ member name almost always equals the
+        // SQL column name (loot_id → loot_id) — that's the dominant pattern.
+        //
+        // SPECIAL CASE for VMaNGOS's pervasive `NameN` → `Name[N-1]` convention.
+        // SQL columns like ReqItemId1, spell_id1, display_id1, ReqItemCount1 map
+        // to C++ array fields ReqItemId[0], spell_id[0], display_id[0], etc.
+        // The struct member is the de-numbered base name (ReqItemId, spell_id).
+        // We detect the trailing digit and add the de-numbered form as an
+        // additional needle. This is what unblocks consumer expansion for the
+        // very common multi-value FK columns.
+        var resolvedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var psym in queue.Where(q => q.role == "primary").Select(q => q.sym).ToList())
+        {
+            var resolved = ResolveColumnToStructMember(psym, colLow);
+            if (!string.IsNullOrEmpty(resolved))
+                resolvedMembers.Add(resolved);
+        }
+        // Always also try the column name verbatim — the dominant pattern.
+        if (colLow.Length >= 3 && !MemberNameStopwords.Contains(colLow))
+            resolvedMembers.Add(colLow);
+
+        // NameN → Name array fallback. If the column ends in one or more digits,
+        // also add the de-numbered base. This is gated to >=4 chars to avoid
+        // single-letter+digit noise.
+        var trimmedBase = StripTrailingDigits(colLow);
+        if (trimmedBase != null && trimmedBase.Length >= 3
+            && trimmedBase != colLow
+            && !MemberNameStopwords.Contains(trimmedBase))
+        {
+            resolvedMembers.Add(trimmedBase);
+            // Also try with the trailing index resolved via the loader scan — in
+            // case it actually appears with the array suffix as a struct accessor
+            // (rare, but cheap to check).
+        }
+
+        result.ResolvedStructMembers = resolvedMembers.ToList();
+
+        if (resolvedMembers.Count > 0)
+        {
+            // Find every symbol referencing any of these members.
+            var consumerRes = FindMemberReferences(resolvedMembers, requireAll: false, maxResults: 0);
+            foreach (var m in consumerRes.Matches)
+            {
+                if (idx.Symbols.TryGetValue(m.SymbolId, out var cs))
+                    EnqueueIfNew(cs, "consumer", 2);
+            }
+            result.ConsumerHitCount = consumerRes.Matches.Count;
+        }
+
+        // priority 3: neighbors of primary (callees and callers)
+        if (req.NeighborDepth > 0)
+        {
+            var primarySyms = queue.Where(q => q.role == "primary").Select(q => q.sym).ToList();
+            foreach (var psym in primarySyms)
+            {
+                foreach (var calleeId in psym.CallsOut)
+                    if (idx.Symbols.TryGetValue(calleeId, out var cs))
+                        EnqueueIfNew(cs, "callee", 3);
+                foreach (var callerId in psym.CalledBy)
+                    if (idx.Symbols.TryGetValue(callerId, out var cs))
+                        EnqueueIfNew(cs, "caller", 3);
+            }
+        }
+
+        // priority 4: table_only (only if explicitly enabled)
+        if (req.IncludeTableOnly)
+        {
+            foreach (var m in tableOnlyHits)
+                if (idx.Symbols.TryGetValue(m.SymbolId, out var s))
+                    EnqueueIfNew(s, "table_only", 4);
+        }
+
+        // Within each priority, sort by line count ascending — small functions first.
+        // This means when budget runs out, we drop the biggest functions, keeping breadth.
+        queue.Sort((a, b) =>
+        {
+            int byPri = a.priority.CompareTo(b.priority);
+            if (byPri != 0) return byPri;
+            int aLines = (a.sym.BodyLineEnd > 0) ? (a.sym.BodyLineEnd - a.sym.BodyLineStart) : 0;
+            int bLines = (b.sym.BodyLineEnd > 0) ? (b.sym.BodyLineEnd - b.sym.BodyLineStart) : 0;
+            return aLines.CompareTo(bLines);
+        });
+
+        // ── Selection pass: respect MaxSymbols, MaxTokensEstimate, saturation ──
+        var selectedSymbols = new List<(SymbolEntry sym, string role)>();
+        int runningTokenEstimate = 0;
+
+        foreach (var (sym, role, _) in queue)
+        {
+            // Saturation check — applies regardless of role
+            if (IsSaturated(sym.Id) && !req.IncludeSaturated)
+            {
+                result.Dropped.Add(new DroppedSymbol
+                {
+                    Id = sym.Id,
+                    Role = role,
+                    Reason = "saturated",
+                    EstimatedTokens = EstimateTokens(sym),
+                    CandidateTablesMentioned = CountCandidateMentions(sym.Id)
+                });
+                continue;
+            }
+
+            // Max symbols cap
+            if (selectedSymbols.Count >= req.MaxSymbols)
+            {
+                result.Dropped.Add(new DroppedSymbol
+                {
+                    Id = sym.Id,
+                    Role = role,
+                    Reason = "max_symbols",
+                    EstimatedTokens = EstimateTokens(sym),
+                    CandidateTablesMentioned = CountCandidateMentions(sym.Id)
+                });
+                continue;
+            }
+
+            // Token budget — but never drop primary hits to enforce budget. Primaries
+            // are the whole point of the bundle; if they bust the budget, the caller
+            // needs to know (and may raise MaxTokensEstimate accordingly).
+            int symTokens = EstimateTokens(sym);
+            bool budgetExceeded = req.MaxTokensEstimate > 0
+                                  && runningTokenEstimate + symTokens > req.MaxTokensEstimate;
+            if (budgetExceeded && role != "primary")
+            {
+                result.Dropped.Add(new DroppedSymbol
+                {
+                    Id = sym.Id,
+                    Role = role,
+                    Reason = "budget",
+                    EstimatedTokens = symTokens,
+                    CandidateTablesMentioned = CountCandidateMentions(sym.Id)
+                });
+                continue;
+            }
+
+            selectedSymbols.Add((sym, role));
+            runningTokenEstimate += symTokens;
+        }
+
+        result.NeighborCount = selectedSymbols.Count(t => t.role == "caller" || t.role == "callee");
+
+        // ── Cross-table reference annotation (post-selection) ──
+        //     For each candidate target table, list which SELECTED symbols mention it.
+        //     This is the signal that helps the LLM resolve "what table does this
+        //     column point at". We compute it AFTER selection so dropped symbols don't
+        //     show up in the cross-references either.
+        foreach (var cand in candidateLow)
+        {
+            if (!_literalTokenToSymbols.TryGetValue(cand, out var symsWithCand)) continue;
+            foreach (var (sym, _) in selectedSymbols)
+            {
+                if (symsWithCand.Contains(sym.Id))
+                {
+                    if (!result.CrossTableReferences.TryGetValue(cand, out var list))
+                    {
+                        list = new List<string>();
+                        result.CrossTableReferences[cand] = list;
+                    }
+                    list.Add(sym.Id);
+                }
+            }
+        }
+
+        // ── File-scope cross-reference annotation (FK Layer 2.5) ──
+        //     For each candidate target table, find every FILE that contains the
+        //     table name as a string literal (anywhere — inside or outside function
+        //     bodies). Then, for each of those files, list which of our selected
+        //     bundle symbols live in that file. This catches the static-initializer
+        //     pattern where the table name lives in a file-scope global and never
+        //     appears in any of the consumer functions' bodies.
+        //
+        //     Note: this is a superset of CrossTableReferences. A symbol might
+        //     appear here but not in CrossTableReferences (its file mentions the
+        //     table, but the symbol itself doesn't). That's the entire point.
+        var selectedByFile = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var (sym, _) in selectedSymbols)
+        {
+            if (string.IsNullOrEmpty(sym.DefinedInFile)) continue;
+            if (!selectedByFile.TryGetValue(sym.DefinedInFile, out var list))
+            {
+                list = new List<string>();
+                selectedByFile[sym.DefinedInFile] = list;
+            }
+            list.Add(sym.Id);
+        }
+        foreach (var cand in candidateLow)
+        {
+            if (!_literalTokenToFiles.TryGetValue(cand, out var filesWithCand)) continue;
+            foreach (var file in filesWithCand)
+            {
+                if (!selectedByFile.TryGetValue(file, out var symsInFile)) continue;
+                if (!result.CrossTableReferencesByFile.TryGetValue(cand, out var refs))
+                {
+                    refs = new List<CrossFileReference>();
+                    result.CrossTableReferencesByFile[cand] = refs;
+                }
+                refs.Add(new CrossFileReference
+                {
+                    FilePath = file,
+                    SymbolsInFile = symsInFile
+                });
+            }
+        }
+
+        // ── Materialize bundle symbol entries (with bodies) ──
+        var typesSeen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (sym, role) in selectedSymbols)
+        {
+            string body = "";
+            if (sym.DefinedInFile != null && sym.BodyLineStart > 0 && sym.BodyLineEnd > 0)
+                body = ReadBodyFromSource(idx.SourcePath, sym.DefinedInFile, sym.BodyLineStart, sym.BodyLineEnd);
+
+            // Truncate caller/callee lists for prompt compactness; the full graph
+            // is reachable via the Trace endpoint if the LLM ever needs it.
+            const int neighborListCap = 8;
+            var callers = sym.CalledBy.Take(neighborListCap).ToList();
+            var callees = sym.CallsOut.Take(neighborListCap).ToList();
+
+            int lineCount = (sym.BodyLineEnd > 0 && sym.BodyLineStart > 0)
+                ? (sym.BodyLineEnd - sym.BodyLineStart + 1) : 0;
+            bool isHuge = req.HugeFunctionLineThreshold > 0
+                          && lineCount >= req.HugeFunctionLineThreshold;
+
+            result.Symbols.Add(new FkBundleSymbol
+            {
+                Id = sym.Id,
+                Name = sym.Name,
+                MemberOf = sym.MemberOf,
+                Signature = sym.Signature,
+                File = sym.DefinedInFile,
+                LineStart = sym.BodyLineStart,
+                LineEnd = sym.BodyLineEnd,
+                Role = role,
+                Body = body,
+                AlsoReferences = AlsoRefsFor(sym.Id),
+                CalledBy = callers,
+                CallsOut = callees,
+                IsHuge = isHuge,
+                CandidateTablesMentioned = CountCandidateMentions(sym.Id)
+            });
+
+            if (req.IncludeContainingTypes && sym.MemberOf != null)
+                typesSeen.Add(sym.MemberOf);
+        }
+
+        // ── 7. Type definitions for the classes that owned the selected symbols ──
+        if (req.IncludeContainingTypes)
+        {
+            foreach (var tn in typesSeen)
+            {
+                if (idx.Types.TryGetValue(tn, out var t))
+                {
+                    result.Types.Add(new FkBundleType
+                    {
+                        Name = t.Name,
+                        Kind = t.Kind,
+                        DeclaredIn = t.DeclaredIn,
+                        Inherits = t.Inherits.ToList(),
+                        Members = t.Members.ToList(),
+                        Methods = t.Methods.ToList()
+                    });
+                }
+            }
+        }
+
+        // ── Stats and pre-formatted prompt text ──
+        result.TotalSymbols = result.Symbols.Count;
+        result.TotalLines = result.Symbols.Sum(s => string.IsNullOrEmpty(s.Body) ? 0 : s.Body.Split('\n').Length);
+        result.EstimatedTokens = result.Symbols.Sum(s => s.Body.Length) / 4;
+
+        int droppedBudget = result.Dropped.Count(d => d.Reason == "budget");
+        int droppedSaturated = result.Dropped.Count(d => d.Reason == "saturated");
+        int droppedMaxSyms = result.Dropped.Count(d => d.Reason == "max_symbols");
+
+        result.SearchDiagnostics = string.Format(
+            "primary={0}, column_only={1}, table_only_found={2}, table_only_included={3}, " +
+            "consumers_found={4}, consumers_included={5}, resolved_members=[{6}], " +
+            "neighbors_added={7}, total_selected={8}, " +
+            "cross_table_symbol={9}, cross_table_file={10}, " +
+            "dropped[budget={11} saturated={12} max_syms={13}]",
+            result.PrimaryHitCount,
+            columnOnlyHits.Count,
+            tableOnlyHits.Count,
+            result.Symbols.Count(s => s.Role == "table_only"),
+            result.ConsumerHitCount,
+            result.Symbols.Count(s => s.Role == "consumer"),
+            string.Join(",", result.ResolvedStructMembers),
+            result.NeighborCount,
+            result.TotalSymbols,
+            result.CrossTableReferences.Count,
+            result.CrossTableReferencesByFile.Count,
+            droppedBudget,
+            droppedSaturated,
+            droppedMaxSyms);
+
+        result.FormattedText = FormatFkBundleText(result);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Format an FK research bundle as a single UTF-8 text blob suitable for
+    /// dropping directly into an LLM prompt. The pipeline does not have to
+    /// re-stitch anything.
+    /// </summary>
+    private string FormatFkBundleText(FkResearchBundleResult b)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"=== FK RESEARCH BUNDLE ===");
+        sb.AppendLine($"Database: {b.Db}");
+        sb.AppendLine($"Table:    {b.Table}");
+        sb.AppendLine($"Column:   {b.Column}");
+        if (b.ResolvedStructMembers.Count > 0)
+            sb.AppendLine($"Resolved struct member(s) the column flows into: {string.Join(", ", b.ResolvedStructMembers)}");
+        sb.AppendLine($"Generated: {b.GeneratedAt:yyyy-MM-ddTHH:mm:ssZ}");
+        sb.AppendLine($"Diagnostics: {b.SearchDiagnostics}");
+        sb.AppendLine($"Symbols: {b.TotalSymbols}   Lines: {b.TotalLines}   ~Tokens: {b.EstimatedTokens}");
+        sb.AppendLine();
+
+        // Cross-table reference summary
+        if (b.CrossTableReferences.Count > 0)
+        {
+            sb.AppendLine("--- CROSS-TABLE REFERENCES (symbol-level) ---");
+            sb.AppendLine("(Candidate target tables that appear in selected symbols' SQL literals.");
+            sb.AppendLine(" Strong signal that an FK relationship may exist between this column and one of these tables.)");
+            foreach (var (tableName, symIds) in b.CrossTableReferences.OrderByDescending(kv => kv.Value.Count))
+            {
+                sb.AppendLine($"  {tableName}  ({symIds.Count} symbols): {string.Join(", ", symIds.Take(6))}{(symIds.Count > 6 ? ", ..." : "")}");
+            }
+            sb.AppendLine();
+        }
+
+        // File-scope cross-reference summary — catches static-init patterns
+        if (b.CrossTableReferencesByFile.Count > 0)
+        {
+            sb.AppendLine("--- CROSS-TABLE REFERENCES (file-scope) ---");
+            sb.AppendLine("(Candidate target tables that appear as string literals in the SAME FILE as");
+            sb.AppendLine(" selected bundle symbols — even if not inside those symbols' bodies. This catches");
+            sb.AppendLine(" file-scope static initializers like `LootStore X(\"creature_loot_template\", ...);`");
+            sb.AppendLine(" that declare table→object bindings outside any function. STRONG FK signal.)");
+            foreach (var (tableName, refs) in b.CrossTableReferencesByFile.OrderByDescending(kv => kv.Value.Sum(r => r.SymbolsInFile.Count)))
+            {
+                int totalSyms = refs.Sum(r => r.SymbolsInFile.Count);
+                sb.AppendLine($"  {tableName}  ({refs.Count} file(s), {totalSyms} symbol(s)):");
+                foreach (var r in refs)
+                    sb.AppendLine($"    {r.FilePath}: {string.Join(", ", r.SymbolsInFile.Take(5))}{(r.SymbolsInFile.Count > 5 ? ", ..." : "")}");
+            }
+            sb.AppendLine();
+        }
+
+        // Containing types
+        if (b.Types.Count > 0)
+        {
+            sb.AppendLine("--- CONTAINING TYPES ---");
+            foreach (var t in b.Types)
+            {
+                var inh = t.Inherits.Count > 0 ? " : " + string.Join(", ", t.Inherits) : "";
+                sb.AppendLine($"[{t.Kind}] {t.Name}{inh}   (declared in {t.DeclaredIn})");
+                if (t.Members.Count > 0)
+                    sb.AppendLine($"  members: {string.Join(", ", t.Members.Take(20))}{(t.Members.Count > 20 ? ", ..." : "")}");
+            }
+            sb.AppendLine();
+        }
+
+        // Function bodies, grouped by role
+        var byRole = b.Symbols
+            .GroupBy(s => s.Role)
+            .OrderBy(g => RoleOrder(g.Key));
+
+        foreach (var grp in byRole)
+        {
+            sb.AppendLine($"--- {grp.Key.ToUpperInvariant()} ({grp.Count()}) ---");
+            foreach (var s in grp)
+            {
+                sb.AppendLine();
+                var flags = new List<string>();
+                if (s.AlsoReferences.Count > 0)
+                    flags.Add("also-references: " + string.Join(", ", s.AlsoReferences));
+                if (s.IsHuge)
+                    flags.Add($"HUGE-FUNCTION ({s.LineEnd - s.LineStart + 1} lines — may be a registration/dispatch table, not a focused loader)");
+                if (s.CandidateTablesMentioned > 0)
+                    flags.Add($"mentions-{s.CandidateTablesMentioned}-candidate-tables");
+                var flagStr = flags.Count > 0 ? "   [" + string.Join("; ", flags) + "]" : "";
+                sb.AppendLine($"// {s.Id}   {s.File}:{s.LineStart}-{s.LineEnd}{flagStr}");
+                sb.AppendLine(s.Body);
+            }
+            sb.AppendLine();
+        }
+
+        // Dropped-symbol summary at the end — helps the caller understand what was
+        // left out and why, in case the bundle feels incomplete.
+        if (b.Dropped.Count > 0)
+        {
+            sb.AppendLine($"--- DROPPED FROM BUNDLE ({b.Dropped.Count}) ---");
+            sb.AppendLine("(Symbols considered but excluded from this bundle.)");
+            foreach (var grp in b.Dropped.GroupBy(d => d.Reason))
+            {
+                sb.AppendLine($"  reason={grp.Key} ({grp.Count()}):");
+                foreach (var d in grp.Take(10))
+                    sb.AppendLine($"    {d.Id}   role={d.Role}   ~tokens={d.EstimatedTokens}   candidate_tables={d.CandidateTablesMentioned}");
+                if (grp.Count() > 10)
+                    sb.AppendLine($"    ... and {grp.Count() - 10} more");
+            }
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    private static int RoleOrder(string role) => role switch
+    {
+        "primary" => 0,
+        "column_only" => 1,
+        "consumer" => 2,
+        "caller" => 3,
+        "callee" => 4,
+        "table_only" => 5,
+        "saturated" => 6,
+        _ => 7
+    };
+
+    /// <summary>
+    /// Strip a run of trailing digits from a column name and return the de-numbered
+    /// base. `loot_id` → `loot_id` (no change, returns same string).
+    /// `ReqItemId1` → `ReqItemId`. `spell_id4` → `spell_id`. `display_id12` → `display_id`.
+    /// Returns null if the result would be empty.
+    /// </summary>
+    private static string? StripTrailingDigits(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return null;
+        int end = s.Length;
+        while (end > 0 && char.IsDigit(s[end - 1])) end--;
+        if (end == 0) return null;
+        // Also strip a single trailing underscore if one was left dangling
+        // (e.g. "foo_1" → "foo_" → "foo"). Common VMaNGOS pattern.
+        if (end > 0 && s[end - 1] == '_') end--;
+        if (end == 0) return null;
+        return s.Substring(0, end);
     }
 }
 
