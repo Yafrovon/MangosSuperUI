@@ -5126,6 +5126,7 @@ $(function () {
 
         // --- diagnostics ---------------------------------------------------------------
         var dg = '<div class="bc-row">' +
+            bcBtn('bcConnect', 'fa-plug', 'Connect bot', 'primary') +
             bcBtn('bcTraceOn', 'fa-record-vinyl', 'Trace on') + bcBtn('bcTraceOff', 'fa-stop', 'Trace off') +
             bcBtn('bcStoryOn', 'fa-book-open', 'Story on') + bcBtn('bcStoryOff', 'fa-stop', 'Story off') +
             (bcGuid > 0 ? bcBtn('bcReport', 'fa-bolt', 'Bot report') : '') +
@@ -5265,6 +5266,48 @@ $(function () {
     $(document).on('click', '#bcTraceOff', function () { bcDiag('/Bots/SetTrace', false, 'trace off'); });
     $(document).on('click', '#bcStoryOn', function () { bcDiag('/Bots/SetStory', true, 'story on'); });
     $(document).on('click', '#bcStoryOff', function () { bcDiag('/Bots/SetStory', false, 'story off'); });
+    $(document).on('click', '#bcConnect', function () {
+        if (!bcGuid) {
+            showToast('No bot selected', true);
+            return;
+        }
+
+        var bot = botStates[bcGuid];
+
+        if (!bot || !bot.name) {
+            console.log('Missing bot state:', bcGuid, botStates);
+            showToast('Cannot determine bot name', true);
+            return;
+        }
+
+        if (!confirm('Connect this bot to the world server?')) {
+            return;
+        }
+
+        var $btn = $(this).prop('disabled', true);
+
+        $.ajax({
+            url: '/Bots/Connect',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                name: bot.name
+            })
+        })
+            .done(function (r) {
+                if (r && r.success) {
+                    showToast('Connect requested: ' + bot.name);
+                } else {
+                    showToast('Connect failed: ' + ((r && r.error) || 'unknown'), true);
+                }
+            })
+            .fail(function (xhr) {
+                showToast('Connect failed (' + xhr.status + ')', true);
+            })
+            .always(function () {
+                $btn.prop('disabled', false);
+            });
+    });
     $(document).on('click', '#bcReport', function () {
         var st = bcGuid ? botStates[bcGuid] : null;
         if (!st || !st.name) return;

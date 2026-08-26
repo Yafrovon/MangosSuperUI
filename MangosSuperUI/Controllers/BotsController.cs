@@ -202,6 +202,22 @@ public partial class BotsController : Controller
         }
     }
 
+    // ==================== Connect single bot ====================
+    [HttpPost]
+    public async Task<IActionResult> Connect([FromBody] BotNameRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Name))
+            return Json(new { success = false, error = "Missing bot name" });
+
+        var response = await _ra.SendCommandAsync($".bot add {req.Name}");
+
+        return Json(new
+        {
+            success = true,
+            response
+        });
+    }
+
     // ==================== REST API ====================
 
     [HttpGet]
@@ -1288,4 +1304,9 @@ public class SpawnEntry
     public string? Race { get; set; }
     public string? Cls { get; set; }
     public int Count { get; set; }
+}
+
+public class BotNameRequest
+{
+    public string Name { get; set; } = "";
 }
