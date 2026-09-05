@@ -263,8 +263,19 @@ public partial class PaletteSwapService
     //               variety for guaranteed taste.
     // ═══════════════════════════════════════════════════════════════════
 
+    //   none        No theory at all. EVERY material takes the picked hue, straight,
+    //               at its own saturation and lightness — the "I chose red, make it
+    //               red" contract. Skips both span guards, since keeping a two-tone
+    //               source two-tone is exactly what the operator opted out of.
+    //               The forges default to this; the theories below are the
+    //               palette generators for when you want the engine to compose.
+    /// <summary>Folded into every cached recolor file name. Bump it whenever the recolor output for the
+    /// same inputs changes (a theory rewrite, a new anchor rule) so stale previews cannot be served
+    /// back — that is exactly what hid the Onslaught fix behind yesterday's blue cache.</summary>
+    public const string RecolorVersion = "p5";
+
     public static readonly string[] RecolorTheories =
-        { "primary", "fan", "identity", "analogous", "accent", "luminance", "bank" };
+        { "none", "primary", "fan", "identity", "analogous", "accent", "luminance", "bank" };
 
     /// <summary>Canonical hue centres per detected family — used by theories that
     /// preserve family identity. Grey has no meaningful hue; callers substitute
@@ -307,9 +318,14 @@ public partial class PaletteSwapService
     /// coverage-ordered (dominant first). Structural families (white/black) are
     /// handled by the caller and never reach this method.
     /// </summary>
+    /// <param name="pickSat">The picked colour's saturation (0..1), when the caller sent a full colour
+    /// rather than a hue. Only "none" honours it: a theory composes its own saturation.</param>
+    /// <param name="pickLight">The picked colour's lightness (0..1), same contract. White and black picks
+    /// only mean anything through these two — a hue alone cannot say "white".</param>
     private static List<(string Family, TargetColor Target)> BuildSeededTargets(
         string theory, Random rng, float baseHue,
-        List<DetectedFamily> chromatic, float satScale, float lightBias)
+        List<DetectedFamily> chromatic, float satScale, float lightBias,
+        float? pickSat = null, float? pickLight = null, RecolorAnchor? anchor = null)
     {
         var outp = new List<(string, TargetColor)>();
         int n = chromatic.Count;
@@ -349,6 +365,52 @@ public partial class PaletteSwapService
 
         switch (theory)
         {
+            case "none":
+                {
+                    // No theory. ONE colour group changes: the primary (the largest chromatic
+                    // material — item-wide when an anchor is supplied, so every armor texture agrees
+                    // on which one that is). It takes the pick's hue and saturation, and its
+                    // lightness is nudged toward the pick's, capped so the texture keeps its shading.
+                    // Every other material is left exactly as authored — its own hue, saturation and
+                    // per-pixel lightness — and so are the black/white structural families (handled
+                    // by the caller, which skips its tint pass for this theory). Rotating the
+                    // accents along with the primary was measured on Onslaught Armor: gold trims
+                    // went purple next to a blue pick and the whole set read as one cool blanket.
+                    DetectedFamily? dom = anchor is null
+                        ? chromatic[0]
+                        : chromatic.FirstOrDefault(f => string.Equals(f.Family, anchor.Family, StringComparison.OrdinalIgnoreCase));
+                    foreach (var f in chromatic)
+                    {
+                        if (dom is null || !ReferenceEquals(f, dom))
+                        {
+                            outp.Add((f.Family, new TargetColor(f.MeanHue,
+                                Math.Clamp(Math.Max(f.MeanSat, 0.02f) * satScale, 0.02f, 0.95f),
+                                LBehavior.Preserve)));
+                            continue;
+                        }
+
+                        // A coloured pick moves the primary's HUE and keeps the material's own
+                        // saturation and shading (the engine's convention: dark steel picked red is
+                        // dark red steel, not a flat vivid red — measured on Onslaught, where the
+                        // pick's 0.75 saturation on the plates was the last of the blanket look).
+                        // A white/grey/black pick has no hue to give, so it drives saturation and
+                        // lightness instead: that is the only way those picks can mean anything.
+                        bool chromaticPick = pickSat is null || pickSat.Value >= 0.08f;
+                        float sat = chromaticPick
+                            ? Sat(f, 0f)
+                            : Math.Clamp(Math.Max(pickSat!.Value, 0.04f) * satScale, 0.04f, 0.95f);
+                        (LBehavior b, float o) = Expand(f);
+                        if (!chromaticPick && pickLight is float pl)
+                        {
+                            float offset = Math.Clamp(pl - f.MeanLightness, -0.4f, 0.4f);
+                            b = Math.Abs(offset) < 0.01f ? LBehavior.Preserve : offset > 0f ? LBehavior.LiftTo : LBehavior.DropTo;
+                            o = Math.Abs(offset);
+                        }
+                        outp.Add((f.Family, new TargetColor(chromaticPick ? baseHue : f.MeanHue, sat, b, o)));
+                    }
+                    break;
+                }
+
             case "primary":
                 {
                     // The Forge's "recolor the whole item" contract. Fan is a palette
@@ -460,10 +522,10 @@ public partial class PaletteSwapService
                         {
                             // Lighter and cleaner — one deep saturated anchor so it
                             // doesn't wash out.
-                            bool anchor = ReferenceEquals(f, darkest) && n > 1;
-                            sat = anchor ? Math.Clamp(0.65f * satScale, .3f, .95f) : Sat(f, 0.18f) * 0.85f;
-                            b = anchor ? LBehavior.DropTo : LBehavior.LiftTo;
-                            o = (anchor ? 1.6f : 1.0f) * Math.Max(lightBias, 0.03f);
+                            bool deepAccent = ReferenceEquals(f, darkest) && n > 1;
+                            sat = deepAccent ? Math.Clamp(0.65f * satScale, .3f, .95f) : Sat(f, 0.18f) * 0.85f;
+                            b = deepAccent ? LBehavior.DropTo : LBehavior.LiftTo;
+                            o = (deepAccent ? 1.6f : 1.0f) * Math.Max(lightBias, 0.03f);
                         }
                         outp.Add((f.Family, new TargetColor(hue, sat, b, o)));
                     }
@@ -521,7 +583,7 @@ public partial class PaletteSwapService
         // luminance pass by construction; analogous gets two-toned only when
         // the source was. (Within-family contrast has spread re-injection;
         // this is its between-family sibling.)
-        if (n > 1 && trimIdx > 0 && outp.Count > trimIdx)
+        if (theory != "none" && n > 1 && trimIdx > 0 && outp.Count > trimIdx)
         {
             float dSrc = Math.Abs(CircSigned(chromatic[trimIdx].MeanHue, chromatic[0].MeanHue));
             if (dSrc >= 60f)
@@ -638,7 +700,9 @@ public partial class PaletteSwapService
         CancellationToken ct = default, string theory = "fan",
         float tierKd = 0f, float tierKu = 0f, float tierM = 0f, float tierPop = 0f,
         float swapBudget = 1.01f, float hueLeash = 180f,
-        ValueSettings value = default, float? baseHueOverride = null)
+        ValueSettings value = default, float? baseHueOverride = null,
+        float? baseSatOverride = null, float? baseLightOverride = null,
+        RecolorAnchor? anchor = null)
     {
         await Task.Yield();
 
@@ -675,6 +739,17 @@ public partial class PaletteSwapService
 
             // Chromatic families first, ordered by coverage, so the DOMINANT family
             // anchors the colourway and the rest fan out around it.
+            // "none" recolors ONE material, the primary — and on dark plate armor that material is
+            // split three ways by the classifier: its shadows are "black", its mid-tones "grey", its
+            // lit edges "brown". Black/white are lightness families that never carry chroma, so
+            // left structural they drop out of the smooth map and the helm, gloves and greaves of a
+            // set like Onslaught (68–97 % of their pixels at or below 20 % lightness) simply do not
+            // change. Fold them into grey for this theory: the near-neutral plate becomes one
+            // material by pixel count, so it is the anchor and takes the pick. Per-pixel lightness
+            // is preserved, so true blacks stay black — a hue at zero lightness is still black.
+            bool straightTheory = string.Equals(theory, "none", StringComparison.OrdinalIgnoreCase);
+            if (straightTheory) present = FoldStructuralIntoGrey(present);
+
             var chromatic = present.Where(f => !StructuralFamilies.Contains(f.Family)).ToList();
             var structural = present.Where(f => StructuralFamilies.Contains(f.Family)).ToList();
 
@@ -716,9 +791,13 @@ public partial class PaletteSwapService
             static float CircSigned(float a, float b) => ((a - b + 540f) % 360f) - 180f;
             static float WrapHue(float h) => ((h % 360f) + 360f) % 360f;
 
-            var matGroups = GroupMaterials(chromatic);
+            // A looser material grouping for "none": low-saturation warm mid-tones (the lit side
+            // of dark plate) belong with the neutral plate they shade, not next to it as a second
+            // material that then stays its own colour while the shadows shift.
+            var matGroups = GroupMaterials(chromatic, straightTheory ? 0.35f : 0.25f);
             var groupFams = matGroups.Select(g => g.Group).ToList();
-            var groupTargets = BuildSeededTargets(theory, rng, baseHue, groupFams, satScale, lightBias);
+            var groupTargets = BuildSeededTargets(theory, rng, baseHue, groupFams, satScale, lightBias,
+                baseSatOverride, baseLightOverride, anchor);
 
             var swappedIdx = new HashSet<int>();
             {
@@ -753,7 +832,8 @@ public partial class PaletteSwapService
                 finalTargets.Add((groupTargets[gi].Family, tgt));
             }
 
-            if (matGroups.Count > 1)
+            // "none" opted out of palette composition entirely: no contrast is re-injected.
+            if (theory != "none" && matGroups.Count > 1)
             {
                 int tIdx = -1; float bestScore = -1f;
                 for (int i = 1; i < matGroups.Count; i++)
@@ -788,9 +868,17 @@ public partial class PaletteSwapService
             // Highlights and shadows: left alone unless explicitly asked for. This
             // is the whole point of separating them out of "grey" — a spec highlight
             // that gets grey's hue AND grey's saturation stops being a highlight.
+            // An achromatic pick (white/grey/black) has no hue to whisper — tinting the
+            // highlights and shadows with the picker's meaningless 0° would put a faint red film
+            // over the whole texture.
+            bool achromaticPick = baseSatOverride is float pickSatOverride && pickSatOverride < 0.08f;
+            // "none" changes one colour group and nothing else — the dark and light structure of the
+            // texture is part of "everything else". On plate armor the black family is most of the
+            // pixels, and tinting it was the largest share of the blanket look.
+            bool straightRecolor = string.Equals(theory, "none", StringComparison.OrdinalIgnoreCase);
             foreach (var f in structural)
             {
-                if (!tintStructural) continue;
+                if (!tintStructural || achromaticPick || straightRecolor) continue;
                 float sat = Math.Min(f.MeanSat, 0.08f);   // a whisper, nothing more
                 resolved.Add((f.Family, new TargetColor(baseHue, sat, LBehavior.Preserve)));
             }
@@ -827,6 +915,62 @@ public partial class PaletteSwapService
     /// Used by the variation mode so the LLM knows which families exist to
     /// assign colors to (e.g. ["grey","gold","brown"]) WITHOUT needing vision.
     /// </summary>
+    /// <summary>The PRIMARY colour group of a multi-texture item — the chromatic family with the most
+    /// pixels across every texture the item paints, with its pixel-weighted mean hue, saturation and
+    /// lightness. Armor paints several atlas slots as separate files; recoloring each one on its own
+    /// "primary" lands every slot's biggest material on the pick and the whole piece reads as one
+    /// flat colour. Detect once across all of them and hand the result to each recolor as
+    /// <c>anchor</c>, so only that family takes the pick and everything else keeps its relationship.</summary>
+    /// <summary>Merge the white/black lightness families into "grey" (creating it if needed) so a
+    /// near-neutral material is one family by pixel count. Used by the "none" theory only.</summary>
+    private static List<DetectedFamily> FoldStructuralIntoGrey(List<DetectedFamily> present)
+    {
+        var structural = present.Where(f => StructuralFamilies.Contains(f.Family) && f.PixelCount > 0).ToList();
+        if (structural.Count == 0) return present;
+        var grey = present.FirstOrDefault(f => f.Family == "grey");
+        var members = structural.ToList();
+        if (grey is not null) members.Add(grey);
+        long pixels = members.Sum(m => (long)m.PixelCount);
+        float percent = members.Sum(m => m.Percent);
+        float sat = (float)(members.Sum(m => (double)m.MeanSat * m.PixelCount) / pixels);
+        float light = (float)(members.Sum(m => (double)m.MeanLightness * m.PixelCount) / pixels);
+        // Hue: grey's own if it exists (a whisper of steel tint), else the pixel-weighted mean —
+        // it only matters as a noise hue below the chroma floor anyway.
+        float hue = grey?.MeanHue ?? (float)((Math.Atan2(
+            members.Sum(m => Math.Sin(m.MeanHue * Math.PI / 180.0) * m.PixelCount),
+            members.Sum(m => Math.Cos(m.MeanHue * Math.PI / 180.0) * m.PixelCount)) * 180.0 / Math.PI + 360.0) % 360.0);
+        var folded = new DetectedFamily("grey", (int)Math.Min(pixels, int.MaxValue), percent, sat, light, hue);
+        return present
+            .Where(f => !StructuralFamilies.Contains(f.Family) && f.Family != "grey")
+            .Append(folded)
+            .OrderByDescending(f => f.PixelCount)
+            .ToList();
+    }
+
+    public RecolorAnchor? DetectPrimaryAcross(IEnumerable<string> pngPaths)
+    {
+        var totals = new Dictionary<string, (long Pixels, double SinSum, double CosSum, double SatSum, double LightSum)>();
+        foreach (string path in pngPaths)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
+            List<DetectedFamily> fams;
+            try { fams = FoldStructuralIntoGrey(DetectFamilies(path)); } catch { continue; }
+            foreach (var f in fams)
+            {
+                if (StructuralFamilies.Contains(f.Family) || f.PixelCount <= 0) continue;
+                double rad = f.MeanHue * Math.PI / 180.0;
+                totals.TryGetValue(f.Family, out var t);
+                totals[f.Family] = (t.Pixels + f.PixelCount,
+                    t.SinSum + Math.Sin(rad) * f.PixelCount, t.CosSum + Math.Cos(rad) * f.PixelCount,
+                    t.SatSum + f.MeanSat * f.PixelCount, t.LightSum + f.MeanLightness * f.PixelCount);
+            }
+        }
+        if (totals.Count == 0) return null;
+        var (family, agg) = totals.OrderByDescending(kv => kv.Value.Pixels).First();
+        float hue = (float)((Math.Atan2(agg.SinSum, agg.CosSum) * 180.0 / Math.PI + 360.0) % 360.0);
+        return new RecolorAnchor(family, hue, (float)(agg.SatSum / agg.Pixels), (float)(agg.LightSum / agg.Pixels));
+    }
+
     public List<DetectedFamily> DetectFamilies(string sourcePngPath)
     {
         var result = new List<DetectedFamily>();
@@ -3671,3 +3815,8 @@ public class BoxOverride
 
 /// <summary>A color family detected in a source texture, with aggregate stats.</summary>
 public record DetectedFamily(string Family, int PixelCount, float Percent, float MeanSat, float MeanLightness, float MeanHue = 0f);
+
+/// <summary>The primary colour group of a multi-texture item, detected once across all of its
+/// textures (see PaletteSwapService.DetectPrimaryAcross) so every texture recolors around the same
+/// material.</summary>
+public sealed record RecolorAnchor(string Family, float Hue, float Sat, float Lightness);

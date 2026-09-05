@@ -64,7 +64,7 @@ public sealed class RigidWeaponMesh
     public IReadOnlyList<WeaponSubmeshRange>? SubmeshRanges { get; init; }
 
     /// <summary>Render passes over <see cref="SubmeshRanges"/>; null = single-pass (see above).</summary>
-    public IReadOnlyList<WeaponPass>? Passes { get; init; }
+    public IReadOnlyList<WeaponPass>? Passes { get; set; }
 
     /// <summary>Optional per-slot source texture metadata, including M2 wrap flags.</summary>
     public IReadOnlyList<WeaponTextureSlot>? TextureSlots { get; init; }

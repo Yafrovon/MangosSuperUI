@@ -59,6 +59,43 @@ public class MpqReaderService : IDisposable
     /// <summary>Held (never-rewritten) archives, in load order. Reverse iteration
     /// gives patch-overrides-base semantics. Guarded by _rw.</summary>
     private readonly List<(string Name, MpqArchive Archive)> _archives = new();
+
+    // ── Forge-registry fallback ─────────────────────────────────────────────────────────────
+    // Patch rebuilds are on request now, so a freshly forged weapon or armor piece exists in the
+    // registry (DB) before its members exist in any mounted archive. Previews used to read those
+    // members out of the deployed patch and silently dropped the helm/shoulder/weapon when it was
+    // not there yet. Sources registered here answer for SUI_* members the archives cannot.
+    private readonly List<ICustomMpqMemberSource> _customSources = new();
+
+    /// <summary>Register a forge registry as a last-resort source for its own SUI_* members.</summary>
+    public void RegisterCustomMemberSource(ICustomMpqMemberSource source)
+    {
+        lock (_customSources) if (!_customSources.Contains(source)) _customSources.Add(source);
+    }
+
+    /// <summary>Only forge-minted members carry the SUI_ marker; every other miss stays a miss
+    /// without a database round trip.</summary>
+    private static bool LooksForged(string mpqPath) =>
+        mpqPath.Contains("SUI_", StringComparison.OrdinalIgnoreCase);
+
+    private byte[]? TryCustomSources(string mpqPath)
+    {
+        ICustomMpqMemberSource[] sources;
+        lock (_customSources) sources = _customSources.ToArray();
+        foreach (var source in sources)
+        {
+            try
+            {
+                var data = source.TryGetMember(mpqPath);
+                if (data is { Length: > 0 }) return data;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "MpqReader: custom member source failed for {Path}", mpqPath);
+            }
+        }
+        return null;
+    }
     private readonly ReaderWriterLockSlim _rw = new(LockRecursionPolicy.NoRecursion);
 
     /// <summary>SuperUI-written patches served from fresh scratch copies, highest
@@ -745,9 +782,13 @@ public class MpqReaderService : IDisposable
                         mpqPath, name, ex.GetType().Name, ex.Message);
                 }
             }
-            return null;
         }
         finally { _rw.ExitReadLock(); }
+
+        // Not in any archive. A forge-minted member may still be in the registry, waiting for the
+        // next Rebuild patch. Never for a filtered read: a caller skipping archives wants the state
+        // BENEATH a patch, and registry members are exactly what that patch would add.
+        return skipArchive is null && LooksForged(mpqPath) ? TryCustomSources(mpqPath) : null;
     }
 
     /// <summary>

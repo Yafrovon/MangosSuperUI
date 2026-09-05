@@ -430,7 +430,7 @@ public class ArmorForgeController : Controller
 
     private async Task<IActionResult> LaneDressing(ArmorImportLane lane, uint entry, string race, string gender)
     {
-        var payload = await BuildDressingAsync(lane, entry, race, gender, null, "fan", "improved");
+        var payload = await BuildDressingAsync(lane, entry, race, gender, null, null, null, "fan", "improved");
         return payload is null ? NotFound() : Json(payload);
     }
 
@@ -438,7 +438,7 @@ public class ArmorForgeController : Controller
     /// When <paramref name="hue"/> is set, the body-atlas slots, cape, and helm/shoulder attachment
     /// textures are recolored at that primary hue (palette engine) so the whole piece previews recolored.</summary>
     private async Task<object?> BuildDressingAsync(ArmorImportLane lane, uint entry, string race, string gender,
-        float? hue, string theory, string tier)
+        float? hue, float? sat, float? light, string theory, string tier)
     {
         var item = lane.Catalog.FindEntry(entry);
         if (item is null) return null;
@@ -453,25 +453,31 @@ public class ArmorForgeController : Controller
 
         // Recolor setup (only used when a hue is supplied).
         bool recolor = hue.HasValue;
-        if (recolor && Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "fan";
+        if (recolor && Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "none";
         var (kd, ku, mm, pop) = RetextureSupport.TierShape(tier);
         int seed = RetextureSupport.SeedFor((int)item.DisplayId, tier);
-        int hueKey = recolor ? (((int)Math.Round(hue!.Value) % 360 + 360) % 360) : 0;
+        string pickKey = PickKey(hue, sat, light);
         string outDir = Path.Combine(cacheDir, "recolor");
         if (recolor) Directory.CreateDirectory(outDir);
         var ct = HttpContext.RequestAborted;
 
+        // Every texture this piece paints is decoded first, then recolored in a second pass around
+        // ONE primary detected across all of them (RecolorAnchor). Recoloring slot by slot, each on
+        // its own primary, put every slot's biggest material on the pick — the whole piece went red.
+        var pending = new List<(string BaseName, string BaseUrl, Action<string> Assign)>();
+        RecolorAnchor? anchor = null;
         async Task<string> RecolorOrBase(string baseName, string baseUrl)
         {
             if (!recolor) return baseUrl;
             string srcDisk = Path.Combine(cacheDir, baseName);
-            string outName = Path.GetFileNameWithoutExtension(baseName) + $"_h{hueKey}_{theory}_{tier}.png";
+            string outName = Path.GetFileNameWithoutExtension(baseName) + $"_{pickKey}_{theory}_{tier}_{PaletteSwapService.RecolorVersion}.png";
             string outPng = Path.Combine(outDir, outName);
             // Forge recolor = the WHOLE piece shifts to the chosen primary: full swap budget (1.01),
             // full hue leash (180°), tint structural darks — not the retexture engine's conservative
             // tiered budget (0.20/40°) which pins dominant/dark regions to their source colour.
             var ok = await _palette.RecolorSeededAsync(srcDisk, outPng, seed, 1f, 0f, tintStructural: true, ct,
-                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue);
+                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue,
+                baseSatOverride: sat, baseLightOverride: light, anchor: anchor);
             return ok != null ? $"{urlBase}/recolor/{outName}?t={DateTime.UtcNow.Ticks}" : baseUrl;
         }
 
@@ -491,7 +497,7 @@ public class ArmorForgeController : Controller
                 string tag = suffix.Length == 0 ? "_U" : suffix;
                 string baseName = $"slot{slot}{tag}.png";
                 var url = CachePng(blp, cacheDir, baseName, $"{urlBase}/{baseName}");
-                if (url != null) { slotUrls[slot] = await RecolorOrBase(baseName, url); break; }
+                if (url != null) { int s = slot; slotUrls[s] = url; pending.Add((baseName, url, u => slotUrls[s] = u)); break; }
             }
         }
 
@@ -502,8 +508,15 @@ public class ArmorForgeController : Controller
             if (blp is { Length: > 0 })
             {
                 var url = CachePng(blp, cacheDir, "cape.png", $"{urlBase}/cape.png");
-                if (url != null) capeTextureUrl = await RecolorOrBase("cape.png", url);
+                if (url != null) { capeTextureUrl = url; pending.Add(("cape.png", url, u => capeTextureUrl = u)); }
             }
+        }
+
+        if (recolor && pending.Count > 0)
+        {
+            anchor = _palette.DetectPrimaryAcross(pending.Select(x => Path.Combine(cacheDir, x.BaseName)));
+            foreach (var (baseName, baseUrl, assign) in pending)
+                assign(await RecolorOrBase(baseName, baseUrl));
         }
 
         uint raceId = race.ToLowerInvariant() switch
@@ -526,7 +539,7 @@ public class ArmorForgeController : Controller
             string sfx = $"_{raceCode}{(female ? 'F' : 'M')}";
             string stem = Path.GetFileNameWithoutExtension(row.ModelName1);
             var url = await BuildAttachmentGlbAsync(lane, $@"{ArmorNaming.HeadDir}\{stem}{sfx}.m2", $@"{ArmorNaming.HeadDir}\{row.TextureName1}.blp",
-                cacheDir, $"helm{sfx}.glb", $"{urlBase}/helm{sfx}.glb", hue, theory, tier, seed, ct);
+                cacheDir, $"helm{sfx}.glb", $"{urlBase}/helm{sfx}.glb", hue, sat, light, anchor, theory, tier, seed, ct);
             if (url != null) attachments["helm"] = url;
         }
         else if (item.InventoryType == 3 && !string.IsNullOrEmpty(row.ModelName1))
@@ -534,8 +547,8 @@ public class ArmorForgeController : Controller
             string left = Path.GetFileNameWithoutExtension(row.ModelName1);
             string right = string.IsNullOrEmpty(row.ModelName2) ? (left.StartsWith("L", StringComparison.OrdinalIgnoreCase) ? "R" + left[1..] : left) : Path.GetFileNameWithoutExtension(row.ModelName2);
             string tex2 = string.IsNullOrEmpty(row.TextureName2) ? row.TextureName1 : row.TextureName2;
-            var l = await BuildAttachmentGlbAsync(lane, $@"{ArmorNaming.ShoulderDir}\{left}.m2", $@"{ArmorNaming.ShoulderDir}\{row.TextureName1}.blp", cacheDir, "lshoulder.glb", $"{urlBase}/lshoulder.glb", hue, theory, tier, seed, ct);
-            var r = await BuildAttachmentGlbAsync(lane, $@"{ArmorNaming.ShoulderDir}\{right}.m2", $@"{ArmorNaming.ShoulderDir}\{tex2}.blp", cacheDir, "rshoulder.glb", $"{urlBase}/rshoulder.glb", hue, theory, tier, seed, ct);
+            var l = await BuildAttachmentGlbAsync(lane, $@"{ArmorNaming.ShoulderDir}\{left}.m2", $@"{ArmorNaming.ShoulderDir}\{row.TextureName1}.blp", cacheDir, "lshoulder.glb", $"{urlBase}/lshoulder.glb", hue, sat, light, anchor, theory, tier, seed, ct);
+            var r = await BuildAttachmentGlbAsync(lane, $@"{ArmorNaming.ShoulderDir}\{right}.m2", $@"{ArmorNaming.ShoulderDir}\{tex2}.blp", cacheDir, "rshoulder.glb", $"{urlBase}/rshoulder.glb", hue, sat, light, anchor, theory, tier, seed, ct);
             if (l != null) attachments["shoulderLeft"] = l;
             if (r != null) attachments["shoulderRight"] = r;
         }
@@ -557,16 +570,16 @@ public class ArmorForgeController : Controller
     /// attachment previews recolored to match the body. Type-0 textures come by filename from the source
     /// client; the DBC skin goes into the first non-type-0 slot; doubleSided for thin flaps/horns.</summary>
     private async Task<string?> BuildAttachmentGlbAsync(ArmorImportLane lane, string m2Path, string skinBlpPath,
-        string cacheDir, string fileName, string url, float? hue, string theory, string tier, int seed, CancellationToken ct)
+        string cacheDir, string fileName, string url, float? hue, float? sat, float? light, RecolorAnchor? anchor, string theory, string tier, int seed, CancellationToken ct)
     {
         try
         {
             bool recolor = hue.HasValue;
-            int hueKey = recolor ? (((int)Math.Round(hue!.Value) % 360 + 360) % 360) : 0;
+            string pickKey = PickKey(hue, sat, light);
             // Version-stamp the cache (assembly MVID) so a GlbWriter change invalidates it; fold the
             // hue/theory/tier into the name so each recolour is its own cached GLB.
             fileName = CacheVersionRegistry.MakeVersioned(fileName, CacheVersionRegistry.RigidGlbVersion);
-            if (recolor) fileName = Path.GetFileNameWithoutExtension(fileName) + $"_h{hueKey}_{theory}_{tier}" + Path.GetExtension(fileName);
+            if (recolor) fileName = Path.GetFileNameWithoutExtension(fileName) + $"_{pickKey}_{theory}_{tier}_{PaletteSwapService.RecolorVersion}" + Path.GetExtension(fileName);
             url = url[..(url.LastIndexOf('/') + 1)] + fileName;
 
             Directory.CreateDirectory(cacheDir);
@@ -589,7 +602,7 @@ public class ArmorForgeController : Controller
                 byte[] skinBytes = skin;
                 if (recolor)
                 {
-                    var rb = await RecolorBlpAsync(skin, cacheDir, "att_" + Path.GetFileNameWithoutExtension(skinBlpPath), hue!.Value, theory, tier, seed, ct);
+                    var rb = await RecolorBlpAsync(skin, cacheDir, "att_" + Path.GetFileNameWithoutExtension(skinBlpPath), hue!.Value, sat, light, anchor, theory, tier, seed, ct);
                     if (rb != null) skinBytes = rb;
                 }
                 int slot = -1;
@@ -610,7 +623,19 @@ public class ArmorForgeController : Controller
 
     /// <summary>Recolor a BLP at the primary hue and return the recolored BLP bytes (BLP→PNG→palette
     /// recolor→BLP). Null on failure so the caller can fall back to the original skin.</summary>
-    private async Task<byte[]?> RecolorBlpAsync(byte[] blp, string cacheDir, string stem, float hue, string theory, string tier, int seed, CancellationToken ct)
+    /// <summary>Cache-key fragment for a recolour: the hue, plus saturation/lightness when a full
+    /// colour was picked. Without them two different picks with the same hue (red and white, say)
+    /// would share a cached PNG.</summary>
+    private static string PickKey(float? hue, float? sat, float? light)
+    {
+        int hueKey = hue.HasValue ? (((int)Math.Round(hue.Value) % 360 + 360) % 360) : 0;
+        string key = $"h{hueKey}";
+        if (sat.HasValue) key += $"s{(int)Math.Round(Math.Clamp(sat.Value, 0f, 1f) * 100)}";
+        if (light.HasValue) key += $"l{(int)Math.Round(Math.Clamp(light.Value, 0f, 1f) * 100)}";
+        return key;
+    }
+
+    private async Task<byte[]?> RecolorBlpAsync(byte[] blp, string cacheDir, string stem, float hue, float? sat, float? light, RecolorAnchor? anchor, string theory, string tier, int seed, CancellationToken ct)
     {
         try
         {
@@ -629,10 +654,11 @@ public class ArmorForgeController : Controller
                 System.IO.File.WriteAllBytes(basePng, data.ToArray());
             }
             var (kd, ku, mm, pop) = RetextureSupport.TierShape(tier);
-            int hueKey = ((int)Math.Round(hue) % 360 + 360) % 360;
-            string outPng = Path.Combine(pngDir, $"{stem}_h{hueKey}_{theory}_{tier}.png");
+            string outPng = Path.Combine(pngDir, $"{stem}_{PickKey(hue, sat, light)}_{theory}_{tier}_{PaletteSwapService.RecolorVersion}.png");
+            // A helm/shoulder with no painted slots anchors on its own skin, like a weapon does.
             var okp = await _palette.RecolorSeededAsync(basePng, outPng, seed, 1f, 0f, tintStructural: true, ct,
-                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue);
+                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue,
+                baseSatOverride: sat, baseLightOverride: light, anchor: anchor);
             if (okp == null) return null;
             using var recolored = SKBitmap.Decode(outPng);
             if (recolored == null) return null;
@@ -709,11 +735,12 @@ public class ArmorForgeController : Controller
     /// character viewer re-dresses the piece/set recolored in one layered pass (no flicker, covers models).</summary>
     [HttpGet]
     public async Task<IActionResult> RecolorDressing(string? expansion, uint entry, float hue,
+        float? sat = null, float? light = null,
         string theory = "fan", string tier = "improved", string race = "Human", string gender = "Male")
     {
         var lane = TryImportLane(expansion, out var laneError);
         if (lane is null) return BadRequest(new { success = false, error = laneError });
-        var payload = await BuildDressingAsync(lane, entry, race, gender, hue, theory, tier);
+        var payload = await BuildDressingAsync(lane, entry, race, gender, hue, sat, light, theory, tier);
         return payload is null ? Json(new { success = false, error = "not found" }) : Json(payload);
     }
 
@@ -793,7 +820,7 @@ public class ArmorForgeController : Controller
     /// into the shipped textures. expansion=vanilla clones an existing vanilla item instead of importing art.</summary>
     [HttpPost]
     public Task<IActionResult> Import(string? expansion, uint entry, string? name, int setId = 0, string? itemConfig = null,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", string? glowColor = null,
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", string? glowColor = null,
         float glowIntensity = 1f) =>
         string.Equals(expansion, "vanilla", StringComparison.OrdinalIgnoreCase)
             // The recolor/glow arguments are forwarded, not dropped. A clone cannot bake either of
@@ -803,18 +830,18 @@ public class ArmorForgeController : Controller
             ? VanillaClone(entry, name, itemConfig,
                 recolorRequested: recolorHue.HasValue,
                 glowRequested: !string.IsNullOrWhiteSpace(glowColor) || Math.Abs(glowIntensity - 1f) > 0.01f)
-            : ImportOnLane(expansion, entry, name, setId, itemConfig, recolorHue, recolorTheory, recolorTier, glowColor, glowIntensity);
+            : ImportOnLane(expansion, entry, name, setId, itemConfig, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor, glowIntensity);
 
     // Split out so an unrecognised lane key answers 400 with a sentence. ArmorImportSources.Get now
     // throws rather than silently falling back to TBC, and an expression-bodied action had nowhere to
     // catch it — the throw would have escaped as a 500 whose HTML body the result panel renders raw.
     private Task<IActionResult> ImportOnLane(string? expansion, uint entry, string? name, int setId, string? itemConfig,
-        float? recolorHue, string recolorTheory, string recolorTier, string? glowColor, float glowIntensity)
+        float? recolorHue, float? recolorSat, float? recolorLight, string recolorTheory, string recolorTier, string? glowColor, float glowIntensity)
     {
         var lane = TryImportLane(expansion, out var error);
         return lane is null
             ? Task.FromResult<IActionResult>(BadRequest(error))
-            : LaneImport(lane, entry, name, setId, itemConfig, recolorHue, recolorTheory, recolorTier, HexToRgb255(glowColor), glowIntensity);
+            : LaneImport(lane, entry, name, setId, itemConfig, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, HexToRgb255(glowColor), glowIntensity);
     }
 
     // "#rrggbb" → RGB 0..255 vector for the emitter colour track; null when unset/malformed.
@@ -847,7 +874,7 @@ public class ArmorForgeController : Controller
     }
 
     private async Task<IActionResult> LaneImport(ArmorImportLane lane, uint entry, string? name, int setId, string? itemConfig,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null,
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null,
         float glowIntensity = 1f)
     {
         try
@@ -858,7 +885,7 @@ public class ArmorForgeController : Controller
                 return BadRequest(string.Join("\n", cfgErrors));
 
             var r = await _armor.ImportAsync(lane, entry, name, setId, gameplay: gameplay,
-                recolorHue: recolorHue, recolorTheory: recolorTheory, recolorTier: recolorTier, glowColor: glowColor,
+                recolorHue: recolorHue, recolorSat: recolorSat, recolorLight: recolorLight, recolorTheory: recolorTheory, recolorTier: recolorTier, glowColor: glowColor,
                 glowIntensity: glowIntensity);
             return r.Ok ? Json(ResultDto(r)) : BadRequest(r.Message + (r.Diagnostics.Length > 0 ? "\n" + string.Join("\n", r.Diagnostics.Take(12)) : ""));
         }
@@ -900,7 +927,7 @@ public class ArmorForgeController : Controller
 
             var r = await _armor.ImportSetAsync(lane!, dto.SourceSetId, entries, perPiece, bonuses,
                 dto.RequiredSkill, dto.RequiredSkillRank, dto.Name,
-                dto.RecolorHue, dto.RecolorTheory ?? "fan", dto.RecolorTier ?? "improved", HexToRgb255(dto.GlowColor),
+                dto.RecolorHue, dto.RecolorSat, dto.RecolorLight, dto.RecolorTheory ?? "none", dto.RecolorTier ?? "improved", HexToRgb255(dto.GlowColor),
                 dto.GlowIntensity is { } gi && gi > 0f ? gi : 1f);
             return Json(new
             {
@@ -976,6 +1003,8 @@ public class ArmorForgeController : Controller
         public int RequiredSkill { get; set; }
         public int RequiredSkillRank { get; set; }
         public float? RecolorHue { get; set; }
+        public float? RecolorSat { get; set; }
+        public float? RecolorLight { get; set; }
         public string? RecolorTheory { get; set; }
         public string? RecolorTier { get; set; }
         public string? GlowColor { get; set; }
@@ -1027,6 +1056,18 @@ public class ArmorForgeController : Controller
 
     [HttpPost] public async Task<IActionResult> Delete(long displayId) => Json(await _armor.DeleteAsync(displayId));
     [HttpPost] public async Task<IActionResult> DeleteSet(int setId) => Json(await _armor.DeleteSetAsync(setId));
+
+    public sealed class BulkDeleteDto { public List<long> DisplayIds { get; set; } = new(); public List<int> SetIds { get; set; } = new(); }
+
+    /// <summary>POST /ArmorForge/DeleteMany — delete ticked sets and pieces with one reload, one repack
+    /// and one queued unified rebuild. Body: <c>{ "displayIds": [..], "setIds": [..] }</c>.</summary>
+    [HttpPost]
+    public async Task<IActionResult> DeleteMany([FromBody] BulkDeleteDto dto)
+    {
+        if (dto is null || (dto.DisplayIds.Count == 0 && dto.SetIds.Count == 0))
+            return BadRequest("Nothing selected.");
+        return Json(await _armor.DeleteManyAsync(dto.DisplayIds, dto.SetIds));
+    }
     [HttpPost] public async Task<IActionResult> RebuildPatch() => Json(new { ok = true, message = await _armor.RebuildPatchAsync("manual") });
 
     [HttpGet]

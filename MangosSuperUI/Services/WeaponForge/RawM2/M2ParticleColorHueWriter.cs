@@ -45,15 +45,17 @@ public static class M2ParticleColorHueWriter
         byte[] m2,
         float targetHueDegrees,
         float targetSaturation,
-        IReadOnlyCollection<int>? eligibleTextureIndices = null)
+        IReadOnlyCollection<int>? eligibleTextureIndices = null,
+        float lightnessScale = 1f)
     {
         ArgumentNullException.ThrowIfNull(m2);
 
-        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation))
-            return Failure(m2, 0, "target hue and saturation must be finite");
+        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation) || !float.IsFinite(lightnessScale))
+            return Failure(m2, 0, "target hue, saturation and lightness scale must be finite");
 
         targetHueDegrees = NormalizeHue(targetHueDegrees);
         targetSaturation = Math.Clamp(targetSaturation, 0f, 1f);
+        lightnessScale = Math.Clamp(lightnessScale, 0f, 1f);
 
         if (m2.Length < RawM2Document.VanillaHeaderSize)
             return Failure(m2, 0,
@@ -147,7 +149,7 @@ public static class M2ParticleColorHueWriter
             {
                 int colorOffset = recordOffset + ColorRampOffset + keyIndex * ColorKeySize;
                 uint original = U32(m2, colorOffset);
-                uint recolored = RecolorArgb(original, targetHueDegrees, targetSaturation);
+                uint recolored = RecolorArgb(original, targetHueDegrees, targetSaturation, lightnessScale);
                 replacements[candidateIndex * ColorKeyCount + keyIndex] = recolored;
                 if (recolored == original) continue;
 
@@ -199,7 +201,7 @@ public static class M2ParticleColorHueWriter
     private static Result Failure(byte[] m2, int candidateEmitters, string note) =>
         new(m2, candidateEmitters, 0, 0, 0, 0, false, new[] { note });
 
-    private static uint RecolorArgb(uint original, float hueDegrees, float saturation)
+    private static uint RecolorArgb(uint original, float hueDegrees, float saturation, float lightnessScale)
     {
         byte alpha = (byte)(original >> 24);
         byte red = (byte)(original >> 16);
@@ -207,7 +209,7 @@ public static class M2ParticleColorHueWriter
         byte blue = (byte)original;
 
         RgbToHsl(red, green, blue, out float lightness);
-        HslToRgb(hueDegrees, saturation, lightness, out red, out green, out blue);
+        HslToRgb(hueDegrees, saturation, lightness * lightnessScale, out red, out green, out blue);
 
         return ((uint)alpha << 24) | ((uint)red << 16) | ((uint)green << 8) | blue;
     }

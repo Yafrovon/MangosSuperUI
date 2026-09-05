@@ -426,19 +426,30 @@ internal static class NativeWeaponEffectRecolor
     /// alpha zero when encoding PNG, so only edge texels that receive bleed are nudged from alpha
     /// 0 to 1; authored non-zero alpha is never changed.
     /// </summary>
+    /// <param name="lightnessScale">Multiplier on each pixel's lightness (0..1). Effects are
+    /// additive, so hue and saturation alone cannot express a DARK pick: black desaturates to a
+    /// white glow. Scaling lightness down lets a dark pick dim the effect, all the way to none.</param>
+    /// <param name="darkAura">Dark glow pick: the sheet will be drawn ALPHA-BLENDED rather than
+    /// additively, so its brightness has to become coverage — alpha is multiplied by the source
+    /// pixel's brightness (an additive sheet's black background is "nothing", and must stay nothing
+    /// under alpha blending too) while the colour goes to the darkened pick.</param>
     internal static byte[]? TintPng(
         byte[] sourcePng,
         float targetHueDegrees,
         float targetSaturation,
-        int bleedPasses = 4)
+        int bleedPasses = 4,
+        float lightnessScale = 1f,
+        bool darkAura = false)
     {
         if (sourcePng is not { Length: > 0 } ||
             !float.IsFinite(targetHueDegrees) ||
-            !float.IsFinite(targetSaturation))
+            !float.IsFinite(targetSaturation) ||
+            !float.IsFinite(lightnessScale))
             return null;
 
         targetHueDegrees = ((targetHueDegrees % 360f) + 360f) % 360f;
         targetSaturation = Math.Clamp(targetSaturation, 0f, 1f);
+        lightnessScale = Math.Clamp(lightnessScale, 0f, 1f);
         bleedPasses = Math.Clamp(bleedPasses, 0, 32);
 
         using SKBitmap? bitmap = DecodeStraightAlpha(sourcePng);
@@ -450,9 +461,15 @@ internal static class NativeWeaponEffectRecolor
             {
                 SKColor source = bitmap.GetPixel(x, y);
                 RgbToHsl(source.Red, source.Green, source.Blue, out _, out _, out float lightness);
-                HslToRgb(targetHueDegrees, targetSaturation, lightness,
+                HslToRgb(targetHueDegrees, targetSaturation, lightness * lightnessScale,
                     out byte red, out byte green, out byte blue);
-                bitmap.SetPixel(x, y, new SKColor(red, green, blue, source.Alpha));
+                byte alpha = source.Alpha;
+                if (darkAura)
+                {
+                    float coverage = Math.Max(source.Red, Math.Max(source.Green, source.Blue)) / 255f;
+                    alpha = (byte)Math.Clamp(MathF.Round(source.Alpha * coverage), 0f, 255f);
+                }
+                bitmap.SetPixel(x, y, new SKColor(red, green, blue, alpha));
             }
         }
 

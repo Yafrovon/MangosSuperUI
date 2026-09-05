@@ -340,7 +340,20 @@ app.UseDefaultFiles(new DefaultFilesOptions
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    ContentTypeProvider = contentTypeProvider
+    ContentTypeProvider = contentTypeProvider,
+    // Script and stylesheet files are NOT version-stamped when they are pulled in as ES-module
+    // imports (embed.js → viewer.js → …), so without an explicit policy the browser applies its
+    // heuristic freshness and keeps serving yesterday's module for a while after a publish — the
+    // Armor Forge viewer kept the old resize logic through several reloads. no-cache still lets the
+    // ETag answer 304 on every navigation; it just forces that revalidation.
+    OnPrepareResponse = ctx =>
+    {
+        string ext = Path.GetExtension(ctx.File.Name);
+        if (ext.Equals(".js", StringComparison.OrdinalIgnoreCase) ||
+            ext.Equals(".mjs", StringComparison.OrdinalIgnoreCase) ||
+            ext.Equals(".css", StringComparison.OrdinalIgnoreCase))
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    }
 });
 
 // ---------- MSUI Client: WebSocket ↔ TCP bridge (design doc DD-4) ----------

@@ -69,6 +69,9 @@
         .af-list td.muted { color: var(--text-muted); }
         .af-del { padding: 3px 9px; font-size: 11.5px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid #b4231855; background: #b4231814; color: #b42318; }
         .af-grp { background: #ffffff06; font-weight: 700; }
+        .af-list td.sel, .af-list th.sel { width: 22px; padding-right: 4px; }
+        .af-list input[type=checkbox] { margin: 0; cursor: pointer; }
+        .af-list tr.selected td { background: #4f8ef714; }
 
         /* right panel */
         .af-right { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
@@ -199,6 +202,7 @@
                    Delete removes it from the world DB and the patch; ids return to the pool.</p>
                 <div id="afList" class="af-list"><span class="muted" style="font-size:12px;">Loading…</span></div>
                 <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                    <button class="af-btn secondary" id="afDeleteSelected" disabled title="Delete every ticked set and piece in one go: one world reload, one repack, one queued patch rebuild.">Delete selected</button>
                     <button class="af-btn secondary" data-action="rebuildPatch" title="Package every queued change into patch-4.MPQ and deploy it to the client Data folder. Close WoW first — a running client locks the file.">Rebuild patch</button>
                     <a class="af-btn secondary" href="/ArmorForge/DownloadPatch" style="text-decoration:none;"><i class="fa-solid fa-download"></i> Download patch-4.MPQ</a>
                     <button class="af-btn secondary" id="btnRestartMangosd" data-action="restartMangosd" style="display:none;"
@@ -535,6 +539,7 @@
             var foreign = (opts.expansion === 'tbc' || opts.expansion === 'wotlk') && opts.entry;
             var q = new URLSearchParams({ theory: opts.theory || 'fan', tier: opts.tier || 'improved' });
             if (opts.hue != null) q.append('hue', Math.round(opts.hue));
+            if (opts.sat != null) { q.append('sat', opts.sat); q.append('light', opts.light); }
             var url;
             if (foreign) { q.append('expansion', opts.expansion); q.append('entry', opts.entry); url = '/ArmorForge/RecolorDressing?' + q; }
             else { q.append('displayId', displayId); url = '/RetextureEngine/PreviewOnModel?' + q; }
@@ -554,7 +559,7 @@
             if (!handle || !handle.character) return false;
             opts = opts || {};
             var gq = '&race=' + encodeURIComponent(curRace) + '&gender=' + encodeURIComponent(curGender);
-            var rq = '&hue=' + Math.round(opts.hue || 0) + '&theory=' + (opts.theory || 'fan') + '&tier=' + (opts.tier || 'improved') + gq;
+            var rq = '&hue=' + Math.round(opts.hue || 0) + (opts.sat != null ? '&sat=' + opts.sat + '&light=' + opts.light : '') + '&theory=' + (opts.theory || 'fan') + '&tier=' + (opts.tier || 'improved') + gq;
             var fetchFn = function (e) {
                 var url = e.tbc
                     ? '/ArmorForge/RecolorDressing?expansion=' + e.expansion + '&entry=' + e.entry + rq
@@ -936,6 +941,7 @@
             // and be baked into the next piece imported.
             if (apActive && apActive.entries && apActive.entries.indexOf(+p.entry) >= 0) {
                 fd.append('recolorHue', apActive.hue); fd.append('recolorTheory', apActive.theory); fd.append('recolorTier', apActive.tier);
+                if (apActive.sat != null) { fd.append('recolorSat', apActive.sat); fd.append('recolorLight', apActive.light); }
             }
             if ($('apGlowOn').checked) fd.append('glowColor', $('apGlowColor').value); // bake flame/glow colour
             var giPiece = +$('apGlowIntensity').value / 100;
@@ -1461,7 +1467,7 @@
         // rejects the request outright if these arrive — so a glow toggle left on from an earlier
         // preview would have blocked an otherwise fine set clone.
         if (!vanillaSet) {
-            if (apActive) { body.recolorHue = apActive.hue; body.recolorTheory = apActive.theory; body.recolorTier = apActive.tier; }
+            if (apActive) { body.recolorHue = apActive.hue; body.recolorSat = apActive.sat; body.recolorLight = apActive.light; body.recolorTheory = apActive.theory; body.recolorTier = apActive.tier; }
             if ($('apGlowOn').checked) body.glowColor = $('apGlowColor').value; // bake flame/glow colour
             var giSet = +$('apGlowIntensity').value / 100;
             if (Math.abs(giSet - 1) > 0.01) body.glowIntensity = giSet; // bake glow strength
@@ -1517,7 +1523,7 @@
     wireSet();
 
     // ── Appearance (live recolor of the previewed piece) ──
-    var apCurrent = null, apTheory = 'fan', apActive = null; // apActive = the recolor to BAKE on import
+    var apCurrent = null, apTheory = 'none', apActive = null; // apActive = the recolor to BAKE on import
     // Whether the CURRENT preview target can carry its appearance into the shipped item. True for the
     // import lanes, false for a vanilla clone (which ships no art at all). The preview still works
     // either way — this only governs what the panel promises and what gets sent on submit.
@@ -1532,7 +1538,8 @@
             + 'Recolor and glow here to see how a piece could look, then import it from a lane to keep it.';
         if (!on) apActive = null;
     }
-    var AP_THEORIES = [['fan', 'Fan'], ['identity', 'Shift'], ['analogous', 'Analogous'], ['accent', 'Accent'], ['luminance', 'Luminance'], ['bank', 'Palette']];
+    // 'none' first and default: the picked colour, straight, on every material.
+    var AP_THEORIES = [['none', 'None'], ['fan', 'Fan'], ['identity', 'Shift'], ['analogous', 'Analogous'], ['accent', 'Accent'], ['luminance', 'Luminance'], ['bank', 'Palette']];
     // Body-atlas (painted) slots — colour detection must sample one of these, not a helm/shoulder model.
     var PAINTED_INV = [5, 20, 7, 10, 6, 9, 8, 16]; // chest, robe, legs, hands, waist, wrists, feet, back
     function apPickDetectPiece(pieces) {
@@ -1562,6 +1569,14 @@
             else if (s) s.textContent = 'Ready to recolor ' + (t.name || 'piece') + '.';
         }).catch(function () { if (apCurrent === t && s) s.textContent = 'Ready to recolor ' + (t.name || 'piece') + '.'; });
     }
+    // Saturation + lightness of the pick (0..1), so white/grey/black picks mean what they say.
+    function hexToSL(hex) {
+        var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return { s: 1, l: 0.5 };
+        var r = parseInt(m[1], 16) / 255, g = parseInt(m[2], 16) / 255, b = parseInt(m[3], 16) / 255;
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+        var sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+        return { s: +sat.toFixed(3), l: +l.toFixed(3) };
+    }
     function hexToHue(hex) {
         var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return 0;
         var r = parseInt(m[1], 16) / 255, g = parseInt(m[2], 16) / 255, b = parseInt(m[3], 16) / 255;
@@ -1583,7 +1598,7 @@
         if (!apCurrent || !apCurrent.pieces || !apCurrent.pieces.length || !window.afViewer) { $('apStatus').textContent = 'Preview a piece or set first.'; return; }
         if (apBusy) { apPending = true; return; }
         apBusy = true; apPending = false;
-        var hue = hexToHue($('apColor').value), tier = $('apTier').value;
+        var hue = hexToHue($('apColor').value), tier = $('apTier').value, sl = hexToSL($('apColor').value);
         var foreign = apCurrent.pieces.some(function (p) { return (p.expansion === 'tbc' || p.expansion === 'wotlk') && p.entry; });
         $('apStatus').textContent = 'Recoloring…';
         function done(ok, n) {
@@ -1591,7 +1606,7 @@
             // Only remember a bake the shipped item can actually carry — see apSetBakeable — and record
             // WHICH pieces it belongs to, so it cannot ride along on a different piece imported later.
             if (ok && apBakeable) apActive = {
-                hue: Math.round(hue), theory: apTheory, tier: tier,
+                hue: Math.round(hue), sat: sl.s, light: sl.l, theory: apTheory, tier: tier,
                 entries: (apCurrent && apCurrent.pieces || []).map(function (x) { return +x.entry; }),
             };
             if (apPending) { apApply(); return; } // a newer colour/theory arrived mid-run — apply it once
@@ -1603,13 +1618,13 @@
         }
         if (foreign && apCurrent.items && apCurrent.items.length) {
             // Foreign (pre-import): ONE layered re-dress with recolored body + cape + helm/shoulder — no flicker.
-            window.afViewer.dressRecolor(apCurrent.items, { hue: hue, theory: apTheory, tier: tier }).then(function (ok) { done(ok, null); });
+            window.afViewer.dressRecolor(apCurrent.items, { hue: hue, sat: sl.s, light: sl.l, theory: apTheory, tier: tier }).then(function (ok) { done(ok, null); });
         } else {
             // Vanilla / forged: recolor each piece via the retexture engine (resolves its vanilla display).
             var okCount = 0;
             apCurrent.pieces.reduce(function (chain, pc) {
                 return chain.then(function () {
-                    return window.afViewer.applyRecolor(pc.displayId, { theory: apTheory, tier: tier, hue: hue, inventoryType: pc.inventoryType, entry: pc.entry, expansion: pc.expansion }).then(function (ok) { if (ok) okCount++; });
+                    return window.afViewer.applyRecolor(pc.displayId, { theory: apTheory, tier: tier, hue: hue, sat: sl.s, light: sl.l, inventoryType: pc.inventoryType, entry: pc.entry, expansion: pc.expansion }).then(function (ok) { if (ok) okCount++; });
                 });
             }, Promise.resolve()).then(function () { done(okCount > 0, okCount); });
         }
@@ -1644,6 +1659,7 @@
         var host = $('apTheories');
         AP_THEORIES.forEach(function (t) {
             var b = document.createElement('button'); b.className = 'af-btn secondary small'; b.textContent = t[1]; b.type = 'button';
+            if (t[0] === 'none') b.title = 'No palette theory — every material takes the picked colour straight, keeping its own shade and shine.';
             b.onclick = function () { apTheory = t[0]; host.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); apApply(); };
             if (t[0] === apTheory) b.classList.add('on');
             host.appendChild(b);
@@ -1664,21 +1680,21 @@
             var pieces = d.pieces || [], sets = d.sets || [];
             if (!pieces.length) { $('afList').innerHTML = '<span class="muted" style="font-size:12px;">No forged armor yet.</span>'; fillSetPicker(sets, pieces); return; }
             var bySet = {}; pieces.forEach(function (p) { (bySet[p.setId || 0] = bySet[p.setId || 0] || []).push(p); });
-            var h = '<table><thead><tr><th>Name</th><th>Piece</th><th>Entry</th><th></th></tr></thead><tbody>';
+            var h = '<table><thead><tr><th class="sel"><input type="checkbox" id="afSelAll" title="Select all"></th><th>Name</th><th>Piece</th><th>Entry</th><th></th></tr></thead><tbody>';
             function rows(list) {
                 list.forEach(function (r) {
-                    h += '<tr><td>' + esc(r.name) + '</td><td class="muted">' + esc(r.family) + (r.models ? ' · ' + r.models + ' m2' : '') + '</td><td class="muted">' + r.itemEntry + '</td>' +
+                    h += '<tr><td class="sel"><input type="checkbox" class="af-sel" data-piece="' + r.displayId + '" data-name="' + esc(r.name) + '"></td><td>' + esc(r.name) + '</td><td class="muted">' + esc(r.family) + (r.models ? ' · ' + r.models + ' m2' : '') + '</td><td class="muted">' + r.itemEntry + '</td>' +
                         '<td style="white-space:nowrap;"><button class="af-btn secondary small" data-view="' + r.displayId + '" data-entry="' + r.itemEntry + '" style="margin-right:5px;">View</button><button class="af-del" data-del="' + r.displayId + '">Delete</button></td></tr>';
                 });
             }
             sets.forEach(function (s) {
                 var list = bySet[s.setId] || []; if (!list.length) return;
-                h += '<tr class="af-grp"><td colspan="3">' + esc(s.name) + ' <span class="muted" style="font-weight:500;">· set ' + s.setId + ' · ' + list.length + ' pieces' + (s.bonusCount ? ' · ' + s.bonusCount + ' bonus(es)' : '') + '</span></td>' +
+                h += '<tr class="af-grp"><td class="sel"><input type="checkbox" class="af-sel" data-set="' + s.setId + '" data-name="' + esc(s.name) + '" title="Select the whole set"></td><td colspan="3">' + esc(s.name) + ' <span class="muted" style="font-weight:500;">· set ' + s.setId + ' · ' + list.length + ' pieces' + (s.bonusCount ? ' · ' + s.bonusCount + ' bonus(es)' : '') + '</span></td>' +
                     '<td style="white-space:nowrap;"><button class="af-btn secondary small" data-viewset="' + s.setId + '" style="margin-right:5px;">View set</button><button class="af-del" data-delset="' + s.setId + '">Delete set</button></td></tr>';
                 rows(list); delete bySet[s.setId];
             });
             var loose = Object.keys(bySet).reduce(function (acc, k) { return acc.concat(bySet[k]); }, []);
-            if (loose.length) { h += '<tr class="af-grp"><td colspan="4">Single pieces</td></tr>'; rows(loose); }
+            if (loose.length) { h += '<tr class="af-grp"><td class="sel"></td><td colspan="4">Single pieces</td></tr>'; rows(loose); }
             h += '</tbody></table>'; $('afList').innerHTML = h;
             $('afList').querySelectorAll('[data-view]').forEach(function (b) { b.addEventListener('click', function () {
                 if (!window.afViewer) return;
@@ -1701,9 +1717,65 @@
                 var fd = new FormData(); fd.append('setId', b.getAttribute('data-delset'));
                 post('/ArmorForge/DeleteSet', fd, true).then(function (res) { showDeleteResult(res, 'set'); loadList(); });
             }); });
+            wireSelection();
             fillSetPicker(sets, pieces);
         });
+        updateSelection();
     }
+
+    // ── Multi-select delete ──
+    // A ticked set row means the whole set; ticking a set also ticks its pieces so the count is honest.
+    function selectedArmor() {
+        var sets = [], pieces = [];
+        $('afList').querySelectorAll('.af-sel:checked').forEach(function (cb) {
+            if (cb.hasAttribute('data-set')) sets.push({ id: +cb.getAttribute('data-set'), name: cb.getAttribute('data-name') });
+            else pieces.push({ id: +cb.getAttribute('data-piece'), name: cb.getAttribute('data-name') });
+        });
+        return { sets: sets, pieces: pieces };
+    }
+    function updateSelection() {
+        var all = $('afList').querySelectorAll('.af-sel'), checked = $('afList').querySelectorAll('.af-sel:checked');
+        var btn = $('afDeleteSelected'); if (!btn) return;
+        btn.disabled = checked.length === 0;
+        btn.textContent = checked.length ? 'Delete selected (' + checked.length + ')' : 'Delete selected';
+        var head = $('afSelAll');
+        if (head) { head.checked = all.length > 0 && checked.length === all.length; head.indeterminate = checked.length > 0 && checked.length < all.length; }
+        all.forEach(function (cb) { cb.closest('tr').classList.toggle('selected', cb.checked); });
+    }
+    function wireSelection() {
+        var list = $('afList');
+        list.querySelectorAll('.af-sel').forEach(function (cb) { cb.addEventListener('change', function () {
+            // A set's checkbox drives its member rows (they follow the set row until the next group header).
+            if (cb.hasAttribute('data-set')) {
+                var tr = cb.closest('tr').nextElementSibling;
+                while (tr && !tr.classList.contains('af-grp')) { var c = tr.querySelector('.af-sel'); if (c) c.checked = cb.checked; tr = tr.nextElementSibling; }
+            }
+            updateSelection();
+        }); });
+        var head = list.querySelector('#afSelAll');
+        if (head) head.addEventListener('change', function () { list.querySelectorAll('.af-sel').forEach(function (cb) { cb.checked = head.checked; }); updateSelection(); });
+    }
+    (function () {
+        var btn = $('afDeleteSelected'); if (!btn) return;
+        btn.addEventListener('click', function () {
+            var sel = selectedArmor();
+            var n = sel.sets.length + sel.pieces.length; if (!n) return;
+            var names = sel.sets.map(function (s) { return '• set: ' + s.name; }).concat(sel.pieces.map(function (p) { return '• ' + p.name; }));
+            var shown = names.slice(0, 8).join('\n') + (names.length > 8 ? '\n• …and ' + (names.length - 8) + ' more' : '');
+            if (!confirm('Delete ' + sel.sets.length + ' set(s) and ' + sel.pieces.length + ' piece(s)?\n\n' + shown + '\n\nRemoves them from the world database and the registry; the client patch rebuild is queued once for the whole batch. IDs return to the pool.')) return;
+            btn.disabled = true;
+            post('/ArmorForge/DeleteMany', { displayIds: sel.pieces.map(function (p) { return p.id; }), setIds: sel.sets.map(function (s) { return s.id; }) }, false).then(function (res) {
+                var d = null; try { d = JSON.parse(res.body); } catch (e) { }
+                if (!d) { result('<div class="title bad">Delete failed</div><div class="bad" style="white-space:pre-wrap;">' + esc(res.body) + '</div>'); return; }
+                var h = '<div class="title ' + (d.ok ? 'ok' : 'bad') + '">' + (d.ok ? 'Deleted ' + n + ' item(s)' : 'Delete incomplete') + '</div>' +
+                    '<div class="' + (d.ok ? 'muted' : 'bad') + '" style="white-space:pre-wrap;">' + esc(d.message || '') + '</div><div class="af-kv" style="margin-top:6px;">';
+                (d.items || []).forEach(function (it) { h += '<b class="' + (it.ok ? 'ok' : 'bad') + '">' + (it.ok ? '✓' : '✗') + ' ' + esc(it.kind) + ' ' + it.id + '</b><span class="' + (it.ok ? 'muted' : 'bad') + '">' + esc(it.message || '') + '</span>'; });
+                h += '</div><div class="muted" style="margin-top:6px;">The pieces stay in the client until you close WoW and click Rebuild patch.</div>';
+                result(h);
+            }).catch(function (e) { result('<div class="title bad">Delete failed</div><div class="bad">' + esc(String(e)) + '</div>'); })
+              .then(function () { loadList(); refreshStatus(); });
+        });
+    })();
 
     // Delete results report what actually happened. A set delete can come back ok:false when some
     // pieces survived — in that case the set row is deliberately KEPT so the delete can be retried,

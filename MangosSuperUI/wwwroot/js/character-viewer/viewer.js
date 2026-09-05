@@ -128,13 +128,18 @@ export function createViewer(canvas) {
     // ── Resize handling ──
     // The render loop calls renderer.setSize() with updateStyle=false so we
     // never fight the CSS layout. setPixelRatio is sticky.
-    window.addEventListener('resize', () => {
+    const resize = () => {
         const w = parent.clientWidth, h = parent.clientHeight;
         if (w === 0 || h === 0) return;       // hidden tab etc.
         renderer.setSize(w, h, false);
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
-    });
+    };
+    window.addEventListener('resize', resize);
+    // The container changes size WITHOUT a window resize — on the Armor Forge the result panel
+    // below the viewer grows after an import and the viewer flexes shorter, which left the drawing
+    // buffer at the old aspect and squashed the character. Observe the container itself.
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(parent);
 
     /**
      * Fit camera to the bounding box of the scene. Useful after loading a GLB

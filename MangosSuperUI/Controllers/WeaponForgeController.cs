@@ -559,6 +559,40 @@ public class WeaponForgeController : Controller
         }
     }
 
+    public sealed class BulkDeleteRequest { public List<long> DisplayIds { get; set; } = new(); }
+
+    /// <summary>POST /WeaponForge/DeleteWeapons — delete a selection of forged weapons with one
+    /// reload, one lane repack and one queued unified rebuild. Body: <c>{ "displayIds": [..] }</c>.</summary>
+    [HttpPost]
+    public async Task<IActionResult> DeleteWeapons([FromBody] BulkDeleteRequest req)
+    {
+        if (req?.DisplayIds is not { Count: > 0 }) return BadRequest(new { ok = false, error = "No weapons selected." });
+        try
+        {
+            var r = await _builder.DeleteWeaponsAsync(req.DisplayIds);
+            return Json(new
+            {
+                ok = true,
+                deleted = r.Deleted.Select(w => new { w.DisplayId, w.ItemEntry, w.Name }),
+                failed = r.Failed,
+                weaponsRemaining = r.Rebuild.WeaponCount,
+                patchRemoved = r.Rebuild.PatchRemoved,
+                reloaded = r.Reloaded,
+                reloadMessage = r.ReloadMessage,
+                patchDeployed = r.Rebuild.PatchDeployed,
+                patchDeployMessage = r.Rebuild.PatchDeployMessage,
+                patchQueued = r.Rebuild.PatchQueued,
+                patchPending = r.Rebuild.PatchPending,
+                patchDownloadUrl = r.Rebuild.PatchRemoved ? null : "/WeaponForge/DownloadPatch",
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WeaponForge: bulk delete failed");
+            return Json(new { ok = false, error = ex.Message });
+        }
+    }
+
     /// <summary>POST /WeaponForge/RebuildPatch — repackage the unified patch-4.MPQ from current DB
     /// state (every lane), deploy it to the client Data folder, and drain the pending-rebuild queue.
     /// This is the ONE place a forge or delete reaches the client.</summary>
@@ -652,7 +686,7 @@ public class WeaponForgeController : Controller
         int targetTriangles = 500, float rollDegrees = 0f, bool flipGripEnd = false, bool straightenBlade = false,
         int bladeProfile = 0, int brightness = 0, int saturation = 0, GlbShapeControls? shape = null,
         int itemVisual = 0, int glowStartPercent = 10, int glowEndPercent = 90,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved")
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved")
     {
         var (bytes, err) = await ReadBounded(file, MaxGlbBytes);
         if (err is not null) return BadRequest(new { ok = false, error = err });
@@ -682,7 +716,7 @@ public class WeaponForgeController : Controller
         if (recolorHue.HasValue && texturePng is { Length: > 0 })
         {
             int rseed = RetextureSupport.SeedFor(GlbRecolorSeed(import.SourceSha256), recolorTier);
-            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorTheory, recolorTier, HttpContext.RequestAborted);
+            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorSat, recolorLight, recolorTheory, recolorTier, HttpContext.RequestAborted);
             if (rp is not null) { texturePng = rp; recolorApplied = true; }
             else import.Diagnostics.Warn("recolor.preview", "The embedded texture has no recolorable colour families; showing the original.");
         }
@@ -724,7 +758,7 @@ public class WeaponForgeController : Controller
         int targetTriangles = 500, float rollDegrees = 0f, bool flipGripEnd = false, bool straightenBlade = false,
         int bladeProfile = 0, int brightness = 0, int saturation = 0, string? itemConfig = null,
         GlbShapeControls? shape = null, int itemVisual = 0, int glowStartPercent = 10, int glowEndPercent = 90,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved")
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved")
     {
         var (configuredItem, configurationErrors) = await ParseItemConfigurationAsync(
             itemConfig, HttpContext.RequestAborted);
@@ -776,7 +810,7 @@ public class WeaponForgeController : Controller
             if (recolorHue.HasValue && texturePng is { Length: > 0 })
             {
                 int rseed = RetextureSupport.SeedFor(GlbRecolorSeed(import.SourceSha256), recolorTier);
-                var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorTheory, recolorTier, HttpContext.RequestAborted);
+                var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorSat, recolorLight, recolorTheory, recolorTier, HttpContext.RequestAborted);
                 if (rp is not null) { texturePng = rp; recolorBaked = true; }
                 else import.Diagnostics.Warn("recolor.bake", "The embedded texture has no recolorable colour families; forging the original.");
             }
@@ -1339,6 +1373,8 @@ public class WeaponForgeController : Controller
             return (null, "Glow color must be a six-digit hex color such as #33aaff.");
 
         var (targetHue, targetSaturation) = HueAndSaturation(rgb);
+        float lightnessScale = GlowLightnessScale(rgb);
+        bool darkAura = IsDarkGlowPick(rgb);
         IReadOnlyList<NativeWeaponEffectTexture> selected;
         try
         {
@@ -1359,7 +1395,7 @@ public class WeaponForgeController : Controller
         try
         {
             materialTint = M2MaterialColorHueWriter.Apply(
-                source.M2Bytes, targetHue, targetSaturation, eligibleTextureIndices);
+                source.M2Bytes, targetHue, targetSaturation, eligibleTextureIndices, lightnessScale);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or OverflowException)
         {
@@ -1395,7 +1431,7 @@ public class WeaponForgeController : Controller
                 byte[]? sourcePng = BlpToPng(sourceBlp);
                 byte[]? tintedPng = sourcePng is { Length: > 0 }
                     ? NativeWeaponEffectRecolor.TintPng(
-                        sourcePng, targetHue, targetSaturation)
+                        sourcePng, targetHue, targetSaturation, lightnessScale: lightnessScale, darkAura: darkAura)
                     : null;
                 tintedBlp = tintedPng is { Length: > 0 }
                     ? EncodePreservedDisplayBlp(tintedPng)
@@ -1419,7 +1455,7 @@ public class WeaponForgeController : Controller
         try
         {
             particleTint = M2ParticleColorHueWriter.Apply(
-                tintedM2, targetHue, targetSaturation, eligibleTextureIndices);
+                tintedM2, targetHue, targetSaturation, eligibleTextureIndices, lightnessScale);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or OverflowException)
         {
@@ -1439,6 +1475,24 @@ public class WeaponForgeController : Controller
             source.Diagnostics.Info("vanilla.effect.particle", note);
         tintedM2 = particleTint.M2;
         int emittersRecolored = particleTint.EmittersChanged;
+
+        // Dark pick: the tinted sheets now carry coverage alpha, so their compositing passes must
+        // draw alpha-blended to show as a dark aura. Only render-flag entries used exclusively by
+        // the admitted effect batches are re-flagged; a shared entry stays additive (and dims).
+        if (darkAura && textures.Count > 0)
+        {
+            M2EffectBlendModeWriter.Result blend;
+            try { blend = M2EffectBlendModeWriter.Apply(tintedM2, eligibleTextureIndices); }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                return (null, $"The source render-flag table could not be inspected safely: {ex.Message}");
+            }
+            tintedM2 = blend.M2;
+            foreach (string note in blend.Notes) source.Diagnostics.Info("vanilla.effect.blend", note);
+            source.Diagnostics.Info("vanilla.effect.blend", blend.MaterialsChanged.Count > 0
+                ? $"Dark glow pick: {blend.MaterialsChanged.Count} compositing material(s) re-flagged additive → alpha-blend so the effect draws as a dark aura."
+                : "Dark glow pick: no compositing material could be re-flagged (shared with opaque batches); the effect is dimmed instead.");
+        }
 
         if (textures.Count == 0 && colorTracksRecolored == 0 && emittersRecolored == 0)
         {
@@ -1919,18 +1973,18 @@ public class WeaponForgeController : Controller
     public Task<IActionResult> TbcPreviewWeapon(uint entry = 0, string? model = null, uint displayRow = 0,
         string? weaponType = null, int targetTriangles = 0, int brightness = 0, int saturation = 0,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved",
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved",
         string? glowColor = null) =>
-        LegacyPreviewWeapon(_sources.Tbc, entry, model, displayRow, weaponType, targetTriangles, brightness, saturation, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+        LegacyPreviewWeapon(_sources.Tbc, entry, model, displayRow, weaponType, targetTriangles, brightness, saturation, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     /// <summary>GET /WeaponForge/WotlkPreviewWeapon — the WotLK preview.</summary>
     [HttpGet]
     public Task<IActionResult> WotlkPreviewWeapon(uint entry = 0, string? model = null, uint displayRow = 0,
         string? weaponType = null, int targetTriangles = 0, int brightness = 0, int saturation = 0,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved",
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved",
         string? glowColor = null) =>
-        LegacyPreviewWeapon(_sources.Wotlk, entry, model, displayRow, weaponType, targetTriangles, brightness, saturation, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+        LegacyPreviewWeapon(_sources.Wotlk, entry, model, displayRow, weaponType, targetTriangles, brightness, saturation, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     /// <summary>GET /WeaponForge/VanillaPreviewWeapon — recolor the stock display skin while
     /// preserving the original 1.12 M2 and its complete animation/render graph.</summary>
@@ -1938,28 +1992,28 @@ public class WeaponForgeController : Controller
     public Task<IActionResult> VanillaPreviewWeapon(uint entry = 0, string? model = null, uint displayRow = 0,
         string? weaponType = null, int targetTriangles = 0, int brightness = 0, int saturation = 0,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved",
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved",
         string? glowColor = null) =>
         PreviewPreservedVanillaWeapon(entry, model, displayRow, weaponType, brightness, saturation,
-            shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+            shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     /// <summary>GET /WeaponForge/ImportPreviewWeapon?expansion=tbc|wotlk|vanilla&amp;… — lane-keyed form.</summary>
     [HttpGet]
     public Task<IActionResult> ImportPreviewWeapon(string? expansion = null, uint entry = 0, string? model = null, uint displayRow = 0,
         string? weaponType = null, int targetTriangles = 0, int brightness = 0, int saturation = 0,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved",
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved",
         string? glowColor = null) =>
         string.Equals(expansion, VanillaMpqSource.SourceKey, StringComparison.OrdinalIgnoreCase)
             ? PreviewPreservedVanillaWeapon(entry, model, displayRow, weaponType, brightness, saturation,
-                shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor)
+                shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor)
             : LegacyPreviewWeapon(_sources.Get(expansion), entry, model, displayRow, weaponType,
                 targetTriangles, brightness, saturation, shape, flipGripEnd, itemVisual, glowSpread,
-                recolorHue, recolorTheory, recolorTier, glowColor);
+                recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     private async Task<IActionResult> PreviewPreservedVanillaWeapon(uint entry, string? model, uint displayRow,
         string? weaponType, int brightness, int saturation, GlbShapeControls? shape, bool flipGripEnd,
-        int itemVisual, bool glowSpread, float? recolorHue, string recolorTheory, string recolorTier,
+        int itemVisual, bool glowSpread, float? recolorHue, float? recolorSat, float? recolorLight, string recolorTheory, string recolorTier,
         string? glowColor)
     {
         var src = _sources.Vanilla;
@@ -1994,7 +2048,7 @@ public class WeaponForgeController : Controller
         if (recolorHue.HasValue)
         {
             int seed = RetextureSupport.SeedFor((int)sel.DisplayRow, recolorTier);
-            byte[]? recolored = await RecolorTexturePngAsync(texturePng, seed, recolorHue.Value,
+            byte[]? recolored = await RecolorTexturePngAsync(texturePng, seed, recolorHue.Value, recolorSat, recolorLight,
                 recolorTheory, recolorTier, HttpContext.RequestAborted);
             if (recolored is not null) { texturePng = recolored; recolorApplied = true; }
             else source.Diagnostics.Warn("recolor.preview",
@@ -2085,7 +2139,7 @@ public class WeaponForgeController : Controller
     private async Task<IActionResult> LegacyPreviewWeapon(LegacyImportSource src, uint entry, string? model, uint displayRow,
         string? weaponType, int targetTriangles, int brightness, int saturation,
         GlbShapeControls? shape, bool flipGripEnd, int itemVisual, bool glowSpread,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved",
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved",
         string? glowColor = null)
     {
         var (sel, item) = ResolveLegacySelection(src, entry, model, displayRow);
@@ -2101,7 +2155,7 @@ public class WeaponForgeController : Controller
         if (recolorHue.HasValue && texturePng is { Length: > 0 })
         {
             int rseed = RetextureSupport.SeedFor((int)sel.DisplayRow, recolorTier);
-            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorTheory, recolorTier, HttpContext.RequestAborted);
+            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorSat, recolorLight, recolorTheory, recolorTier, HttpContext.RequestAborted);
             if (rp is not null) { texturePng = rp; recolorApplied = true; }
             else diag.Warn("recolor.preview", "The skin has no recolorable colour families; showing the original texture.");
         }
@@ -2122,8 +2176,14 @@ public class WeaponForgeController : Controller
             {
                 var (effectHue, effectSaturation) = HueAndSaturation(previewGlow);
                 LegacyWeaponEffectTint effectTint = LegacyWeaponEffectRecolor.Apply(
-                    mesh, effectPngs, effectBlps: null, effectHue, effectSaturation);
+                    mesh, effectPngs, effectBlps: null, effectHue, effectSaturation,
+                    GlowLightnessScale(previewGlow), IsDarkGlowPick(previewGlow));
                 effectPngs = effectTint.Pngs;
+                if (effectTint.Passes is not null)
+                {
+                    mesh.Passes = effectTint.Passes;
+                    diag.Info("effect.tint.preview", "Dark glow pick: compositing passes re-flagged from additive to alpha-blend so the effect draws as a dark aura.");
+                }
                 effectTextureSlotsRecolored = effectTint.TextureSlots;
                 if (effectTextureSlotsRecolored.Count > 0)
                     diag.Info("effect.tint.preview",
@@ -2216,8 +2276,8 @@ public class WeaponForgeController : Controller
         string? name = null, string? weaponType = null, int targetTriangles = 0,
         int brightness = 0, int saturation = 0, string? itemConfig = null,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
-        LegacyForge(_sources.Tbc, entry, model, displayRow, name, weaponType, targetTriangles, brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
+        LegacyForge(_sources.Tbc, entry, model, displayRow, name, weaponType, targetTriangles, brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     /// <summary>POST /WeaponForge/ForgeWotlk — package one WotLK weapon (same contract as ForgeTbc).</summary>
     [HttpPost]
@@ -2225,8 +2285,8 @@ public class WeaponForgeController : Controller
         string? name = null, string? weaponType = null, int targetTriangles = 0,
         int brightness = 0, int saturation = 0, string? itemConfig = null,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
-        LegacyForge(_sources.Wotlk, entry, model, displayRow, name, weaponType, targetTriangles, brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
+        LegacyForge(_sources.Wotlk, entry, model, displayRow, name, weaponType, targetTriangles, brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     /// <summary>POST /WeaponForge/ForgeVanilla — package one STOCK weapon as a new custom item with
     /// its own display: recolored skin, tinted glow, chosen enchant visual. This is the whole reason
@@ -2238,9 +2298,9 @@ public class WeaponForgeController : Controller
         string? name = null, string? weaponType = null, int targetTriangles = 0,
         int brightness = 0, int saturation = 0, string? itemConfig = null,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
         ForgePreservedVanilla(entry, model, displayRow, name, weaponType, targetTriangles, brightness,
-            saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue,
+            saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread, recolorHue, recolorSat, recolorLight,
             recolorTheory, recolorTier, glowColor);
 
     /// <summary>POST /WeaponForge/ForgeImport?expansion=tbc|wotlk|vanilla — lane-keyed form.</summary>
@@ -2249,19 +2309,19 @@ public class WeaponForgeController : Controller
         string? name = null, string? weaponType = null, int targetTriangles = 0,
         int brightness = 0, int saturation = 0, string? itemConfig = null,
         GlbShapeControls? shape = null, bool flipGripEnd = false, int itemVisual = -1, bool glowSpread = false,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null) =>
         string.Equals(expansion, VanillaMpqSource.SourceKey, StringComparison.OrdinalIgnoreCase)
             ? ForgePreservedVanilla(entry, model, displayRow, name, weaponType, targetTriangles,
                 brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual, glowSpread,
-                recolorHue, recolorTheory, recolorTier, glowColor)
+                recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor)
             : LegacyForge(_sources.Get(expansion), entry, model, displayRow, name, weaponType,
                 targetTriangles, brightness, saturation, itemConfig, shape, flipGripEnd, itemVisual,
-                glowSpread, recolorHue, recolorTheory, recolorTier, glowColor);
+                glowSpread, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor);
 
     private async Task<IActionResult> ForgePreservedVanilla(uint entry, string? model, uint displayRow,
         string? name, string? weaponType, int targetTriangles, int brightness, int saturation,
         string? itemConfig, GlbShapeControls? shape, bool flipGripEnd, int itemVisual, bool glowSpread,
-        float? recolorHue, string recolorTheory, string recolorTier, string? glowColor)
+        float? recolorHue, float? recolorSat, float? recolorLight, string recolorTheory, string recolorTier, string? glowColor)
     {
         var (configuredItem, configurationErrors) = await ParseItemConfigurationAsync(
             itemConfig, HttpContext.RequestAborted);
@@ -2318,7 +2378,7 @@ public class WeaponForgeController : Controller
         if (recolorHue.HasValue)
         {
             int seed = RetextureSupport.SeedFor((int)sel.DisplayRow, recolorTier);
-            byte[]? recolored = await RecolorTexturePngAsync(texturePng, seed, recolorHue.Value,
+            byte[]? recolored = await RecolorTexturePngAsync(texturePng, seed, recolorHue.Value, recolorSat, recolorLight,
                 recolorTheory, recolorTier, HttpContext.RequestAborted);
             if (recolored is not null) { texturePng = recolored; recolorBaked = true; }
             else source.Diagnostics.Warn("recolor.bake",
@@ -2409,7 +2469,7 @@ public class WeaponForgeController : Controller
     private async Task<IActionResult> LegacyForge(LegacyImportSource src, uint entry, string? model, uint displayRow,
         string? name, string? weaponType, int targetTriangles, int brightness, int saturation, string? itemConfig,
         GlbShapeControls? shape, bool flipGripEnd, int itemVisual, bool glowSpread,
-        float? recolorHue = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null)
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "primary", string recolorTier = "improved", string? glowColor = null)
     {
         var (configuredItem, configurationErrors) = await ParseItemConfigurationAsync(
             itemConfig, HttpContext.RequestAborted);
@@ -2458,7 +2518,7 @@ public class WeaponForgeController : Controller
         if (recolorHue.HasValue && texturePng is { Length: > 0 })
         {
             int rseed = RetextureSupport.SeedFor((int)sel.DisplayRow, recolorTier);
-            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorTheory, recolorTier, HttpContext.RequestAborted);
+            var rp = await RecolorTexturePngAsync(texturePng, rseed, recolorHue.Value, recolorSat, recolorLight, recolorTheory, recolorTier, HttpContext.RequestAborted);
             if (rp is not null) { texturePng = rp; recolorBaked = true; }
             else diag.Warn("recolor.bake", "The skin has no recolorable colour families; forging the original texture.");
         }
@@ -2485,8 +2545,14 @@ public class WeaponForgeController : Controller
             {
                 var (effectHue, effectSaturation) = HueAndSaturation(effectGlow);
                 LegacyWeaponEffectTint effectTint = LegacyWeaponEffectRecolor.Apply(
-                    mesh, effectPngs, effectBlps, effectHue, effectSaturation);
+                    mesh, effectPngs, effectBlps, effectHue, effectSaturation,
+                    GlowLightnessScale(effectGlow), IsDarkGlowPick(effectGlow));
                 effectPngs = effectTint.Pngs;
+                if (effectTint.Passes is not null)
+                {
+                    mesh.Passes = effectTint.Passes;
+                    diag.Info("effect.tint.bake", "Dark glow pick: compositing passes re-flagged from additive to alpha-blend so the effect draws as a dark aura.");
+                }
                 effectBlps = effectTint.Blps;
                 effectTextureSlotsRecolored = effectTint.TextureSlots;
                 if (effectTextureSlotsRecolored.Count > 0)
@@ -2874,9 +2940,9 @@ public class WeaponForgeController : Controller
     /// <summary>Recolor a decoded skin PNG at the chosen primary hue via the palette engine (the
     /// engine is file-path based, so this round-trips through a temp dir). Null when the skin has no
     /// detectable colour families, so callers fall back to the original texture.</summary>
-    private async Task<byte[]?> RecolorTexturePngAsync(byte[] png, int seed, float hue, string theory, string tier, CancellationToken ct)
+    private async Task<byte[]?> RecolorTexturePngAsync(byte[] png, int seed, float hue, float? sat, float? light, string theory, string tier, CancellationToken ct)
     {
-        if (Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "primary";
+        if (Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "none";
         var (kd, ku, mm, pop) = RetextureSupport.TierShape(tier);
         string tmpDir = Path.Combine(Path.GetTempPath(), "weaponbake", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(tmpDir);
@@ -2889,7 +2955,8 @@ public class WeaponForgeController : Controller
             // unleashed hue (180°) — matching the Armor Forge, unlike the retexture engine's tiered
             // budget which pins dominant/dark regions to their source colour.
             var ok = await _palette.RecolorSeededAsync(basePng, outPng, seed, 1f, 0f, tintStructural: true, ct,
-                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue);
+                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue,
+                baseSatOverride: sat, baseLightOverride: light);
             return ok is null ? null : await System.IO.File.ReadAllBytesAsync(outPng, ct);
         }
         catch (Exception ex) { _logger.LogDebug(ex, "WeaponForge: recolor failed"); return null; }
@@ -2957,6 +3024,23 @@ public class WeaponForgeController : Controller
             && int.TryParse(hex.AsSpan(4, 2), H, null, out int b)
             ? new Vector3(r, g, b) : null;
     }
+
+    /// <summary>How much of the effect's own brightness a glow pick keeps. Effects are additive, so
+    /// hue/saturation alone cannot express a dark pick — black desaturates to a WHITE glow. Picks at
+    /// or above mid-lightness keep the effect's full brightness; darker picks dim it in proportion,
+    /// and pure black switches the tinted effect off.</summary>
+    private static float GlowLightnessScale(Vector3 rgb255)
+    {
+        float r = Math.Clamp(rgb255.X / 255f, 0f, 1f);
+        float g = Math.Clamp(rgb255.Y / 255f, 0f, 1f);
+        float b = Math.Clamp(rgb255.Z / 255f, 0f, 1f);
+        float lightness = (MathF.Max(r, MathF.Max(g, b)) + MathF.Min(r, MathF.Min(g, b))) * 0.5f;
+        return Math.Clamp(lightness / 0.5f, 0f, 1f);
+    }
+
+    /// <summary>A glow pick darker than mid-grey. Additive effects cannot draw it, so the effect is
+    /// switched to an alpha-blended dark aura (see M2EffectBlendModeWriter / LegacyWeaponEffectRecolor).</summary>
+    private static bool IsDarkGlowPick(Vector3 rgb255) => GlowLightnessScale(rgb255) < 0.999f;
 
     private static (float HueDegrees, float Saturation) HueAndSaturation(Vector3 rgb255)
     {

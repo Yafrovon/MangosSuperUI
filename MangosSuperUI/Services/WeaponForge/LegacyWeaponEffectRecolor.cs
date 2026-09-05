@@ -8,7 +8,10 @@ namespace MangosSuperUI.Services.WeaponForge;
 internal sealed record LegacyWeaponEffectTint(
     List<byte[]>? Pngs,
     List<byte[]>? Blps,
-    IReadOnlyList<int> TextureSlots);
+    IReadOnlyList<int> TextureSlots,
+    /// <summary>Replacement render passes when a dark glow pick re-flagged the compositing passes
+    /// from additive to alpha-blend; null when the passes are unchanged.</summary>
+    IReadOnlyList<WeaponPass>? Passes = null);
 
 /// <summary>
 /// Select and hue-shift only later-client texture slots used exclusively by compositing passes.
@@ -60,11 +63,13 @@ internal static class LegacyWeaponEffectRecolor
         IReadOnlyList<byte[]>? effectPngs,
         IReadOnlyList<byte[]>? effectBlps,
         float targetHueDegrees,
-        float targetSaturation)
+        float targetSaturation,
+        float lightnessScale = 1f,
+        bool darkAura = false)
     {
         ArgumentNullException.ThrowIfNull(mesh);
-        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation))
-            throw new ArgumentException("Effect tint hue and saturation must be finite.");
+        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation) || !float.IsFinite(lightnessScale))
+            throw new ArgumentException("Effect tint hue, saturation and lightness scale must be finite.");
 
         if (effectPngs is null || effectPngs.Count == 0)
             return new LegacyWeaponEffectTint(
@@ -88,7 +93,7 @@ internal static class LegacyWeaponEffectRecolor
                     $"Effect texture slot {textureSlot} has no decoded PNG source.");
 
             byte[]? tinted = NativeWeaponEffectRecolor.TintPng(
-                sourcePng, targetHueDegrees, targetSaturation);
+                sourcePng, targetHueDegrees, targetSaturation, lightnessScale: lightnessScale, darkAura: darkAura);
             if (tinted is not { Length: > 0 })
                 throw new InvalidOperationException(
                     $"Effect texture slot {textureSlot} could not be hue-shifted safely.");
@@ -99,6 +104,31 @@ internal static class LegacyWeaponEffectRecolor
             if (blps is not null) blps[index] = Array.Empty<byte>();
         }
 
-        return new LegacyWeaponEffectTint(pngs, blps, selected);
+        // A dark pick cannot be ADDED to the frame: re-flag every compositing pass over a tinted slot
+        // as alpha-blend so the coverage-alpha sheet draws a dark aura. Blend 3/4 only — a modulate
+        // pass (5/6) already darkens and is left as authored.
+        IReadOnlyList<WeaponPass>? passes = null;
+        if (darkAura && mesh.Passes is { Count: > 0 })
+        {
+            var tintedSlots = selected.ToHashSet();
+            bool changed = false;
+            var reflagged = new List<WeaponPass>(mesh.Passes.Count);
+            foreach (WeaponPass pass in mesh.Passes)
+            {
+                IReadOnlyList<int> slots = pass.TextureBindings is { Count: > 0 } bindings
+                    ? bindings.Select(binding => binding.TextureSlot).Distinct().ToArray()
+                    : [pass.TextureSlot];
+                bool overTinted = slots.Any(tintedSlots.Contains);
+                if (overTinted && pass.BlendMode is 3 or 4)
+                {
+                    reflagged.Add(pass with { BlendMode = 2 });
+                    changed = true;
+                }
+                else reflagged.Add(pass);
+            }
+            if (changed) passes = reflagged;
+        }
+
+        return new LegacyWeaponEffectTint(pngs, blps, selected, passes);
     }
 }

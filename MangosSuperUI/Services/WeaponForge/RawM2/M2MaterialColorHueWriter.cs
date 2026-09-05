@@ -45,16 +45,18 @@ public static class M2MaterialColorHueWriter
         byte[] m2,
         float targetHueDegrees,
         float targetSaturation,
-        IReadOnlyCollection<int>? eligibleTextureIndices = null)
+        IReadOnlyCollection<int>? eligibleTextureIndices = null,
+        float lightnessScale = 1f)
     {
         ArgumentNullException.ThrowIfNull(m2);
 
         var notes = new List<string>();
-        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation))
-            return AdmissionFailure(m2, "target hue and saturation must be finite");
+        if (!float.IsFinite(targetHueDegrees) || !float.IsFinite(targetSaturation) || !float.IsFinite(lightnessScale))
+            return AdmissionFailure(m2, "target hue, saturation and lightness scale must be finite");
 
         targetHueDegrees = NormalizeHue(targetHueDegrees);
         targetSaturation = Math.Clamp(targetSaturation, 0f, 1f);
+        lightnessScale = Math.Clamp(lightnessScale, 0f, 1f);
 
         RawM2Document? document = RawM2Document.Parse(m2, out string? parseError);
         if (document is null)
@@ -314,7 +316,7 @@ public static class M2MaterialColorHueWriter
                 float green = F32(m2, valueOffset + 4);
                 float blue = F32(m2, valueOffset + 8);
                 RgbToHsl(red, green, blue, out _, out _, out float lightness);
-                HslToRgb(targetHueDegrees, targetSaturation, lightness,
+                HslToRgb(targetHueDegrees, targetSaturation, lightness * lightnessScale,
                     out red, out green, out blue);
                 F32W(output, valueOffset, red);
                 F32W(output, valueOffset + 4, green);

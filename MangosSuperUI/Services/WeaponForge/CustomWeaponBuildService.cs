@@ -29,7 +29,7 @@ namespace MangosSuperUI.Services.WeaponForge;
 /// always also written to the artifact root). The one step that stays manual is restarting the
 /// client, which nothing can automate away.
 /// </summary>
-public sealed class CustomWeaponBuildService
+public sealed class CustomWeaponBuildService : ICustomMpqMemberSource
 {
     public const string PatchFileName = "patch-5.MPQ";
     private const string LegacyPatchFileName = "patch-4.MPQ"; // pre-rename Forge output; cleaned up on write
@@ -60,6 +60,7 @@ public sealed class CustomWeaponBuildService
         IServiceProvider services)
     {
         _mpq = mpq; _ids = ids; _patch = patch; _compiler = compiler; _preview = preview;
+        _mpq.RegisterCustomMemberSource(this);
         _donors = donors; _dbc = dbc; _audit = audit; _ra = ra; _db = db; _env = env;
         _config = config; _logger = logger; _services = services;
     }
@@ -851,7 +852,36 @@ public sealed class CustomWeaponBuildService
     /// item_template row (with a core reload), and the packaged patch (repackaged and redeployed
     /// without it). Its entry/display ids are RELEASED for reuse — the audit log is the history.
     /// </summary>
-    public async Task<WeaponDeleteResult> DeleteWeaponAsync(long displayId)
+    /// <param name="rebuild">Reload the world table and repack this lane's artifact after the delete.
+    /// False when deleting a batch, so that happens ONCE at the end (see <see cref="DeleteWeaponsAsync"/>).</param>
+    // ── ICustomMpqMemberSource ─────────────────────────────────────────────────────────────
+    // Previews resolve a forged weapon's M2 and BLPs through MpqReaderService; until the next
+    // Rebuild patch those bytes exist only here. Cached briefly so one dressing pass is one query
+    // per member.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime At, byte[]? Data)> _memberCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MemberCacheTtl = TimeSpan.FromSeconds(30);
+
+    public byte[]? TryGetMember(string mpqPath)
+    {
+        if (string.IsNullOrEmpty(mpqPath)) return null;
+        if (_memberCache.TryGetValue(mpqPath, out var hit) && DateTime.UtcNow - hit.At < MemberCacheTtl)
+            return hit.Data;
+        byte[]? data = null;
+        try
+        {
+            using var conn = _db.Admin();
+            conn.Open();
+            data = conn.ExecuteScalar<byte[]?>("SELECT compiled_m2 FROM custom_weapon_model WHERE model_mpq_path = @p LIMIT 1", new { p = mpqPath })
+                ?? conn.ExecuteScalar<byte[]?>("SELECT compiled_blp FROM custom_weapon_display WHERE texture_mpq_path = @p LIMIT 1", new { p = mpqPath })
+                ?? conn.ExecuteScalar<byte[]?>("SELECT compiled_blp FROM custom_weapon_model_texture WHERE mpq_path = @p LIMIT 1", new { p = mpqPath });
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "WeaponForge: registry member lookup failed for {Path}", mpqPath); }
+        _memberCache[mpqPath] = (DateTime.UtcNow, data);
+        return data;
+    }
+
+    public async Task<WeaponDeleteResult> DeleteWeaponAsync(long displayId, bool rebuild = true)
     {
         ForgedWeaponInfo? victim = (await ListWeaponsAsync()).FirstOrDefault(w => w.DisplayId == displayId);
         if (victim is null)
@@ -863,7 +893,7 @@ public sealed class CustomWeaponBuildService
         using var batch = AuditBatch.Begin($"Weapon Forge — delete '{victim.Name}' (display {displayId})");
         try
         {
-            return await DeleteWeaponCoreAsync(displayId, victim);
+            return await DeleteWeaponCoreAsync(displayId, victim, rebuild);
         }
         catch (Exception ex)
         {
@@ -885,7 +915,7 @@ public sealed class CustomWeaponBuildService
         }
     }
 
-    private async Task<WeaponDeleteResult> DeleteWeaponCoreAsync(long displayId, ForgedWeaponInfo victim)
+    private async Task<WeaponDeleteResult> DeleteWeaponCoreAsync(long displayId, ForgedWeaponInfo victim, bool rebuild)
     {
         // Snapshot the world row BEFORE it is destroyed. The ForgedWeaponInfo summary the delete row
         // used to carry names the weapon but not its stats, so a delete of the wrong item left
@@ -916,11 +946,15 @@ public sealed class CustomWeaponBuildService
         var itemRow = victim.ItemEntry > 0
             ? await DeleteItemRowAsync(victim.ItemEntry)
             : (Ok: true, Message: "no item entry recorded");
-        var reload = itemRow.Ok ? await ReloadItemTemplateAsync() : (Ok: false, Message: "skipped — world row not deleted");
+        var reload = !rebuild ? (Ok: true, Message: "deferred to the end of the batch")
+            : itemRow.Ok ? await ReloadItemTemplateAsync() : (Ok: false, Message: "skipped — world row not deleted");
 
         // Repack this lane's artifact so the registry and the build output agree, but leave the
         // client patch alone: the removal ships with the next Rebuild patch click like every forge.
-        var rebuild = await RebuildPatchAsync($"deleted weapon display {displayId}", deploy: false);
+        // A batch delete defers this too, so N deletes cost one repack rather than N.
+        var patch = rebuild
+            ? await RebuildPatchAsync($"deleted weapon display {displayId}", deploy: false)
+            : DeferredRebuildSummary();
 
         await _audit.LogAsync(new AuditEntry
         {
@@ -936,8 +970,8 @@ public sealed class CustomWeaponBuildService
             RevertKind = RevertKind.None,
             Success = itemRow.Ok,
             Notes = $"Deleted everywhere. World row: {itemRow.Message}. Reload: {reload.Message}. " +
-                    $"Patch: {(rebuild.PatchRemoved ? "removed (no weapons left)" : $"repackaged with {rebuild.WeaponCount} weapon(s)")}, " +
-                    $"{rebuild.PatchDeployMessage}. Ids released for reuse. " +
+                    $"Patch: {(patch.PatchRemoved ? "removed (no weapons left)" : $"repackaged with {patch.WeaponCount} weapon(s)")}, " +
+                    $"{patch.PatchDeployMessage}. Ids released for reuse. " +
                     (itemRowSnapshot is null
                         ? "No item_template row was found to snapshot."
                         : "The destroyed item_template row is captured in state_before."),
@@ -949,11 +983,59 @@ public sealed class CustomWeaponBuildService
         return new WeaponDeleteResult
         {
             Deleted = victim,
-            Rebuild = rebuild,
+            Rebuild = patch,
             ItemRowDeleted = itemRow.Ok,
             ItemRowMessage = itemRow.Message,
             Reloaded = reload.Ok,
             ReloadMessage = reload.Message,
+        };
+    }
+
+    private static WeaponPatchRebuildSummary DeferredRebuildSummary(string message = "deferred to the end of the batch") => new()
+    {
+        WeaponCount = 0, PatchRemoved = false, MpqSha256 = null,
+        PatchDeployed = false, PatchDeployMessage = message,
+        Diagnostics = Array.Empty<string>(),
+    };
+
+    /// <summary>Delete several forged weapons with ONE world reload and ONE lane repack at the end,
+    /// and one queued unified rebuild. Each weapon is still deleted (and audited) on its own, so one
+    /// failure does not strand the rest; the per-weapon outcome is reported back.</summary>
+    public async Task<WeaponBulkDeleteResult> DeleteWeaponsAsync(IReadOnlyList<long> displayIds)
+    {
+        var deleted = new List<ForgedWeaponInfo>();
+        var failed = new List<(long DisplayId, string Error)>();
+        var ids = displayIds.Distinct().ToList();
+        using var batch = AuditBatch.Begin($"Weapon Forge — delete {ids.Count} weapon(s)");
+        foreach (long id in ids)
+        {
+            try
+            {
+                var r = await DeleteWeaponAsync(id, rebuild: false);
+                deleted.Add(r.Deleted);
+                if (!r.ItemRowDeleted) failed.Add((id, $"registry row removed but the world row was not: {r.ItemRowMessage}"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WeaponForge: bulk delete of display {Display} failed", id);
+                failed.Add((id, ex.Message));
+            }
+        }
+
+        // Nothing removed means nothing to reload or repack — and no rebuild to queue.
+        var reload = deleted.Count > 0 ? await ReloadItemTemplateAsync() : (Ok: true, Message: "nothing deleted — no reload");
+        var rebuild = deleted.Count > 0
+            ? await RebuildPatchAsync($"deleted {deleted.Count} weapon(s) in one batch", deploy: false)
+            : DeferredRebuildSummary("nothing deleted — patch untouched");
+        _logger.LogInformation("WeaponForge: bulk delete — {Deleted} deleted, {Failed} failed; reload={Reload}; {Patch}",
+            deleted.Count, failed.Count, reload.Ok, rebuild.PatchDeployMessage);
+
+        return new WeaponBulkDeleteResult
+        {
+            Deleted = deleted,
+            Failed = failed.Select(f => new WeaponBulkDeleteFailure { DisplayId = f.DisplayId, Error = f.Error }).ToList(),
+            Reloaded = reload.Ok, ReloadMessage = reload.Message,
+            Rebuild = rebuild,
         };
     }
 
@@ -1712,7 +1794,10 @@ public sealed class CustomWeaponBuildService
         if (!string.IsNullOrWhiteSpace(cfgPath) && File.Exists(cfgPath))
             return File.ReadAllBytes(cfgPath);
 
-        int myRank = Mpq.MpqPatchOrder.Rank(PatchFileName);
+        // Beneath the UNIFIED patch, not this lane's old patch-5: the forge's own display rows live
+        // in patch-4 now. Reading them back as base makes a re-used display id "already exist" once
+        // a weapon has been deleted and the on-request rebuild has not yet replaced the client copy.
+        int myRank = Mpq.MpqPatchOrder.Rank(UnifiedPatch.UnifiedPatchService.PatchFileName);
         return _mpq.ExtractFile(WeaponNaming.ItemDisplayInfoMember,
                 skipArchive: name => Mpq.MpqPatchOrder.Rank(name) >= myRank)
             ?? throw new InvalidOperationException("Could not extract a base ItemDisplayInfo.dbc from the mounted archives.");
@@ -2425,6 +2510,21 @@ public sealed class ForgedWeaponInfo
     public uint ItemVisual { get; init; }
     public string? BuildId { get; init; }
     public required DateTime CreatedAt { get; init; }
+}
+
+public sealed class WeaponBulkDeleteResult
+{
+    public required IReadOnlyList<ForgedWeaponInfo> Deleted { get; init; }
+    public required IReadOnlyList<WeaponBulkDeleteFailure> Failed { get; init; }
+    public required bool Reloaded { get; init; }
+    public required string ReloadMessage { get; init; }
+    public required WeaponPatchRebuildSummary Rebuild { get; init; }
+}
+
+public sealed class WeaponBulkDeleteFailure
+{
+    public required long DisplayId { get; init; }
+    public required string Error { get; init; }
 }
 
 public sealed class WeaponDeleteResult

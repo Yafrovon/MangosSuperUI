@@ -25,7 +25,7 @@ namespace MangosSuperUI.Services.ArmorForge;
 /// vanilla bonuses are the operator's own business, editable afterwards) and every member stamped
 /// with <c>set_id</c> (item_template.set_id too). ItemSet.dbc is emitted for the client tooltip.
 /// </summary>
-public sealed class CustomArmorBuildService
+public sealed class CustomArmorBuildService : ICustomMpqMemberSource
 {
     public const string PatchFileName = "patch-6.MPQ";
 
@@ -54,7 +54,8 @@ public sealed class CustomArmorBuildService
         BlpWriterService blp, IWebHostEnvironment env,
         IConfiguration config, IServiceProvider services, ILogger<CustomArmorBuildService> logger)
     {
-        _mpq = mpq; _ids = ids; _patch = patch; _lanes = lanes; _dbc = dbc;
+        _mpq = mpq; _ids = ids;
+        _mpq.RegisterCustomMemberSource(this); _patch = patch; _lanes = lanes; _dbc = dbc;
         _audit = audit; _ra = ra; _db = db; _palette = palette; _blp = blp; _env = env; _config = config;
         _services = services; _logger = logger;
     }
@@ -124,8 +125,8 @@ public sealed class CustomArmorBuildService
     /// <summary>Lane-keyed form ("tbc" / "wotlk").</summary>
     public Task<CustomArmorBuildResult> ImportAsync(string expansion, uint entry, string? nameOverride = null,
         int vanillaSetId = 0, bool rebuild = true, ValidatedVanillaItemBuildConfiguration? gameplay = null,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f) =>
-        ImportAsync(_lanes.Get(expansion), entry, nameOverride, vanillaSetId, rebuild, gameplay, recolorHue, recolorTheory, recolorTier, glowColor, glowIntensity);
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f) =>
+        ImportAsync(_lanes.Get(expansion), entry, nameOverride, vanillaSetId, rebuild, gameplay, recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor, glowIntensity);
 
     /// <summary>Import one later-client armor piece. <paramref name="vanillaSetId"/> is OUR set id
     /// (0 = none); <paramref name="rebuild"/> false lets a set import batch pieces and rebuild once at
@@ -135,13 +136,13 @@ public sealed class CustomArmorBuildService
     /// lane-agnostic: the same ids, SQL, persistence and patch.</summary>
     public async Task<CustomArmorBuildResult> ImportAsync(ArmorImportLane lane, uint entry, string? nameOverride = null,
         int vanillaSetId = 0, bool rebuild = true, ValidatedVanillaItemBuildConfiguration? gameplay = null,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
     {
         var trace = new ArmorAttemptTrace();
         try
         {
             return await ImportCoreAsync(lane, entry, trace, nameOverride, vanillaSetId, rebuild, gameplay,
-                recolorHue, recolorTheory, recolorTier, glowColor, glowIntensity);
+                recolorHue, recolorSat, recolorLight, recolorTheory, recolorTier, glowColor, glowIntensity);
         }
         catch (Exception ex)
         {
@@ -196,7 +197,7 @@ public sealed class CustomArmorBuildService
     private async Task<CustomArmorBuildResult> ImportCoreAsync(ArmorImportLane lane, uint entry, ArmorAttemptTrace trace,
         string? nameOverride = null,
         int vanillaSetId = 0, bool rebuild = true, ValidatedVanillaItemBuildConfiguration? gameplay = null,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
     {
         if (!DonorItemTemplateFixture.Verify())
             throw new InvalidOperationException("Donor item_template fixture failed hash verification.");
@@ -248,7 +249,7 @@ public sealed class CustomArmorBuildService
         if (recolorHue.HasValue && (src.Components.Count > 0 || src.TextureBlp is { Length: > 0 }))
         {
             int rseed = RetextureSupport.SeedFor((int)(lane.Catalog.FindEntry(entry)?.DisplayId ?? entry), recolorTier);
-            await RecolorSourceAsync(src, rseed, recolorHue.Value, recolorTheory, recolorTier, CancellationToken.None);
+            await RecolorSourceAsync(src, rseed, recolorHue.Value, recolorSat, recolorLight, recolorTheory, recolorTier, CancellationToken.None);
         }
 
         var profile = ArmorTypeCatalog.Get(src.FamilyKey);
@@ -376,7 +377,7 @@ public sealed class CustomArmorBuildService
         IReadOnlyList<uint>? onlyEntries = null,
         IReadOnlyDictionary<uint, ValidatedVanillaItemBuildConfiguration>? perPieceGameplay = null,
         IReadOnlyList<ArmorSetBonus>? bonuses = null, int reqSkill = 0, int reqSkillRank = 0, string? setNameOverride = null,
-        float? recolorHue = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
+        float? recolorHue = null, float? recolorSat = null, float? recolorLight = null, string recolorTheory = "fan", string recolorTier = "improved", Vector3? glowColor = null, float glowIntensity = 1f)
     {
         var set = lane.Catalog.GetSet(tbcSetId)
             ?? throw new ArgumentException($"{lane.Label} set {tbcSetId} not found (is the {lane.Label} client mounted?).");
@@ -418,7 +419,7 @@ public sealed class CustomArmorBuildService
                     ValidatedVanillaItemBuildConfiguration? pieceGameplay = null;
                     perPieceGameplay?.TryGetValue(entry, out pieceGameplay);
                     var piece = await ImportAsync(lane, entry, null, setId, rebuild: false, gameplay: pieceGameplay,
-                        recolorHue: recolorHue, recolorTheory: recolorTheory, recolorTier: recolorTier, glowColor: glowColor, glowIntensity: glowIntensity);
+                        recolorHue: recolorHue, recolorSat: recolorSat, recolorLight: recolorLight, recolorTheory: recolorTheory, recolorTier: recolorTier, glowColor: glowColor, glowIntensity: glowIntensity);
                     result.Pieces.Add(piece);
                 }
                 catch (Exception ex)
@@ -615,20 +616,36 @@ public sealed class CustomArmorBuildService
     /// <summary>Recolor the resolved source's textures in place (body-atlas components + helm/shoulder/cloak
     /// skin) at the chosen primary hue — same palette engine and aggressive coverage the live preview uses,
     /// seeded off the SOURCE display id for parity — so the packaged item ships recolored.</summary>
-    private async Task RecolorSourceAsync(ArmorImportSource src, int seed, float hue, string theory, string tier, CancellationToken ct)
+    private async Task RecolorSourceAsync(ArmorImportSource src, int seed, float hue, float? sat, float? light, string theory, string tier, CancellationToken ct)
     {
-        if (Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "fan";
+        if (Array.IndexOf(PaletteSwapService.RecolorTheories, theory) < 0) theory = "none";
         var (kd, ku, mm, pop) = RetextureSupport.TierShape(tier);
         string tmpDir = Path.Combine(Path.GetTempPath(), "armorbake", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(tmpDir);
         try
         {
+            // One primary for the whole piece, detected across every texture it paints — the same
+            // anchor the preview used — so the bake does not put each slot's own biggest material on
+            // the pick and ship a flat red piece.
+            var anchorPngs = new List<string>();
+            foreach (var c in src.Components)
+            {
+                string pngPath = Path.Combine(tmpDir, $"anchor_c{c.Slot}{c.GenderSuffix}.png");
+                if (await TryWriteBlpAsPngAsync(c.Blp, pngPath, ct)) anchorPngs.Add(pngPath);
+            }
+            if (src.TextureBlp is { Length: > 0 })
+            {
+                string pngPath = Path.Combine(tmpDir, "anchor_skin.png");
+                if (await TryWriteBlpAsPngAsync(src.TextureBlp, pngPath, ct)) anchorPngs.Add(pngPath);
+            }
+            RecolorAnchor? anchor = anchorPngs.Count > 0 ? _palette.DetectPrimaryAcross(anchorPngs) : null;
+
             if (src.Components.Count > 0)
             {
                 var recolored = new List<ArmorComponentBlob>();
                 foreach (var c in src.Components)
                 {
-                    var rb = await RecolorBlpBytesAsync(c.Blp, tmpDir, $"c{c.Slot}{c.GenderSuffix}", seed, hue, theory, kd, ku, mm, pop, uncompressed: true, ct);
+                    var rb = await RecolorBlpBytesAsync(c.Blp, tmpDir, $"c{c.Slot}{c.GenderSuffix}", seed, hue, sat, light, anchor, theory, kd, ku, mm, pop, uncompressed: true, ct);
                     recolored.Add(new ArmorComponentBlob { Slot = c.Slot, GenderSuffix = c.GenderSuffix, MpqPath = c.MpqPath, Blp = rb ?? c.Blp });
                 }
                 src.Components.Clear();
@@ -636,15 +653,32 @@ public sealed class CustomArmorBuildService
             }
             if (src.TextureBlp is { Length: > 0 })
             {
-                var rb = await RecolorBlpBytesAsync(src.TextureBlp, tmpDir, "skin", seed, hue, theory, kd, ku, mm, pop, uncompressed: false, ct);
+                var rb = await RecolorBlpBytesAsync(src.TextureBlp, tmpDir, "skin", seed, hue, sat, light, anchor, theory, kd, ku, mm, pop, uncompressed: false, ct);
                 if (rb != null) src.TextureBlp = rb;
             }
         }
         finally { try { Directory.Delete(tmpDir, true); } catch { } }
     }
 
-    private async Task<byte[]?> RecolorBlpBytesAsync(byte[] blp, string tmpDir, string stem, int seed, float hue,
-        string theory, float kd, float ku, float mm, float pop, bool uncompressed, CancellationToken ct)
+    private static async Task<bool> TryWriteBlpAsPngAsync(byte[] blp, string pngPath, CancellationToken ct)
+    {
+        try
+        {
+            var px = BlpDecoder.GetPixels(blp, 0, out int w, out int h);
+            if (w == 0 || h == 0) return false;
+            using var bmp = new SKBitmap(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            System.Runtime.InteropServices.Marshal.Copy(px, 0, bmp.GetPixels(), px.Length);
+            bmp.NotifyPixelsChanged();
+            using var img = SKImage.FromBitmap(bmp);
+            using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+            await File.WriteAllBytesAsync(pngPath, data.ToArray(), ct);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private async Task<byte[]?> RecolorBlpBytesAsync(byte[] blp, string tmpDir, string stem, int seed, float hue, float? sat, float? light,
+        RecolorAnchor? anchor, string theory, float kd, float ku, float mm, float pop, bool uncompressed, CancellationToken ct)
     {
         try
         {
@@ -661,7 +695,8 @@ public sealed class CustomArmorBuildService
             }
             string outPng = Path.Combine(tmpDir, stem + "_r.png");
             var okp = await _palette.RecolorSeededAsync(basePng, outPng, seed, 1f, 0f, tintStructural: true, ct,
-                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue);
+                theory, kd, ku, mm, pop, swapBudget: 1.01f, hueLeash: 180f, value: ValueSettings.Keep, baseHueOverride: hue,
+                baseSatOverride: sat, baseLightOverride: light, anchor: anchor);
             if (okp == null) return null;
             using var recoloredBmp = SKBitmap.Decode(outPng);
             if (recoloredBmp == null) return null;
@@ -1720,7 +1755,9 @@ public sealed class CustomArmorBuildService
     public async Task<ArmorPatchResult?> AssembleUnifiedPatchAsync()
     {
         var diag = new ForgeDiagnostics("armor-assemble");
-        var contribution = await GetPatchContributionAsync(diag);
+        // Same ceiling as the unified build: our own previously packaged sets must never be read
+        // back as "base", or a released set id collides with its own ghost in the mounted patch.
+        var contribution = await GetPatchContributionAsync(diag, UnifiedPatch.UnifiedPatchService.PatchFileName);
         if (contribution is null) return null;
 
         byte[] baseDbc = ResolveBaseDbc();
@@ -1960,7 +1997,55 @@ public sealed class CustomArmorBuildService
     /// Per-piece failures are contained and reported instead of aborting the loop, and the set row
     /// (and its id) are only released when every piece actually went.
     /// </summary>
-    public async Task<ArmorDeleteResult> DeleteSetAsync(int setId)
+    /// <summary>Delete a selection of sets and single pieces with ONE world reload, ONE lane repack and
+    /// one queued unified rebuild at the end. Sets go first (their pieces come with them); a piece that
+    /// was ticked as well as its set is simply already gone by the time its turn comes.</summary>
+    public async Task<ArmorBulkDeleteResult> DeleteManyAsync(IReadOnlyList<long> displayIds, IReadOnlyList<int> setIds)
+    {
+        var result = new ArmorBulkDeleteResult();
+        foreach (int setId in setIds.Distinct())
+        {
+            try
+            {
+                var r = await DeleteSetAsync(setId, rebuild: false);
+                result.Items.Add(new ArmorBulkDeleteItem { Kind = "set", Id = setId, Ok = r.Ok, Message = r.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ArmorForge: bulk delete of set {SetId} failed", setId);
+                result.Items.Add(new ArmorBulkDeleteItem { Kind = "set", Id = setId, Ok = false, Message = ex.Message });
+            }
+        }
+        foreach (long displayId in displayIds.Distinct())
+        {
+            try
+            {
+                var r = await DeleteAsync(displayId, rebuild: false);
+                // Already gone (its set was deleted above) is the goal, not a failure.
+                result.Items.Add(new ArmorBulkDeleteItem { Kind = "piece", Id = displayId, Ok = r.Ok || r.NotFound, Message = r.NotFound ? "already removed with its set" : r.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ArmorForge: bulk delete of display {DisplayId} failed", displayId);
+                result.Items.Add(new ArmorBulkDeleteItem { Kind = "piece", Id = displayId, Ok = false, Message = ex.Message });
+            }
+        }
+
+        int ok = result.Items.Count(i => i.Ok), failed = result.Items.Count - ok;
+        // Nothing removed means nothing to reload or repack — and no rebuild to queue.
+        var reload = ok > 0 ? await ReloadItemTemplateAsync() : (Ok: true, Message: "nothing deleted — no reload");
+        string rebuild = ok > 0
+            ? await RebuildPatchAsync($"deleted {ok} armor item(s) in one batch", deploy: false)
+            : "nothing deleted — patch untouched";
+        result.Ok = failed == 0;
+        result.Message = $"deleted {ok} of {result.Items.Count} selected" + (failed > 0 ? $"; {failed} failed — see the list" : "")
+            + $". Reload: {reload.Message}. {rebuild}";
+        return result;
+    }
+
+    /// <param name="rebuild">Reload the world table and repack after the set. False when deleting a
+    /// batch of sets and pieces, so that happens ONCE at the end (see <see cref="DeleteManyAsync"/>).</param>
+    public async Task<ArmorDeleteResult> DeleteSetAsync(int setId, bool rebuild = true)
     {
         List<long> displays;
         string? setName;
@@ -2026,16 +2111,16 @@ public sealed class CustomArmorBuildService
                 await _ids.ReleaseAsync(KindSet, setId);
             }
 
-            // Now, once, for the whole set.
-            var reload = await ReloadItemTemplateAsync();
-            string rebuild = await RebuildPatchAsync($"delete set {setId}", deploy: false);
+            // Now, once, for the whole set (or once for the whole batch, when the caller defers it).
+            var reload = rebuild ? await ReloadItemTemplateAsync() : (Ok: true, Message: "deferred to the end of the batch");
+            string rebuildMsg = rebuild ? await RebuildPatchAsync($"delete set {setId}", deploy: false) : "patch repack deferred to the end of the batch";
 
             string label = string.IsNullOrWhiteSpace(setName) ? $"set {setId}" : $"set {setId} '{setName}'";
             int totalPieces = displays.Count + clonedEntries.Count;
             string message = complete
                 ? $"deleted {label} and all {deleted} piece(s)"
-                    + (clonedEntries.Count > 0 ? $" ({clonedEntries.Count} cloned)" : "") + $". {rebuild}"
-                : $"deleted {deleted}/{totalPieces} piece(s) of {label}; {failures.Count} failed, so the set was KEPT so you can retry: {string.Join("; ", failures.Take(4))}. {rebuild}";
+                    + (clonedEntries.Count > 0 ? $" ({clonedEntries.Count} cloned)" : "") + $". {rebuildMsg}"
+                : $"deleted {deleted}/{totalPieces} piece(s) of {label}; {failures.Count} failed, so the set was KEPT so you can retry: {string.Join("; ", failures.Take(4))}. {rebuildMsg}";
 
             await _audit.LogAsync(new AuditEntry
             {
@@ -2095,6 +2180,33 @@ public sealed class CustomArmorBuildService
     }
     public sealed class ArmorComponentRow { public int Slot; public string GenderSuffix = "_U"; public string MpqPath = ""; public string ComponentStem = ""; public byte[]? Blp; }
     public sealed class ArmorModelRow { public string MpqPath = ""; public byte[]? M2; }
+
+    // ── ICustomMpqMemberSource ─────────────────────────────────────────────────────────────
+    // Previews resolve a forged piece's helm/shoulder M2 and BLPs through MpqReaderService; until the
+    // next Rebuild patch those bytes exist only here. One row per path, cached briefly so a dressing
+    // pass (a dozen texture reads) is one query per member, not one per read.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime At, byte[]? Data)> _memberCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MemberCacheTtl = TimeSpan.FromSeconds(30);
+
+    public byte[]? TryGetMember(string mpqPath)
+    {
+        if (string.IsNullOrEmpty(mpqPath)) return null;
+        if (_memberCache.TryGetValue(mpqPath, out var hit) && DateTime.UtcNow - hit.At < MemberCacheTtl)
+            return hit.Data;
+        byte[]? data = null;
+        try
+        {
+            using var conn = _db.Admin();
+            conn.Open();
+            data = conn.ExecuteScalar<byte[]?>("SELECT compiled_m2 FROM custom_armor_model WHERE mpq_path = @p LIMIT 1", new { p = mpqPath })
+                ?? conn.ExecuteScalar<byte[]?>("SELECT compiled_blp FROM custom_armor_component WHERE mpq_path = @p LIMIT 1", new { p = mpqPath })
+                ?? conn.ExecuteScalar<byte[]?>("SELECT compiled_blp FROM custom_armor_display WHERE texture_mpq_path = @p LIMIT 1", new { p = mpqPath });
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "ArmorForge: registry member lookup failed for {Path}", mpqPath); }
+        _memberCache[mpqPath] = (DateTime.UtcNow, data);
+        return data;
+    }
 
     public async Task<List<ArmorRow>> LoadArmorRowsAsync(bool includeBlobs = true)
     {
@@ -2490,7 +2602,11 @@ public sealed class CustomArmorBuildService
         // patch-5, and patch-6 (top of the mount) built on it would shadow every forged weapon.
         var cfgPath = _config["ArmorForge:CleanDbcPath"];
         if (!string.IsNullOrWhiteSpace(cfgPath) && File.Exists(cfgPath)) return File.ReadAllBytes(cfgPath);
-        int myRank = Mpq.MpqPatchOrder.Rank(PatchFileName);
+        // Beneath the UNIFIED patch, not this lane's old patch-6: the forge's own rows live in
+        // patch-4 now, and a base that includes them makes every re-used id "already exist" —
+        // measured as "ItemSet id 5011 already exists in the base DBC" after a set was deleted and
+        // the (on-request) rebuild had not yet replaced the client's copy.
+        int myRank = Mpq.MpqPatchOrder.Rank(UnifiedPatch.UnifiedPatchService.PatchFileName);
         return _mpq.ExtractFile(ArmorNaming.ItemDisplayInfoMember, skipArchive: n => Mpq.MpqPatchOrder.Rank(n) >= myRank)
             ?? throw new InvalidOperationException("Could not extract a base ItemDisplayInfo.dbc from the mounted archives.");
     }
@@ -2588,6 +2704,21 @@ public sealed class ArmorSetSummary
     public int BonusCount { get; set; }
     public List<ArmorSetBonus> Bonuses { get; set; } = new();
     public List<int> MemberEntries { get; set; } = new();
+}
+
+public sealed class ArmorBulkDeleteResult
+{
+    public bool Ok { get; set; }
+    public string Message { get; set; } = "";
+    public List<ArmorBulkDeleteItem> Items { get; } = new();
+}
+
+public sealed class ArmorBulkDeleteItem
+{
+    public string Kind { get; set; } = "";   // "set" | "piece"
+    public long Id { get; set; }
+    public bool Ok { get; set; }
+    public string Message { get; set; } = "";
 }
 
 public sealed class ArmorDeleteResult

@@ -15,8 +15,9 @@
 (function () {
     'use strict';
 
-    // The six recolor theories (PaletteSwapService.RecolorTheories) and tiers.
-    var THEORIES = ['fan', 'identity', 'analogous', 'accent', 'luminance', 'bank'];
+    // The recolor theories (PaletteSwapService.RecolorTheories) and tiers. 'none' is the straight
+    // recolor (picked hue on every material); the engine keeps 'fan' as its seeded default.
+    var THEORIES = ['none', 'fan', 'identity', 'analogous', 'accent', 'luminance', 'bank'];
     var TIERS = ['improved', 'power', 'glory', 'gods'];
 
     // Inventory types that can actually be retextured (RetextureSupport.KindForInventoryType):

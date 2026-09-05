@@ -131,6 +131,9 @@
             border: 1px solid #b4231855; background: #b4231814; color: #b42318; }
         .wf-weapons .wf-del:hover { background: #b4231828; }
         .wf-weapons .empty { color: var(--text-muted); font-size: 12px; }
+        .wf-weapons td.sel, .wf-weapons th.sel { width: 22px; padding-right: 4px; }
+        .wf-weapons input[type=checkbox] { margin: 0; cursor: pointer; }
+        .wf-weapons tr.selected td { background: #4f8ef714; }
 
         /* Final item configuration — one shared build step for GLB and TBC sources. */
         body.wf-build-open { overflow: hidden; }
@@ -752,6 +755,7 @@
                    it. All forge and delete actions are recorded in the Activity Log.</p>
                 <div id="wfWeapons" class="wf-weapons"><span style="color:var(--text-muted);font-size:12px;">Loading…</span></div>
                 <div class="wf-row" style="margin-top:10px;">
+                    <button class="wf-btn secondary" id="wfDeleteSelected" disabled title="Delete every ticked weapon in one go: one world reload, one repack, one queued patch rebuild.">Delete selected</button>
                     <button class="wf-btn secondary" data-action="rebuildPatch" title="Package every queued change into patch-4.MPQ and deploy it to the client Data folder. Close WoW first — a running client locks the file.">Rebuild patch</button>
                     <a class="wf-btn secondary" href="/WeaponForge/DownloadPatch" style="text-decoration:none;">
                         <i class="fa-solid fa-download"></i> Download current patch-4.MPQ</a>
@@ -1359,12 +1363,37 @@
             if (d === 0) h = 0; else if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
             h *= 60; if (h < 0) h += 360; return h;
         }
+        // Saturation + lightness of the pick (0..1), so white/grey/black picks mean what they say.
+        function hexToSL(hex) {
+            const [r, g, b] = hexToRgb01(hex);
+            const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+            const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+            return { s: +sat.toFixed(3), l: +l.toFixed(3) };
+        }
+        function appendRecolorPick(target, hex) {
+            target.append('recolorHue', Math.round(hexToHue(hex)));
+            const sl = hexToSL(hex);
+            target.append('recolorSat', sl.s);
+            target.append('recolorLight', sl.l);
+        }
         function hexToRgb01(hex) {
             const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return [1, 1, 1];
             return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255];
         }
         // Palette theories shared by every recolor group (GLB card + import lanes).
-        const RC_THEORIES = [['primary', 'Primary'], ['fan', 'Fan'], ['identity', 'Shift'], ['analogous', 'Analogous'], ['accent', 'Accent'], ['luminance', 'Luminance'], ['bank', 'Palette']];
+        // 'none' first and default: the picked colour, straight, on every material. The rest are
+        // the palette engine's generators, for when you want it to compose a colourway around the pick.
+        const RC_THEORY_HINTS = {
+            none: 'No palette theory — every material takes the picked colour straight, keeping its own shade and shine.',
+            primary: 'Dominant material takes the pick exactly; the others keep their source offsets around it, compressed.',
+            fan: 'Palette generator: the pick on the dominant material, the rest spread by the golden angle.',
+            identity: 'Same colour story, shifted: all materials move together by a seeded amount.',
+            analogous: 'Neighbouring hues around the pick.',
+            accent: 'Muted body with one saturated accent material.',
+            luminance: 'Contrast-led: hue barely moves, dark goes richer, light goes cleaner.',
+            bank: 'One of the curated three-hue palettes, roles by coverage.',
+        };
+        const RC_THEORIES = [['none', 'None'], ['primary', 'Primary'], ['fan', 'Fan'], ['identity', 'Shift'], ['analogous', 'Analogous'], ['accent', 'Accent'], ['luminance', 'Luminance'], ['bank', 'Palette']];
         function setResult({ title, kv, diagnostics, downloads, note, error }) {
             const r = document.getElementById('wfResult');
             let html = `<div class="title">${esc(title || 'Result')}</div>`;
@@ -2204,8 +2233,8 @@
                     if (vanillaRecolorOn()) {
                         fd.append('weaponType', vanillaSource.family || '');
                         if (document.getElementById('vanillaRcOn').checked) {
-                            fd.append('recolorHue', Math.round(hexToHue(document.getElementById('vanillaRcColor').value)));
-                            fd.append('recolorTheory', (VANILLA.rcTheory && VANILLA.rcTheory()) || 'primary');
+                            appendRecolorPick(fd, document.getElementById('vanillaRcColor').value);
+                            fd.append('recolorTheory', (VANILLA.rcTheory && VANILLA.rcTheory()) || 'none');
                             fd.append('recolorTier', document.getElementById('vanillaRcTier').value || 'improved');
                         }
                         if (document.getElementById('vanillaRcGlowOn').checked)
@@ -2368,7 +2397,7 @@
             // Pre-import recolor of the embedded texture — same fields the lanes send; preview and
             // forge share the sha-seeded palette roll so what previews is what bakes.
             if (document.getElementById('impRcOn').checked) {
-                fd.append('recolorHue', Math.round(hexToHue(document.getElementById('impRcColor').value)));
+                appendRecolorPick(fd, document.getElementById('impRcColor').value);
                 fd.append('recolorTheory', impRcTheory);
                 fd.append('recolorTier', document.getElementById('impRcTier').value || 'improved');
             }
@@ -2391,7 +2420,7 @@
         bindGrade('impGlowFrom', 'impGlowFromVal', v => v + '%');
         bindGrade('impGlowTo', 'impGlowToVal', v => v + '%');
         // GLB recolor controls: theory chips + live re-preview, mirroring the import lanes.
-        let impRcTheory = 'primary';
+        let impRcTheory = 'none';
         {
             const host = document.getElementById('impRcTheories');
             const schedule = () => {
@@ -2404,6 +2433,7 @@
                 b.type = 'button'; b.className = 'wf-btn secondary';
                 b.style.cssText = 'padding:3px 10px;font-size:12px;';
                 b.textContent = label;
+                b.title = RC_THEORY_HINTS[key] || '';
                 if (key === impRcTheory) b.style.outline = '2px solid var(--accent-color, #3b6fd4)';
                 b.addEventListener('click', () => {
                     impRcTheory = key;
@@ -2568,8 +2598,8 @@
         // by both the preview (live server-side recolor of the source skin) and the forge (bake).
         function laneRecolorParams(lane, target) {
             if (!lane.el('RcOn').checked) return;
-            target.append('recolorHue', Math.round(hexToHue(lane.el('RcColor').value)));
-            target.append('recolorTheory', lane.rcTheory || 'primary');
+            appendRecolorPick(target, lane.el('RcColor').value);
+            target.append('recolorTheory', lane.rcTheory || 'none');
             target.append('recolorTier', lane.el('RcTier').value || 'improved');
         }
         // Imported material effects need a real hue-shifted texture, not material.color
@@ -2577,7 +2607,7 @@
         // The same glowColor now drives the server preview and the forge bake.
         function laneGlowTint(lane) { return lane.el('RcGlowOn').checked ? lane.el('RcGlowColor').value : null; }
         function wireLaneRecolor(lane) {
-            lane.rcTheory = 'primary';
+            lane.rcTheory = 'none';
             const schedule = () => {
                 if (!lane.sel) { lane.el('RcStatus').textContent = 'Browse and pick a weapon first.'; return; }
                 lane.el('RcStatus').textContent = lane.el('RcOn').checked ? 'Recoloring preview…' : 'Recolor off — previewing the original skin.';
@@ -2605,6 +2635,7 @@
                 b.type = 'button'; b.className = 'wf-btn secondary'; b.dataset.theory = key;
                 b.style.cssText = 'padding:3px 10px;font-size:12px;';
                 b.textContent = label;
+                b.title = RC_THEORY_HINTS[key] || '';
                 if (key === lane.rcTheory) b.style.outline = '2px solid var(--accent-color, #3b6fd4)';
                 b.addEventListener('click', () => {
                     lane.rcTheory = key;
@@ -2695,12 +2726,13 @@
         }
         function wireVanillaRecolor() {
             const host = document.getElementById('vanillaRcTheories');
-            let theory = 'primary';
+            let theory = 'none';
             for (const [key, label] of RC_THEORIES) {
                 const b = document.createElement('button');
                 b.type = 'button'; b.className = 'wf-btn secondary'; b.dataset.theory = key;
                 b.style.cssText = 'padding:3px 10px;font-size:12px;';
                 b.textContent = label;
+                b.title = RC_THEORY_HINTS[key] || '';
                 if (key === theory) b.style.outline = '2px solid var(--accent-color, #3b6fd4)';
                 b.addEventListener('click', () => {
                     theory = key;
@@ -2767,8 +2799,8 @@
                         weaponType: w.family || '',
                     });
                     if (document.getElementById('vanillaRcOn').checked) {
-                        q.append('recolorHue', Math.round(hexToHue(document.getElementById('vanillaRcColor').value)));
-                        q.append('recolorTheory', (VANILLA.rcTheory && VANILLA.rcTheory()) || 'primary');
+                        appendRecolorPick(q, document.getElementById('vanillaRcColor').value);
+                        q.append('recolorTheory', (VANILLA.rcTheory && VANILLA.rcTheory()) || 'none');
                         q.append('recolorTier', document.getElementById('vanillaRcTier').value || 'improved');
                     }
                     if (document.getElementById('vanillaRcGlowOn').checked)
@@ -3170,9 +3202,9 @@
                 const d = await (await fetch('/WeaponForge/ListWeapons')).json();
                 if (!d.ok) { host.innerHTML = `<span class="empty">Could not load: ${esc(d.error || 'unknown')}</span>`; return; }
                 if (!d.weapons.length) { host.innerHTML = '<span class="empty">Nothing forged yet.</span>'; return; }
-                let html = '<table><tr><th>Name</th><th>Type</th><th>Slot</th><th>Entry</th><th>Display</th><th>Source</th><th>Created</th><th></th></tr>';
+                let html = '<table><tr><th class="sel"><input type="checkbox" id="wfSelAll" title="Select all"></th><th>Name</th><th>Type</th><th>Slot</th><th>Entry</th><th>Display</th><th>Source</th><th>Created</th><th></th></tr>';
                 for (const w of d.weapons) {
-                    html += `<tr><td>${esc(w.name)}</td><td class="muted">${esc(w.weaponTypeLabel || '—')}</td>` +
+                    html += `<tr><td class="sel"><input type="checkbox" class="wf-sel" data-sel="${w.displayId}" data-name="${esc(w.name)}"></td><td>${esc(w.name)}</td><td class="muted">${esc(w.weaponTypeLabel || '—')}</td>` +
                             `<td class="muted">${esc(w.inventoryTypeLabel || (w.inventoryType != null ? `Inventory type ${w.inventoryType}` : '—'))}</td>` +
                             `<td class="muted">${w.itemEntry || '—'}</td>` +
                             `<td class="muted">${w.displayId}</td><td class="muted">${esc(w.sourceKind)}</td>` +
@@ -3183,8 +3215,60 @@
                 host.innerHTML = html + '</table>';
                 host.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => deleteWeapon(btn)));
                 host.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => viewForged(btn)));
+                wireSelection(host);
             } catch (e) { host.innerHTML = `<span class="empty">Could not load: ${esc(e)}</span>`; }
+            updateSelection();
         }
+
+        // ---------- multi-select delete ----------
+        function selectedWeapons() {
+            return [...document.querySelectorAll('#wfWeapons .wf-sel:checked')].map(cb => ({ id: +cb.dataset.sel, name: cb.dataset.name }));
+        }
+        function updateSelection() {
+            const sel = selectedWeapons();
+            const all = document.querySelectorAll('#wfWeapons .wf-sel');
+            const btn = document.getElementById('wfDeleteSelected');
+            btn.disabled = sel.length === 0;
+            btn.textContent = sel.length ? `Delete selected (${sel.length})` : 'Delete selected';
+            const head = document.getElementById('wfSelAll');
+            if (head) { head.checked = all.length > 0 && sel.length === all.length; head.indeterminate = sel.length > 0 && sel.length < all.length; }
+            all.forEach(cb => cb.closest('tr').classList.toggle('selected', cb.checked));
+        }
+        function wireSelection(host) {
+            host.querySelectorAll('.wf-sel').forEach(cb => cb.addEventListener('change', updateSelection));
+            const head = host.querySelector('#wfSelAll');
+            if (head) head.addEventListener('change', () => { host.querySelectorAll('.wf-sel').forEach(cb => { cb.checked = head.checked; }); updateSelection(); });
+        }
+        document.getElementById('wfDeleteSelected').addEventListener('click', async () => {
+            const sel = selectedWeapons();
+            if (!sel.length) return;
+            const names = sel.slice(0, 8).map(w => `• ${w.name}`).join('\n') + (sel.length > 8 ? `\n• …and ${sel.length - 8} more` : '');
+            if (!confirm(`Delete ${sel.length} weapon${sel.length === 1 ? '' : 's'}?\n\n${names}\n\nRemoves them from the world database and the registry; the client patch rebuild is queued once for the whole batch. IDs return to the pool.`)) return;
+            const btn = document.getElementById('wfDeleteSelected');
+            busy(btn, true);
+            try {
+                const d = await (await fetch('/WeaponForge/DeleteWeapons', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ displayIds: sel.map(w => w.id) }),
+                })).json();
+                if (!d.ok) return setResult({ title: 'Delete failed', error: d.error });
+                const failed = d.failed || [];
+                setResult({
+                    title: failed.length ? `Deleted ${d.deleted.length} of ${sel.length} weapons` : `Deleted ${d.deleted.length} weapon${d.deleted.length === 1 ? '' : 's'} everywhere`,
+                    kv: { 'Weapons remaining': d.weaponsRemaining, 'Patch': d.patchQueued ? 'rebuild queued' : d.patchRemoved ? 'removed' : 'repackaged' },
+                    diagnostics: [
+                        ...d.deleted.map(w => `✓ Deleted: ${w.name} (entry ${w.itemEntry}, display ${w.displayId})`),
+                        ...failed.map(f => `✗ Display ${f.displayId}: ${f.error}`),
+                        applyLine(d.reloaded, 'Reload', d.reloadMessage || ''),
+                        d.patchQueued ? queuedLine('Client patch', d.patchDeployMessage || '') : applyLine(d.patchDeployed || d.patchRemoved, 'Patch', d.patchDeployMessage || ''),
+                    ],
+                    downloads: d.patchDownloadUrl ? [{ label: 'patch-4.MPQ', url: d.patchDownloadUrl }] : [],
+                    note: 'IDs returned to the pool. The weapons stay in the client until you close WoW and click Rebuild patch.',
+                    error: failed.length ? `${failed.length} could not be deleted — see the lines above.` : undefined,
+                });
+            } catch (e) { setResult({ title: 'Delete failed', error: String(e) }); }
+            finally { busy(btn, false); updateSelection(); loadWeapons(); loadStatus(); }
+        });
         async function viewForged(btn) {
             const id = btn.dataset.view, name = btn.dataset.name || ('display ' + id);
             btn.disabled = true;
