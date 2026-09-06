@@ -175,8 +175,16 @@ function loadTexture(url) {
     });
 }
 
-// Cloaks are character geoset 1502. Their ItemDisplayInfo model texture
-// replaces the character M2's type-2 texture slot at equip time.
+// Cloaks are character geosets 1502..1506 — 1501 + the display row's geosetGroup[0], so the
+// cloth length is the item's own (geoset-rules.js, inventoryType 16). Their ItemDisplayInfo
+// model texture replaces the character M2's type-2 texture slot at equip time. This used to
+// dress geoset 1502 ONLY, so any cape whose row picked another length was shown as bare,
+// untextured cloth (invisible on most models). Every cape cloth mesh gets the sheet; the
+// geoset resolver decides which one is visible.
+function isCapeCloth(mesh) {
+    const u = mesh.userData || {};
+    return u.geosetCategory === 15 && u.geosetVariant >= 2;
+}
 async function applyCapeTexture(character, url) {
     if (!url) {
         character._capeTexture?.dispose?.();
@@ -190,14 +198,14 @@ async function applyCapeTexture(character, url) {
     } catch (err) {
         console.warn('[equip] cape texture failed to load:', url, err);
         for (const mesh of character.geosetList) {
-            if (mesh.userData?.geosetId === 1502) mesh.visible = false;
+            if (isCapeCloth(mesh)) mesh.visible = false;
         }
         return;
     }
 
     character._capeTexture?.dispose?.();
 
-    const capeMeshes = character.geosetList.filter(m => m.userData?.geosetId === 1502);
+    const capeMeshes = character.geosetList.filter(isCapeCloth);
     for (const mesh of capeMeshes) {
         if (!mesh.userData._capeMaterialIsolated) {
             mesh.material = Array.isArray(mesh.material)
@@ -531,7 +539,7 @@ export async function equipBodyAtlasRetextureDirect(character, slotUrls, opts = 
 function getCurrentBodyAtlasImage(character) {
     const isBody = (cat, variant) =>
         cat === 0 ? variant === 0 :
-            (cat === 7 || (cat === 15 && variant === 2) ? false : true);
+            (cat === 7 || (cat === 15 && variant >= 2) ? false : true);
     let fallback = null;
     for (const m of character.geosetList) {
         const cat = m.userData?.geosetCategory;

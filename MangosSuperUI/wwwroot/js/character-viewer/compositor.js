@@ -351,7 +351,11 @@ function isBodySkinnedGeoset(category, variant) {
 
     // Geoset 1502 is cape cloth and samples the replaceable type-2 item
     // texture, never the character body atlas.
-    if (category === 15 && variant === 2) return false;
+    // Every cape cloth variant, not just 1502: the cloth is 1501 + the cloak's
+    // geosetGroup[0] (1502..1506), and all of them sample the type-2 slot. Excluding
+    // only variant 2 painted the body atlas over any longer or shorter cape — the
+    // "cape made of glove and chest colours" look.
+    if (category === 15 && variant >= 2) return false;
 
     return true;
 }

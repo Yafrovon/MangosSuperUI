@@ -207,7 +207,7 @@ function cacheOriginalState(character) {
         const isBodySkinned =
             cat === 0 ? variant === 0 :
                 cat === 7 ? false :
-                    cat === 15 && variant === 2 ? false :
+                    cat === 15 && variant >= 2 ? false :
                     true;
 
         if (!isBodySkinned && m.material) {
