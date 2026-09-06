@@ -26,6 +26,7 @@
         "weaponforge" or "armorforge" => "gamedev",
         "bots" or "chatsettings" => "bots",
         "wiki" => "wiki",
+        "armory" => "gameworld",
         "downloads" or "settings" => "superui",
         _ => ""
     };
@@ -38,7 +39,7 @@
         "bots" => "aibots",
         "data" or "devtools" or "gamedev" => "devdata",
         "wiki" => "wiki",
-        "superui" => "superui",
+        "gameworld" or "superui" => "superui",
         _ => "admin"
     };
 
@@ -51,7 +52,7 @@
         new { Key = "aibots",  Label = "AI Bot Control",        Icon = "fa-robot",    Sub = "Fleet, brains & chat",                Ctl = "Bots",      Act = "Fleet" },
         new { Key = "devdata", Label = "Data & Development",    Icon = "fa-database", Sub = "Database, source & tooling",          Ctl = "Database",  Act = "Index" },
         new { Key = "wiki",    Label = "Wiki",                  Icon = "fa-book",     Sub = "Documentation",                       Ctl = "Wiki",      Act = "Index" },
-        new { Key = "superui", Label = "SuperUI",               Icon = "fa-toolbox",  Sub = "Downloads & settings",                Ctl = "Downloads", Act = "Index" }
+        new { Key = "superui", Label = "SuperUI",               Icon = "fa-toolbox",  Sub = "Armory, downloads & settings",                Ctl = "Downloads", Act = "Index" }
     };
 
     var activeMeta = macroSections[0];
@@ -466,6 +467,21 @@
 
         <!-- ========== SuperUI ========== -->
         <!-- App -->
+        <div class="sidebar-section" data-group="gameworld" data-section="superui">
+            <div class="sidebar-section-title" data-toggle-group="gameworld">
+                <span>Gameworld</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
+                <li class="sidebar-nav-item" data-nav-key="armory">
+                    <a asp-controller="Armory" asp-action="Index" class="@NavClass("Armory")">
+                        <i class="fa-solid fa-shield-halved"></i>
+                        Armory
+                    </a>
+                </li>
+            </ul>
+        </div>
+
         <div class="sidebar-section" data-group="superui" data-section="superui">
             <div class="sidebar-section-title" data-toggle-group="superui">
                 <span>App</span>

@@ -288,11 +288,15 @@ export const SLOT_RULES = {
     17: { groups: [] }, 21: { groups: [] }, 22: { groups: [] },
     23: { groups: [] }, 25: { groups: [] }, 26: { groups: [] },
 
-    // 16 = BACK (cape). 1501 is no cape; 1502 is the fixed cape cloth.
-    // The cloak's model texture fills the M2 type-2 texture slot separately.
+    // 16 = BACK (cape). 1501 is no cape; the cloth variant is 1 + the display
+    // row's geosetGroup[0], exactly as the reference client (CharacterEquipment
+    // .ApplyGeosets) and benilla apply it. Hard-coding 1502 promoted every short
+    // cape to the long cloth — the browser cape hung to the knees while the game
+    // drew a hip-length one. The cloak's model texture fills the M2 type-2
+    // texture slot separately.
     16: {
         groups: [],
-        setVariants: { 15: 2 },
+        setVariants: (item) => ({ 15: 1 + Math.max(0, (item?.geosetGroup && item.geosetGroup[0]) || 0) }),
     },
 
     // 19 = TABARD — cat 12 (tabard-bottom).

@@ -279,7 +279,16 @@ public static class SkinnedGlbWriter
                         MakeSkinnedVertex(m2.Vertices[i2], m2.Bones.Count));
                 }
 
-                scene.AddSkinnedMesh(meshBuilder, Matrix4x4.Identity, boneNodes);
+                // Explicit inverse bind matrices: T(-pivot) per bone, exactly the reference animator's
+                // "the inverse bind is free" rule. Letting SharpGLTF derive them from the joints'
+                // rest world matrices would fold the static global-sequence scale/rotation baked into
+                // the rest pose (BuildBoneArmature) back OUT of the skinned body — the female hand
+                // bone's 0.85 would shrink the pauldron on the attachment but not the hand under it,
+                // which is not what the client draws.
+                var joints = new (NodeBuilder Joint, Matrix4x4 InverseBindMatrix)[boneNodes.Length];
+                for (int j = 0; j < boneNodes.Length; j++)
+                    joints[j] = (boneNodes[j], Matrix4x4.CreateTranslation(-m2.Bones[j].Pivot));
+                scene.AddSkinnedMesh(meshBuilder, joints);
             }
 
             EmitAttachments(m2, boneNodes);
@@ -330,17 +339,29 @@ public static class SkinnedGlbWriter
             string boneName = bone.KeyBoneId >= 0 ? $"Bone_{i}_k{bone.KeyBoneId}" : $"Bone_{i}";
 
             NodeBuilder node;
-            if (hasValidParent)
+            Vector3 restTranslation = hasValidParent ? bone.Pivot - m2.Bones[parentIdx].Pivot : bone.Pivot;
+
+            // STATIC GLOBAL-SEQUENCE KEYS ARE THE REST POSE. A track parked on a global sequence with
+            // a single key never changes — the client evaluates global sequences continuously, so
+            // that key is simply always in effect. The clip exporter below only writes per-sequence
+            // keys and multi-key global loops, so these constants used to vanish. That is where the
+            // race/gender proportions of attached gear live: HumanFemale.m2 scales its shoulder
+            // attachment bones to 0.62 and its right-hand bone to 0.85 exactly this way (HumanMale has
+            // none), so without this every female wore male-sized pauldrons and a male-sized sword.
+            // Rotation and translation get the same treatment for consistency; a clip that animates
+            // the bone replaces the value, a clip that does not leaves it in force.
+            if (bone.Translation.GlobalSequence >= 0 && bone.Translation.Keys.Count == 1)
+                restTranslation += bone.Translation.Keys[0];
+
+            node = hasValidParent ? nodes[parentIdx].CreateNode(boneName) : armatureRoot.CreateNode(boneName);
+            node.WithLocalTranslation(restTranslation);
+            if (bone.Rotation.GlobalSequence >= 0 && bone.Rotation.Keys.Count == 1)
             {
-                node = nodes[parentIdx].CreateNode(boneName);
-                var parentPivot = m2.Bones[parentIdx].Pivot;
-                node.WithLocalTranslation(bone.Pivot - parentPivot);
+                var r = bone.Rotation.Keys[0];
+                node.WithLocalRotation(NormalizeQuaternion(new Quaternion(r.X, r.Y, r.Z, r.W)));
             }
-            else
-            {
-                node = armatureRoot.CreateNode(boneName);
-                node.WithLocalTranslation(bone.Pivot);
-            }
+            if (bone.Scale.GlobalSequence >= 0 && bone.Scale.Keys.Count == 1)
+                node.WithLocalScale(bone.Scale.Keys[0]);
 
             nodes[i] = node;
         }

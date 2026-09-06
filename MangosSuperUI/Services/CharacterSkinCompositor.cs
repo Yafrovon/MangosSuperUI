@@ -183,6 +183,106 @@ public class CharacterSkinCompositor
     /// Try multiple BLP path candidates for a CharSections texture
     /// partial-name. Returns the first hit, or null if nothing matches.
     /// </summary>
+    /// <summary>A CharSections row for one appearance choice, with the vanilla fallbacks the
+    /// client itself applies: colour 0 of the same variation, then variation 0 / colour 0.</summary>
+    private CharSectionDbc? FindSection(uint race, uint sex, uint section, uint variation, uint color)
+    {
+        // Exact row only — the client has no fallback lookup (MSUIClient CharSectionsTable.Find is a
+        // straight match), so guessing a neighbouring colour here paints a look the game never shows.
+        return _dbc.CharacterSections.FirstOrDefault(r =>
+            r.Race == race && r.Sex == sex && r.BaseSection == section && r.VariationIndex == variation && r.ColorIndex == color);
+    }
+
+    /// <summary>The hair row whose sheet is blank resolves to variation 1 at the same colour — benilla's
+    /// hair_mesh_texture rule, which MSUIClient mirrors as HairSubstituteVariation. Human male style 0
+    /// is the canonical case: its row names no sheet, and the substitute is Hair03_&lt;colour&gt;.</summary>
+    private const uint HairSubstituteVariation = 1;
+
+    /// <summary>The body atlas for a SPECIFIC character: their skin colour, face, hair colour
+    /// (scalp overlays) and facial hair (beard overlays) from CharSections.dbc, composited the same
+    /// way <see cref="ComposeDefaultSkin"/> builds the race/gender template. <paramref name="hairTexturePartial"/>
+    /// comes back with the hair-colour texture the hair geosets should wear. Null on hard failure.</summary>
+    public byte[]? ComposeCharacterSkin(string raceName, string genderName,
+        uint skin, uint face, uint hairStyle, uint hairColor, uint facialHair, out string? hairTexturePartial)
+    {
+        hairTexturePartial = null;
+        try
+        {
+            uint raceId = RaceNameToId(raceName);
+            uint genderId = genderName.Equals("Female", StringComparison.OrdinalIgnoreCase) ? 1u : 0u;
+            if (raceId == 0) return null;
+
+            // Base skin: CharSections section 0, colour = skin variant.
+            var skinRow = FindSection(raceId, genderId, 0, 0, skin);
+            byte[]? baseBlp = skinRow is not null && !string.IsNullOrEmpty(skinRow.TextureName1)
+                ? ResolveBlp(skinRow.TextureName1, raceName, genderName) : null;
+            baseBlp ??= _mpq.ExtractFile($"Character\\{raceName}\\{genderName}\\{raceName}{genderName}Skin00_{skin:00}.blp")
+                     ?? _mpq.ExtractFile($"Character\\{raceName}\\{genderName}\\{raceName}{genderName}Skin00_00.blp");
+            if (baseBlp is null) return null;
+            using var canvas = DecodeBlp(baseBlp);
+            if (canvas is null) return null;
+
+            void Paint(string? partial, int x, int y, int w, int h)
+            {
+                if (string.IsNullOrEmpty(partial)) return;
+                var blp = ResolveBlp(partial, raceName, genderName);
+                if (blp is null) return;
+                using var bmp = DecodeBlp(blp);
+                if (bmp is not null) PaintRegion(canvas, bmp, x, y, w, h);
+            }
+
+            // Face: section 1, variation = face, colour = skin (faces are painted per skin tone).
+            var faceRow = FindSection(raceId, genderId, 1, face, skin);
+            if (faceRow is not null)
+            {
+                Paint(faceRow.TextureName1, FACE_LOWER_X, FACE_LOWER_Y, FACE_LOWER_W, FACE_LOWER_H);
+                Paint(faceRow.TextureName2, FACE_UPPER_X, FACE_UPPER_Y, FACE_UPPER_W, FACE_UPPER_H);
+            }
+
+            // Facial hair: section 2, variation = facial hair, colour = hair colour. Its lower/upper
+            // sheets overlay the face regions (sideburns, moustache shading) under the scalp overlays.
+            var facialRow = FindSection(raceId, genderId, 2, facialHair, hairColor);
+            if (facialRow is not null)
+            {
+                Paint(facialRow.TextureName1, FACE_LOWER_X, FACE_LOWER_Y, FACE_LOWER_W, FACE_LOWER_H);
+                Paint(facialRow.TextureName2, FACE_UPPER_X, FACE_UPPER_Y, FACE_UPPER_W, FACE_UPPER_H);
+            }
+
+            // Hair: section 3, variation = style, colour = hair colour. TextureName1 is the hair-colour
+            // sheet the hair geosets wear; 2 and 3 are the scalp overlays painted onto the face regions.
+            var hairRow = FindSection(raceId, genderId, 3, hairStyle, hairColor);
+            if (hairRow is not null)
+            {
+                hairTexturePartial = string.IsNullOrEmpty(hairRow.TextureName1) ? null : hairRow.TextureName1;
+                Paint(hairRow.TextureName2, FACE_LOWER_X, FACE_LOWER_Y, FACE_LOWER_W, FACE_LOWER_H);
+                Paint(hairRow.TextureName3, FACE_UPPER_X, FACE_UPPER_Y, FACE_UPPER_W, FACE_UPPER_H);
+            }
+            if (hairTexturePartial is null)
+            {
+                var substitute = FindSection(raceId, genderId, 3, HairSubstituteVariation, hairColor);
+                if (substitute is not null && !string.IsNullOrEmpty(substitute.TextureName1))
+                    hairTexturePartial = substitute.TextureName1;
+            }
+
+            return EncodePng(canvas);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CharacterSkinCompositor: character skin composite failed for {Race}/{Gender}", raceName, genderName);
+            return null;
+        }
+    }
+
+    /// <summary>Decode any character BLP (hair sheets, for one) to PNG bytes.</summary>
+    public byte[]? BlpToPng(byte[] blp)
+    {
+        try { using var bmp = DecodeBlp(blp); return bmp is null ? null : EncodePng(bmp); }
+        catch { return null; }
+    }
+
+    /// <summary>Resolve a CharSections partial to BLP bytes (public for the Armory's hair sheet).</summary>
+    public byte[]? ResolveCharacterBlp(string partial, string raceName, string genderName) => ResolveBlp(partial, raceName, genderName);
+
     private byte[]? ResolveBlp(string partial, string raceName, string genderName)
         => ResolveCharacterTextureBlp(_mpq, partial, raceName, genderName);
 

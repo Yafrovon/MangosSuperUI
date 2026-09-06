@@ -1,0 +1,379 @@
+@{
+    ViewData["Title"] = "Armory";
+    int initialGuid = (int)(ViewBag.Guid ?? 0);
+}
+
+<style>
+    .ar-wrap { max-width: 1400px; }
+    .ar-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .ar-head h2 { margin: 0; font-size: 22px; display: flex; align-items: center; gap: 10px; }
+    .ar-search { position: relative; flex: 1; min-width: 260px; max-width: 460px; }
+    .ar-search input { width: 100%; padding: 9px 12px 9px 36px; border-radius: 8px; border: 1px solid var(--border-light); background: var(--bg-input, var(--bg-card)); color: var(--text-primary); font-size: 14px; }
+    .ar-search .fa-magnifying-glass { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+    .ar-results { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; box-shadow: 0 8px 24px #00000033; overflow: hidden; display: none; }
+    .ar-results.open { display: block; }
+    .ar-result { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px dashed var(--border-light); }
+    .ar-result:last-child { border-bottom: 0; }
+    .ar-result:hover, .ar-result.hl { background: var(--bg-card-alt); }
+    .ar-result .nm { font-weight: 700; color: var(--text-primary); }
+    .ar-result .meta { color: var(--text-muted); font-size: 12px; flex: 1; }
+    .ar-result .acct { color: var(--text-muted); font-size: 11px; }
+    .ar-dot { width: 8px; height: 8px; border-radius: 50%; background: #8d96a0; flex-shrink: 0; }
+    .ar-dot.on { background: #46b77a; }
+
+    .ar-card { background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 12px; padding: 16px 18px; }
+    .ar-identity { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .ar-identity .name { font-size: 24px; font-weight: 800; color: var(--text-primary); }
+    .ar-identity .sub { color: var(--text-secondary); font-size: 13px; }
+    .ar-identity .guild { color: #a8c4ff; font-size: 13px; font-weight: 600; }
+    .ar-pill { border: 1px solid var(--border-light); border-radius: 999px; padding: 3px 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; letter-spacing: .02em; }
+    .ar-pill.on { color: #46b77a; border-color: #46b77a55; background: #46b77a14; }
+
+    .ar-grid { display: grid; grid-template-columns: 64px minmax(320px, 1fr) 64px; gap: 14px; align-items: stretch; }
+    .ar-col { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; }
+    .ar-bottom { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
+    .ar-slot { position: relative; width: 58px; height: 58px; border-radius: 8px; border: 2px solid #3a4250; background: #14171d; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: default; }
+    .ar-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ar-slot .ph { color: #4a5261; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; text-align: center; padding: 0 3px; font-weight: 700; }
+    .ar-slot.q0 { border-color: #9d9d9d; } .ar-slot.q1 { border-color: #ffffff; } .ar-slot.q2 { border-color: #1eff00; }
+    .ar-slot.q3 { border-color: #0070dd; } .ar-slot.q4 { border-color: #a335ee; } .ar-slot.q5 { border-color: #ff8000; } .ar-slot.q6 { border-color: #e6cc80; }
+    .ar-slot .lvl { position: absolute; right: 2px; bottom: 1px; font-size: 10px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+    .ar-slot .ench { position: absolute; left: 2px; top: 1px; font-size: 9px; color: #7fe08b; text-shadow: 0 0 3px #000; }
+    .ar-slot.weapon { cursor: pointer; }
+    .ar-slot.weapon.shown { box-shadow: 0 0 0 2px #ffd100, 0 0 12px #ffd10088; }
+    .ar-slot.weapon.stowed { opacity: .55; }
+    .ar-bottom .hintline { align-self: center; font-size: 11px; color: var(--text-muted); margin-left: 10px; }
+
+    .ar-stage { position: relative; min-height: 560px; border-radius: 12px; overflow: hidden; background: linear-gradient(180deg, #1a1d24, #0f1115); border: 1px solid var(--border-light); }
+    .ar-stage canvas { width: 100%; height: 100%; display: block; }
+    .ar-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #8a93a6; font-size: 13px; text-align: center; padding: 0 24px; pointer-events: none; }
+    .ar-stagebar { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 8px; align-items: center; background: #111722cc; border: 1px solid #ffffff22; border-radius: 8px; padding: 6px 8px; font-size: 11px; color: #dce2ee; }
+    .ar-stagebar select { background: #1c222b; color: #dce2ee; border: 1px solid #ffffff22; border-radius: 5px; padding: 3px 6px; font-size: 11px; }
+
+    .ar-tip { position: fixed; z-index: 60; min-width: 220px; max-width: 320px; background: #0d1017f2; color: #dfe4ee; border: 1px solid #3a4250; border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.45; pointer-events: none; display: none; box-shadow: 0 10px 30px #00000088; }
+    .ar-tip .t-name { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .ar-tip .q0 { color: #9d9d9d; } .ar-tip .q1 { color: #ffffff; } .ar-tip .q2 { color: #1eff00; } .ar-tip .q3 { color: #0070dd; } .ar-tip .q4 { color: #a335ee; } .ar-tip .q5 { color: #ff8000; } .ar-tip .q6 { color: #e6cc80; }
+    .ar-tip .row { display: flex; justify-content: space-between; gap: 12px; }
+    .ar-tip .muted { color: #9aa5b4; } .ar-tip .green { color: #1eff00; } .ar-tip .gold { color: #ffd100; }
+    .ar-tip .desc { color: #ffd100; font-style: italic; margin-top: 4px; }
+
+    .ar-list { margin-top: 14px; }
+    .ar-list table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .ar-list th { text-align: left; color: var(--text-muted); font-weight: 600; font-size: 11px; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border-light); }
+    .ar-list td { padding: 5px 8px 5px 0; border-bottom: 1px dashed var(--border-light); color: var(--text-primary); }
+    .ar-list td.muted { color: var(--text-muted); }
+    .ar-list img { width: 20px; height: 20px; border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+    .ar-list .q0 { color: #9d9d9d; } .ar-list .q1 { color: var(--text-primary); } .ar-list .q2 { color: #1eff00; } .ar-list .q3 { color: #0070dd; } .ar-list .q4 { color: #a335ee; } .ar-list .q5 { color: #ff8000; } .ar-list .q6 { color: #e6cc80; }
+    .ar-empty { color: var(--text-muted); font-size: 13px; padding: 40px 0; text-align: center; }
+    @@media (max-width: 900px) { .ar-grid { grid-template-columns: 1fr; } .ar-col { flex-direction: row; flex-wrap: wrap; } }
+</style>
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+    <div class="main-content">
+        <div class="content-header">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <h1>Armory</h1>
+                    <p>Look up any character on the realm, player or bot, and see their gear on a 3D preview</p>
+                </div>
+            </div>
+        </div>
+        <div class="content-body">
+<div class="ar-wrap">
+    <div class="ar-head">
+        <div class="ar-search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="arSearch" placeholder="Look up a character — player or bot…" autocomplete="off">
+            <div class="ar-results" id="arResults"></div>
+        </div>
+        <span class="dash-label" id="arStatus"></span>
+    </div>
+
+    <div class="ar-card" id="arCard">
+        <div class="ar-empty" id="arEmpty">Search for a character to see their gear on a 3D preview.</div>
+        <div id="arBody" hidden>
+            <div class="ar-identity">
+                <div>
+                    <div class="name" id="arName"></div>
+                    <div class="sub" id="arSub"></div>
+                    <div class="guild" id="arGuild"></div>
+                </div>
+                <span class="ar-pill" id="arOnline">offline</span>
+                <span class="ar-pill" id="arAccount"></span>
+                <span class="ar-pill" id="arGold"></span>
+            </div>
+            <div class="ar-grid">
+                <div class="ar-col" id="arLeft"></div>
+                <div class="ar-stage" id="arStage">
+                    @* The viewer's skin loader (equip.js loadDefaultSkin) finds the canvas by THIS id to read
+                       data-skin-url; any other id falls back to an unversioned skin path that 404s after a
+                       cache sweep, and the character renders with a blank, featureless skin. *@
+                    <canvas id="char-preview-canvas" data-glb-url="" data-skin-url=""></canvas>
+                    <div class="ar-hint" id="arHint">Loading character…</div>
+                    <div class="ar-stagebar">
+                        <select id="arAnim"><option value="Stand">Stand</option></select>
+                        <button type="button" class="wf-mini" id="arPause" style="background:#1c222b;color:#dce2ee;border:1px solid #ffffff22;border-radius:5px;padding:3px 8px;cursor:pointer;">Pause</button>
+                    </div>
+                </div>
+                <div class="ar-col" id="arRight"></div>
+            </div>
+            <div class="ar-bottom" id="arWeapons"></div>
+            <div class="ar-list" id="arList"></div>
+        </div>
+    </div>
+</div>
+        </div>
+    </div>
+</div>
+<div class="ar-tip" id="arTip"></div>
+
+@section Scripts {
+<script type="importmap">
+{ "imports": { "three": "/lib/three/build/three.module.js", "three/addons/": "/lib/three/examples/jsm/" } }
+</script>
+<script type="module">
+    import * as THREE from 'three';
+    import { mountCharacterViewer } from '/js/character-viewer/embed.js';
+
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const LEFT = [0, 1, 2, 14, 4, 3, 18, 8];          // head neck shoulders back chest shirt tabard wrists
+    const RIGHT = [9, 5, 6, 7, 10, 11, 12, 13];        // hands waist legs feet ring ring trinket trinket
+    const BOTTOM = [15, 16, 17];                       // main hand, off hand, ranged
+    const SLOT_NAMES = { 0: 'Head', 1: 'Neck', 2: 'Shoulder', 3: 'Shirt', 4: 'Chest', 5: 'Waist', 6: 'Legs', 7: 'Feet', 8: 'Wrist', 9: 'Hands', 10: 'Ring', 11: 'Ring', 12: 'Trinket', 13: 'Trinket', 14: 'Back', 15: 'Main', 16: 'Off', 17: 'Ranged', 18: 'Tabard' };
+    // Inventory types the character viewer can actually show; rings, necks and trinkets have no art.
+    const VISUAL_INV = new Set([1, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 25, 26]);
+
+    let handle = null, current = null, viewerRace = null, animCtl = null;
+    // Which weapons are drawn: the melee pair (main + off hand) or the ranged slot. The character
+    // owns all three; the game only ever shows one set in hand. Starts on melee like the armory.
+    let weaponSet = 'melee';
+    let skinShown = null;   // skin URL currently composited, so a same-race swap still refreshes it
+
+    // ── search ──
+    const search = $('arSearch'), results = $('arResults');
+    let timer = null, hl = -1, rows = [];
+    search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(runSearch, 180); });
+    search.addEventListener('keydown', e => {
+        if (!results.classList.contains('open')) return;
+        if (e.key === 'ArrowDown') { hl = Math.min(hl + 1, rows.length - 1); paint(); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { hl = Math.max(hl - 1, 0); paint(); e.preventDefault(); }
+        else if (e.key === 'Enter') { if (rows[hl]) pick(rows[hl]); else if (rows[0]) pick(rows[0]); e.preventDefault(); }
+        else if (e.key === 'Escape') close();
+    });
+    document.addEventListener('click', e => { if (!e.target.closest('.ar-search')) close(); });
+    function close() { results.classList.remove('open'); hl = -1; }
+    function paint() { [...results.children].forEach((el, i) => el.classList.toggle('hl', i === hl)); }
+    async function runSearch() {
+        const q = search.value.trim();
+        if (q.length < 2) { close(); return; }
+        try { rows = await (await fetch('/Armory/Search?q=' + encodeURIComponent(q))).json(); } catch { rows = []; }
+        results.innerHTML = rows.length ? rows.map(r =>
+            `<div class="ar-result" data-guid="${r.guid}"><span class="ar-dot ${r.online ? 'on' : ''}"></span>` +
+            `<span class="nm">${esc(r.name)}</span><span class="meta">${r.level} ${esc(r.race)} ${esc(r.className)}</span>` +
+            `<span class="acct">${esc(r.accountName || '')}</span></div>`).join('')
+            : '<div class="ar-result"><span class="meta">No character starts with that.</span></div>';
+        results.classList.add('open'); hl = -1;
+        results.querySelectorAll('[data-guid]').forEach(el => el.addEventListener('click', () => pick(rows.find(r => String(r.guid) === el.dataset.guid))));
+    }
+    function pick(r) { if (!r) return; close(); search.value = r.name; load(r.guid); }
+
+    // ── character ──
+    async function load(guid) {
+        $('arStatus').textContent = 'Loading…';
+        let d;
+        try { d = await (await fetch('/Armory/Character?guid=' + encodeURIComponent(guid))).json(); }
+        catch (e) { $('arStatus').textContent = 'Load failed: ' + e; return; }
+        if (!d.ok) { $('arStatus').textContent = d.error || 'Not found.'; return; }
+        $('arStatus').textContent = '';
+        current = d;
+        history.replaceState(null, '', '/Armory?guid=' + guid);
+        const c = d.character;
+        $('arEmpty').hidden = true; $('arBody').hidden = false;
+        $('arName').textContent = c.name;
+        $('arSub').textContent = `Level ${c.level} ${c.gender} ${c.race} ${c.className}`;
+        $('arGuild').textContent = c.guildName ? `<${c.guildName}>` : '';
+        const on = $('arOnline'); on.textContent = c.online ? 'online' : 'offline'; on.className = 'ar-pill' + (c.online ? ' on' : '');
+        $('arAccount').textContent = c.accountName ? 'account: ' + c.accountName : 'account: —';
+        $('arGold').textContent = fmtMoney(c.money);
+        // Say so when the character's own look could not be built, instead of silently showing the template.
+        $('arStatus').textContent = d.appearance ? '' : ('template look: ' + (d.appearanceError || 'appearance unavailable'));
+        weaponSet = 'melee';
+        renderSlots(d.slots);
+        renderList(d.slots);
+        await dress(c, d.slots, d.viewer, d.appearance);
+    }
+
+    function fmtMoney(copper) {
+        copper = +copper || 0; const g = Math.floor(copper / 10000), s = Math.floor(copper / 100) % 100, cp = copper % 100;
+        return `${g}g ${s}s ${cp}c`;
+    }
+
+    function slotEl(slot, item) {
+        const div = document.createElement('div');
+        div.className = 'ar-slot' + (item ? ' q' + item.quality : '');
+        if (BOTTOM.includes(slot)) {
+            const ranged = slot === 17;
+            div.classList.add('weapon', (weaponSet === 'ranged') === ranged ? 'shown' : 'stowed');
+            div.title = ranged ? 'Click to show the ranged weapon in hand' : 'Click to show the melee weapons in hand';
+            div.addEventListener('click', () => setWeaponSet(ranged ? 'ranged' : 'melee'));
+        }
+        div.title = '';
+        if (item) {
+            div.innerHTML = (item.icon ? `<img src="${esc(item.icon)}" alt="">` : `<span class="ph">${esc(item.name)}</span>`) +
+                (item.itemLevel ? `<span class="lvl">${item.itemLevel}</span>` : '') + (item.hasEnchant ? '<span class="ench">✦</span>' : '');
+            div.addEventListener('mouseenter', e => showTip(item, e));
+            div.addEventListener('mousemove', moveTip);
+            div.addEventListener('mouseleave', hideTip);
+        } else {
+            div.innerHTML = `<span class="ph">${esc(SLOT_NAMES[slot] || slot)}</span>`;
+        }
+        return div;
+    }
+    function renderSlots(slots) {
+        const bySlot = {}; slots.forEach(s => bySlot[s.slot] = s);
+        const fill = (host, list) => { host.innerHTML = ''; list.forEach(s => host.appendChild(slotEl(s, bySlot[s]))); };
+        fill($('arLeft'), LEFT); fill($('arRight'), RIGHT); fill($('arWeapons'), BOTTOM);
+        const hint = document.createElement('span'); hint.className = 'hintline';
+        hint.textContent = weaponSet === 'ranged' ? 'showing ranged — click a melee slot to switch' : 'showing melee — click ranged to switch';
+        $('arWeapons').appendChild(hint);
+    }
+    async function setWeaponSet(set) {
+        if (set === weaponSet || !current) return;
+        weaponSet = set;
+        renderSlots(current.slots);
+        await dress(current.character, current.slots, current.viewer, current.appearance);
+    }
+    function renderList(slots) {
+        if (!slots.length) { $('arList').innerHTML = '<div class="ar-empty">Nothing equipped.</div>'; return; }
+        let h = '<table><tr><th>Slot</th><th>Item</th><th>Type</th><th>ilvl</th><th>Entry</th></tr>';
+        for (const s of slots) {
+            h += `<tr><td class="muted">${esc(s.slotName)}</td><td>${s.icon ? `<img src="${esc(s.icon)}" alt="">` : ''}<span class="q${s.quality}">${esc(s.name)}</span></td>` +
+                 `<td class="muted">${esc(s.inventoryTypeName)}</td><td class="muted">${s.itemLevel || '—'}</td><td class="muted">${s.entry}</td></tr>`;
+        }
+        $('arList').innerHTML = h + '</table>';
+    }
+
+    // ── tooltip ──
+    const tip = $('arTip');
+    function showTip(item, e) {
+        let h = `<div class="t-name q${item.quality}">${esc(item.name)}</div>`;
+        if (item.bonding === 1) h += '<div class="muted">Binds when picked up</div>';
+        else if (item.bonding === 2) h += '<div class="muted">Binds when equipped</div>';
+        h += `<div class="row"><span>${esc(item.inventoryTypeName)}</span><span class="muted">${esc(subclassName(item))}</span></div>`;
+        if (item.dmgMax > 0) {
+            const dps = item.delay > 0 ? ((item.dmgMin + item.dmgMax) / 2 / (item.delay / 1000)).toFixed(1) : null;
+            h += `<div class="row"><span>${Math.round(item.dmgMin)} - ${Math.round(item.dmgMax)} Damage</span><span>Speed ${(item.delay / 1000).toFixed(2)}</span></div>`;
+            if (dps) h += `<div class="muted">(${dps} damage per second)</div>`;
+        }
+        if (item.armor > 0) h += `<div>${item.armor} Armor</div>`;
+        for (const st of item.stats || []) h += `<div>${st.value > 0 ? '+' : ''}${st.value} ${esc(st.name)}</div>`;
+        for (const r of item.resistances || []) h += `<div>+${r.value} ${esc(r.name)} Resistance</div>`;
+        if (item.requiredLevel > 1) h += `<div>Requires Level ${item.requiredLevel}</div>`;
+        if (item.itemLevel) h += `<div class="muted">Item Level ${item.itemLevel}</div>`;
+        if (item.description) h += `<div class="desc">"${esc(item.description)}"</div>`;
+        h += `<div class="muted" style="margin-top:4px;">entry ${item.entry} · display ${item.displayId}</div>`;
+        tip.innerHTML = h; tip.style.display = 'block'; moveTip(e);
+    }
+    function moveTip(e) {
+        const pad = 14, w = tip.offsetWidth, hgt = tip.offsetHeight;
+        let x = e.clientX + pad, y = e.clientY + pad;
+        if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+        if (y + hgt > innerHeight - 8) y = innerHeight - hgt - 8;
+        tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }
+    function hideTip() { tip.style.display = 'none'; }
+    function subclassName(item) {
+        if (item.itemClass === 4) return ['Miscellaneous', 'Cloth', 'Leather', 'Mail', 'Plate', 'Buckler', 'Shield', 'Libram', 'Idol', 'Totem'][item.subclass] || '';
+        if (item.itemClass === 2) return ['Axe', 'Two-Hand Axe', 'Bow', 'Gun', 'Mace', 'Two-Hand Mace', 'Polearm', 'Sword', 'Two-Hand Sword', 'Obsolete', 'Staff', 'Exotic', 'Exotic', 'Fist Weapon', 'Miscellaneous', 'Dagger', 'Thrown', 'Spear', 'Crossbow', 'Wand', 'Fishing Pole'][item.subclass] || '';
+        return '';
+    }
+
+    // ── 3D ──
+    async function dress(c, slots, viewer, appearance) {
+        const hint = $('arHint');
+        if (!viewer || !viewer.glbUrl) { hint.style.display = 'flex'; hint.textContent = 'No character model available for ' + c.race + ' ' + c.gender + '.'; return; }
+        hint.style.display = 'flex'; hint.textContent = 'Loading ' + c.race + ' ' + c.gender + '…';
+        try {
+            const key = viewer.glbUrl;
+            // The character's own composited atlas (skin tone, face, hair colour, beard) when the
+            // server could build one; the race/gender template otherwise.
+            const skinUrl = (appearance && appearance.skinUrl) || viewer.skinUrl;
+            const canvas = $('char-preview-canvas');
+            if (!handle) {
+                canvas.dataset.glbUrl = viewer.glbUrl; if (skinUrl) canvas.dataset.skinUrl = skinUrl;
+                handle = await mountCharacterViewer({ canvas, glbUrl: viewer.glbUrl, skinUrl });
+                window.armoryViewer = handle;
+                wireStageBar();
+            } else if (viewerRace !== key) {
+                await handle.swap({ glbUrl: viewer.glbUrl, skinUrl });
+            } else if (skinUrl !== skinShown) {
+                // Same body, different person: the equip module caches ONE base skin, so drop it.
+                if (skinUrl) canvas.dataset.skinUrl = skinUrl;
+                try { handle.cv.equip.clearSkinCache(); } catch { }
+            }
+            viewerRace = key; skinShown = skinUrl;
+
+            // Hair style: the geoset resolver reads the mapped hair geoset off the cat-0 meshes, so
+            // point it at this character's style before the dress resolves visibility.
+            if (appearance && appearance.hairGeosetId > 0) {
+                for (const m of handle.character.geosetList || []) {
+                    if (m.userData && m.userData.geosetCategory === 0) m.userData.defaultHairGeosetId = appearance.hairGeosetId;
+                }
+            }
+
+            const payload = slots
+                .filter(s => s.displayId > 0 && VISUAL_INV.has(s.inventoryType))
+                .filter(s => weaponSet === 'ranged' ? s.slot !== 15 && s.slot !== 16 : s.slot !== 17)
+                .map(s => ({ itemId: s.entry, displayId: s.displayId, inventoryType: s.inventoryType }));
+            await handle.cv.equip.equipMultiple(handle.character, payload);
+            if (appearance && appearance.hairUrl) applyHairColour(appearance.hairUrl);
+            hint.style.display = 'none';
+        } catch (e) {
+            console.warn('armory dress failed', e);
+            hint.style.display = 'flex'; hint.textContent = 'Character preview failed: ' + e;
+        }
+    }
+    // Hair colour: the GLB bakes the race's default hair sheet onto the hair geosets; swap in this
+    // character's sheet. Only cat-0 variant meshes (the hair styles) wear it — the body (variant 0)
+    // is the composited atlas and must not change.
+    const hairTextureCache = new Map();
+    function applyHairColour(url) {
+        let tex = hairTextureCache.get(url);
+        if (!tex) {
+            tex = new THREE.TextureLoader().load(url);
+            tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace;
+            hairTextureCache.set(url, tex);
+        }
+        for (const m of handle.character.geosetList || []) {
+            const u = m.userData || {};
+            if (u.geosetCategory !== 0 || !(u.geosetVariant > 0) || !m.material) continue;
+            if (!m.userData.armoryHairMat) { m.material = m.material.clone(); m.userData.armoryHairMat = true; }
+            m.material.map = tex; m.material.needsUpdate = true;
+        }
+    }
+
+    function wireStageBar() {
+        // The embed exposes animation control when the GLB carries clips; keep the bar useful either way.
+        const sel = $('arAnim'), pause = $('arPause');
+        const ac = handle.animationControl || handle.cv?.animation || null;
+        animCtl = ac;
+        if (ac && typeof ac.list === 'function') {
+            try {
+                const names = ac.list();
+                if (names && names.length) sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+            } catch { }
+        }
+        sel.addEventListener('change', () => { try { animCtl && animCtl.play && animCtl.play(sel.value); } catch { } });
+        let paused = false;
+        pause.addEventListener('click', () => {
+            paused = !paused; pause.textContent = paused ? 'Play' : 'Pause';
+            try { if (animCtl) { if (paused && animCtl.pause) animCtl.pause(); else if (!paused && animCtl.resume) animCtl.resume(); } } catch { }
+        });
+    }
+
+    const initial = @initialGuid;
+    if (initial > 0) load(initial); else search.focus();
+</script>
+}

@@ -104,7 +104,7 @@
         { key: 'aibots', label: 'AI Bot Control', icon: 'fa-robot', groups: ['bots'] },
         { key: 'devdata', label: 'Data & Development', icon: 'fa-database', groups: ['data', 'devtools', 'gamedev'] },
         { key: 'wiki', label: 'Wiki', icon: 'fa-book', groups: ['wiki'] },
-        { key: 'superui', label: 'SuperUI', icon: 'fa-toolbox', groups: ['superui'] }
+        { key: 'superui', label: 'SuperUI', icon: 'fa-toolbox', groups: ['gameworld', 'superui'] }
     ];
 
     // Display name + icon for every sidebar group (used by the Customize modal)
@@ -122,6 +122,7 @@
         devtools: { name: 'Bot Development', icon: 'fa-code' },
         gamedev: { name: 'Game Development', icon: 'fa-hammer' },
         wiki: { name: 'Documentation', icon: 'fa-book' },
+        gameworld: { name: 'Gameworld', icon: 'fa-globe' },
         superui: { name: 'App', icon: 'fa-toolbox' }
     };
 
@@ -134,7 +135,7 @@
 
     // Default group order + item order within each group
     var DEFAULT_ORDER = {
-        groups: ['operations', 'server', 'state', 'content', 'loot', 'spells', 'world', 'archive', 'bots', 'data', 'devtools', 'gamedev', 'wiki', 'superui'],
+        groups: ['operations', 'server', 'state', 'content', 'loot', 'spells', 'world', 'archive', 'bots', 'data', 'devtools', 'gamedev', 'wiki', 'gameworld', 'superui'],
         items: {
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
             server: ['serverlogs', 'livelogs', 'config'],
@@ -149,6 +150,7 @@
             devtools: ['circuittrace'],
             gamedev: ['weaponforge', 'armorforge'],
             wiki: ['wiki-code', 'wiki-lua'],
+            gameworld: ['armory'],
             superui: ['downloads-page', 'settings']
         }
     };
@@ -536,6 +538,7 @@
             weaponforge: { icon: 'fa-hammer', label: 'Weapon Forge' },
             armorforge: { icon: 'fa-shield-halved', label: 'Armor Forge' },
             worldeditor: { icon: 'fa-mountain-sun', label: '3D World Editor' },
+            armory: { icon: 'fa-shield-halved', label: 'Armory' },
             'downloads-page': { icon: 'fa-download', label: 'Downloads' },
             settings: { icon: 'fa-gear', label: 'Settings' },
             'bots-fleet': { icon: 'fa-tower-broadcast', label: 'Fleet View' },
