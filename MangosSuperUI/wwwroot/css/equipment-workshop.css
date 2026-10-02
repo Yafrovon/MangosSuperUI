@@ -1,0 +1,32 @@
+.ew-content { display: flex; flex-direction: column; gap: 10px; }
+.ew-card .ew-content p { margin: 0; }
+.ew-grow { flex: 1; min-width: 190px; }
+.ew-grow select { width: 100%; max-width: 100%; }
+.ew-status { padding: 9px 11px; border-left: 3px solid #a57936; background: #a5793610; color: var(--text-primary); font-size: 12px; overflow-wrap: anywhere; }
+.ew-status.error { border-color: #ba4034; }
+.ew-viewer { width: 100%; height: 340px; min-height: 280px; border: 1px solid var(--border-light); border-radius: 7px; overflow: hidden; background: #202630; }
+.ew-viewer canvas { display: block; width: 100%; height: 100%; }
+.ew-toolbar { gap: 8px; }
+.ew-toolbar .wf-btn { padding: 6px 9px; font-size: 11px; }
+.ew-note { font-size: 11px !important; color: var(--text-muted); overflow-wrap: anywhere; }
+.ew-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 6px; font-size: 11px; }
+.ew-metric { padding: 7px; border: 1px solid var(--border-light); border-radius: 5px; overflow-wrap: anywhere; }
+.ew-metric strong { display: block; color: var(--text-primary); font-size: 13px; }
+.ew-textures { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.ew-textures figure { margin: 0; padding: 5px; border: 1px solid var(--border-light); border-radius: 5px; }
+.ew-textures img { display: block; width: 100%; height: 96px; object-fit: contain; image-rendering: pixelated; background: repeating-conic-gradient(#303846 0% 25%, #222a35 0% 50%) 50% / 16px 16px; }
+.ew-textures figcaption { font-size: 10px; overflow-wrap: anywhere; color: var(--text-muted); padding-top: 4px; }
+.ew-content textarea { width: 100%; resize: vertical; padding: 8px; box-sizing: border-box; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-light); border-radius: 5px; }
+.ew-reference summary { cursor: pointer; color: var(--text-primary); font-size: 12px; font-weight: 700; padding: 8px 0; }
+.ew-reference-list { max-height: 280px; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.ew-reference-list button { padding: 7px; text-align: left; border: 1px solid var(--border-light); border-radius: 4px; color: var(--text-primary); background: var(--bg-card); cursor: pointer; font-size: 11px; }
+.ew-reference-list button:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ew-reference-list button.selected { border-color: var(--accent); }
+.rw-review-sheets { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.rw-review-sheets a { color: var(--text-primary); font-size: 11px; }
+.rw-review-sheets img { display: block; width: 100%; height: auto; border: 1px solid var(--border-light); border-radius: 4px; }
+.rw-review-items { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 8px; }
+.rw-review-items article { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rw-review-items img { width: 48px; height: 48px; flex-shrink: 0; image-rendering: pixelated; background: #10141c; border-radius: 4px; }
+.rw-review-items strong, .rw-review-items span { display: block; font-size: 11px; }
+.rw-review-items span { color: var(--text-muted); margin-top: 3px; }

@@ -182,6 +182,7 @@ export function paintBodyAtlas(character, skinImg, layers) {
     // silently skipped — defensive against future m_texture array growth.
     for (const { slot, image } of layers) {
         if (!image) continue;
+        if (Number(slot) === 7 && character.raceAppearance?.bareFeet) continue;
         const regionKey = SLOT_TO_REGION[slot];
         if (!regionKey) continue;
         const rect = REGIONS[regionKey];
@@ -241,6 +242,7 @@ export function paintBodyAtlasLayered(character, skinImg, itemLayers) {
     for (const layers of itemLayers) {
         for (const { slot, image } of layers) {
             if (!image) continue;
+            if (Number(slot) === 7 && character.raceAppearance?.bareFeet) continue;
             const regionKey = SLOT_TO_REGION[slot];
             if (!regionKey) continue;
             const rect = REGIONS[regionKey];

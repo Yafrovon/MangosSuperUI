@@ -154,6 +154,10 @@
     <div class="af-body">
         <div class="af-controls">
 
+            <partial name="_AuthoredArmor" />
+            <partial name="_RaidArmorConcepts" />
+            <partial name="_NativeArmorReview" />
+
             <div class="af-card collapsed">
                 <h3><span class="phase">Import</span> TBC armor &amp; sets</h3>
                 <p id="tbcState">Checking TBC mount…</p>
@@ -454,7 +458,7 @@
     import { mountCharacterViewer } from '/js/character-viewer/embed.js';
     // Starter clothes so the preview character isn't naked (Apprentice's Robe — validated by the viewer's geoset rules).
     var DEFAULT_OUTFIT = [{ displayId: 12647, itemId: 56 }];
-    var handle = null, curRace = 'Human', curGender = 'Male', pending = null;
+    var handle = null, curRace = 'Human', curGender = 'Male', pending = null, authoredPreview = null;
 
     async function mount() {
         var hint = document.getElementById('afViewerHint');
@@ -470,6 +474,7 @@
             window.afViewerHandle = handle; // debug/diagnostic access (same shape as the Items page's window.cv)
             if (hint) hint.style.display = 'none';
             try { if (DEFAULT_OUTFIT.length) await handle.cv.equip.equipMultiple(handle.character, DEFAULT_OUTFIT); } catch (e) { console.warn('default outfit failed', e); }
+            if (authoredPreview) await window.afViewer.dressAuthored(authoredPreview.id, authoredPreview.pieces);
             if (pending) { var p = pending; pending = null; p(); }
         } catch (e) {
             if (hint) { hint.style.display = 'flex'; hint.textContent = 'Character preview failed to load.'; }
@@ -505,8 +510,22 @@
     }
 
     window.afViewer = {
+        dressAuthored: async function (packageId, pieces) {
+            if (!handle || !handle.character) throw new Error('Character preview is not ready.');
+            authoredPreview = { id: packageId, pieces: pieces };
+            var fetchDressing = async function (piece) {
+                var query = new URLSearchParams({ id: packageId, key: piece.key, race: curRace, gender: curGender });
+                var response = await fetch('/AuthoredArmor/Dressing?' + query);
+                if (!response.ok) throw new Error('Compiled dressing payload failed: ' + piece.key);
+                return response.json();
+            };
+            await handle.cv.equip.equipMultiple(handle.character, pieces, { fetchDressing: fetchDressing });
+            _glowOverride = null;
+            _applyGlowOverride();
+        },
         // Forged piece (has a vanilla display row): composites/attaches via /Items/ItemDressing.
         equip: async function (displayId, itemId) {
+            authoredPreview = null;
             if (!handle || !handle.character) { pending = function () { window.afViewer.equip(displayId, itemId); }; return; }
             try { await handle.cv.equip.equipDisplay(handle.character, displayId, itemId || undefined); } catch (e) { console.warn('equip failed', e); }
             _applyGlowOverride();
@@ -516,6 +535,7 @@
         // source entries (tbc:true + expansion) and the normal /Items/ItemDressing for vanilla ones
         // (the default outfit and forged pieces).
         dressTbc: async function (items) {
+            authoredPreview = null;
             if (!handle || !handle.character) { pending = function () { window.afViewer.dressTbc(items); }; return; }
             var fetchFn = function (e, identity) {
                 var q = '&race=' + encodeURIComponent(curRace) + '&gender=' + encodeURIComponent(curGender);
@@ -579,7 +599,7 @@
         hasGlow: function () { return _applyGlowOverride(); },
         defaultOutfit: DEFAULT_OUTFIT,
         setChar: async function (race, gender) { curRace = race; curGender = gender; await mount(); },
-        reset: async function () { await mount(); }
+        reset: async function () { authoredPreview = null; await mount(); }
     };
     mount();
 </script>
@@ -634,24 +654,25 @@
     function applyDeployPills(s) {
         var p = $('pillPatch'); p.textContent = s.patchPresent ? 'patch-4 built' : 'no patch yet'; p.className = 'af-pill ' + (s.patchPresent ? 'ok' : '');
         var dp = s.deployedPatch || {}, dpEl = $('pillDeploy');
-        // Queue depth first: it is the thing the operator acts on. Stale is the failure mode (client
-        // was running during the deploy); the rest is plain state.
-        dpEl.textContent = !dp.configured ? 'deploy: no client path'
-            : dp.pending > 0 ? dp.pending + ' change' + (dp.pending === 1 ? '' : 's') + ' queued — close WoW, Rebuild patch'
-            : dp.stale ? 'patch-4 STALE in client — close WoW, Rebuild patch'
-            : dp.deployedExists ? 'patch-4 deployed ✓'
-            : dp.built ? 'patch-4 not deployed yet' : 'no patch yet';
-        dpEl.className = 'af-pill ' + (!dp.configured ? 'warn' : dp.pending > 0 ? 'warn' : dp.stale ? 'bad' : dp.deployedExists ? 'ok' : '');
+        // This compares the app host's configured Data copy, not arbitrary native clients.
+        dpEl.textContent = !dp.configured ? 'configured client Data: unavailable'
+            : dp.pending > 0 ? dp.pending + ' change' + (dp.pending === 1 ? '' : 's') + ' queued — Rebuild patch'
+            : !dp.comparisonKnown ? 'configured client Data: comparison unavailable'
+            : dp.stale ? 'configured client Data: patch-4 differs or is missing'
+            : 'configured client Data: patch-4 matches ✓';
+        dpEl.className = 'af-pill ' + (!dp.configured || dp.pending > 0 || !dp.comparisonKnown ? 'warn' : dp.stale ? 'bad' : 'ok');
         dpEl.title = (dp.message || '') + (dp.pendingReasons && dp.pendingReasons.length ? '\n\nPending:\n• ' + dp.pendingReasons.join('\n• ') : '');
         // Server-side sets: the client patch alone is not enough — the core needs ItemSet.dbc in its own
         // dbc dir, and only picks it up at startup.
         var si = s.serverItemSet || {}, siEl = $('pillItemSet');
         siEl.textContent = !si.configured ? 'sets: no server dbc dir'
-            : si.stale ? 'server sets STALE — Rebuild patch'
+            : !si.comparisonKnown ? 'server sets: comparison unavailable'
+            : si.stale ? 'server sets differ from unified patch or are missing'
             : si.restartRequired ? 'sets deployed — RESTART mangosd'
-            : 'server sets ✓';
-        siEl.className = 'af-pill ' + (!si.configured ? 'warn' : (si.stale || si.restartRequired) ? 'bad' : 'ok');
-        if (si.message) siEl.title = si.message + (si.restartRequired ? '\n\nItemSet.dbc was written after mangosd started (' + (si.serverStarted || '?') + '), so the running core is still reading the old copy.' : '');
+            : !si.restartCheckKnown ? 'server sets match; core start time unavailable'
+            : 'server sets match unified patch; startup checked ✓';
+        siEl.className = 'af-pill ' + (!si.configured || !si.comparisonKnown ? 'warn' : (si.stale || si.restartRequired) ? 'bad' : !si.restartCheckKnown ? 'warn' : 'ok');
+        if (si.message) siEl.title = si.message + (si.restartRequired ? '\n\nItemSet.dbc was written after mangosd started (' + (si.serverStarted || '?') + '); restart is required to load it.' : si.restartCheckKnown ? '\n\nCore started after this file was written (' + si.serverStarted + '). This timestamp check does not inspect the in-memory DBC.' : '\n\nCore startup freshness has not been established.');
         $('btnRestartMangosd').style.display = si.restartRequired ? '' : 'none';
     }
     function refreshStatus() {
@@ -1859,4 +1880,6 @@
     loadList();
 })();
 </script>
+<script src="~/js/authored-armor.js" asp-append-version="true"></script>
+<script src="~/js/native-armor-review.js" asp-append-version="true"></script>
 }

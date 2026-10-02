@@ -90,3 +90,12 @@ Desktop.ini
 # roughly 87% of everything untracked in the repo.
 # They stay on disk for local restore; git is the real history.
 /backups/
+
+# ----- Equipment / world-building QA output -----
+# Review captures, fitted renders, packed MPQs and GLBs derived from original-client art.
+# Tens of thousands of generated files; the web app's review pages read
+# wwwroot/equipment-workshop locally, but none of it belongs in the repo.
+/artifacts/
+/scratch/
+/MangosSuperUI/wwwroot/equipment-workshop/
+imgui.ini

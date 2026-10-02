@@ -119,6 +119,9 @@ public sealed class WeaponDonorResolver
         if (profile.MeasureDisplayRow is { } measure && measure != info.DisplayRow)
             info = ApplyMeasureRow(dbc, info, measure, profile);
 
+        if (profile.Key.Equals("wand", StringComparison.OrdinalIgnoreCase))
+            ValidateWandVisual(info.SpellVisualId);
+
         _logger.LogInformation(
             "WeaponDonorResolver: {Type} → display row {Row} ({Model}){Measure}, extent {Extent:0.###}, palm-back {Back:P0}, {Hints}, spellVisual {Visual}, model2 {Mirror}{Relaxed}",
             profile.Key, info.DisplayRow, info.ModelName,
@@ -127,6 +130,26 @@ public sealed class WeaponDonorResolver
             info.MirrorModelName2 ? "mirrored" : "empty",
             relaxed ? " (relaxed texture pass)" : "");
         return info;
+    }
+
+    // A valid M2 scaffold need not be a usable ranged display. Fail before reserving any IDs
+    // when the mounted donor cannot supply Shoot's precast/cast and projectile references.
+    private void ValidateWandVisual(uint visualId)
+    {
+        DbcWriterService Read(string member) => DbcWriterService.ReadDbc(
+            _mpq.ExtractFile(member) ?? throw new InvalidOperationException($"Missing wand visual table {member}."), member);
+        ValidateWandVisualRows(visualId, Read(@"DBFilesClient\SpellVisual.dbc"),
+            Read(@"DBFilesClient\SpellVisualKit.dbc"), Read(@"DBFilesClient\SpellVisualEffectName.dbc"));
+    }
+
+    internal static void ValidateWandVisualRows(uint visualId, DbcWriterService visuals,
+        DbcWriterService kits, DbcWriterService effects)
+    {
+        var visual = visualId == 0 ? null : visuals.GetRow(visualId);
+        if (visual is null || visual.Length <= 7 || visual[1] == 0 || visual[2] == 0 ||
+            kits.GetRow(visual[1]) is null || kits.GetRow(visual[2]) is null ||
+            visual[6] == 0 || visual[7] == 0 || effects.GetRow(visual[7]) is null)
+            throw new InvalidOperationException($"Wand donor SpellVisual {visualId} lacks a complete stock Shoot visual chain; refusing to forge a silent wand.");
     }
 
     /// <summary>Stock rows (below the custom floor) whose ModelName1 starts with a family pattern

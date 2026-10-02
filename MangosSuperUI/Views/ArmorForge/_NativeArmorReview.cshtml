@@ -1,0 +1,32 @@
+<div class="af-card" id="nativeArmorReview">
+    <h3><span class="phase">Evidence</span> Armor construction review</h3>
+    <p id="narArtStatus">Loading the current installed sets and their separate offline, installed and live review scopes.</p>
+    <p>Compare fixed MSUIClient captures of the original designs by wearer, pose and available angle. Choose an item removal study to inspect the garment beneath, then use value contours, exposure and alignment guides to inspect edges and dark areas.</p>
+    <p id="narStatus" role="status">Loading native review…</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:end">
+        <label>Collection <select id="narCollection" class="af-input"><option value="current">Current installed sets · four designs</option><option value="previous">Previous Glass/Gloam standing collection</option><option value="fitted">Earlier raid drafts · failed motion studies</option><option value="raid">Earlier raid drafts · item removal studies</option><option value="historical">Earlier superseded studies</option></select></label>
+        <label>Wearer <select id="narBody" class="af-input"></select></label>
+        <label>Pose sample <select id="narPose" class="af-input"></select></label>
+        <label>Left design <select id="narLeft" class="af-input"></select></label>
+        <label>Right design <select id="narRight" class="af-input"></select></label>
+        <label>Angle <select id="narView" class="af-input">
+            <option value="front">Front</option><option value="right">Right</option><option value="back">Back</option><option value="left">Left</option><option value="front-three-quarter">Front three-quarter</option><option value="back-three-quarter">Back three-quarter</option>
+        </select></label>
+        <label>Evidence <select id="narStage" class="af-input"><option value="pieces">Separate equipment pieces</option><option value="atlas">Whole-atlas study (earlier)</option></select></label>
+        <label>Assembly <select id="narMode" class="af-input"><option value="dressed">Full outfit</option><option value="body">Body paint, no attachments</option><option value="no-gloves">Without gloves</option><option value="no-boots">Without boots</option><option value="no-belt">Without belt</option><option value="no-robe">Without robe</option></select></label>
+        <label>Display <select id="narDiagnostic" class="af-input"><option value="color">Original color</option><option value="contour">Value and contour</option></select></label>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;margin:12px 0">
+        <label>Exposure <input id="narExposure" type="range" min="0.5" max="2.5" step="0.1" value="1"><output id="narExposureValue">1.0×</output></label>
+        <label>Zoom <input id="narZoom" type="range" min="1" max="6" step="0.1" value="1.3"><output id="narZoomValue">1.3×</output></label>
+        <label>Horizontal position <input id="narFocusX" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+        <label>Vertical position <input id="narFocusY" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+        <label><input id="narGuides" type="checkbox"> Alignment guides</label>
+        <button id="narReset" type="button" class="af-btn secondary">Reset view</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+        <figure style="margin:0"><canvas id="narCanvasLeft" width="1024" height="1024" style="width:100%;background:#242830"></canvas><figcaption id="narCaptionLeft"></figcaption><a id="narRawLeft" target="_blank" rel="noopener">Open original capture</a><div id="narEvidenceLeft"></div></figure>
+        <figure style="margin:0"><canvas id="narCanvasRight" width="1024" height="1024" style="width:100%;background:#242830"></canvas><figcaption id="narCaptionRight"></figcaption><a id="narRawRight" target="_blank" rel="noopener">Open original capture</a><div id="narEvidenceRight"></div></figure>
+    </div>
+    <p id="narScope">Each collection states its wearer and review scope. Removal views keep all other pieces equipped. Images are auto-framed; guides help compare outlines, not world-unit dimensions. Standing captures do not establish movement or live verification.</p>
+</div>

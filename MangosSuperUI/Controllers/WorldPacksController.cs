@@ -52,9 +52,12 @@ public class WorldPacksController : Controller
     {
         success = true,
         mapId,
+        surfaceSculptSupported = true,
         packs = await _store.ListPacksAsync(),
         placements = await _store.PlacementsAsync(null, mapId, includeDeleted: true),
         sculpt = await _store.SculptAsync(null, mapId, enabledOnly: true, includePackId),
+        sourceSculpt = await _store.SculptAsync(null, mapId, enabledOnly: true, includePackId, surface: false),
+        surfaceSculpt = await _store.SculptAsync(null, mapId, enabledOnly: true, includePackId, surface: true),
         publishedSculpt = await _store.PublishedSculptAsync(mapId),
         lastBuild = _build.LastBuildInfo(),
     });
@@ -107,7 +110,7 @@ public class WorldPacksController : Controller
 
     public sealed class CreatePackRequest { public string Key { get; set; } = ""; public string Name { get; set; } = ""; public string? Description { get; set; } public string? Operator { get; set; } }
     public sealed class EnableRequest { public int PackId { get; set; } public bool Enabled { get; set; } public string? Operator { get; set; } }
-    public sealed class SculptBody { public int PackId { get; set; } public int MapId { get; set; } public string? Label { get; set; } public List<SculptTile> Tiles { get; set; } = new(); public string? Operator { get; set; } }
+    public sealed class SculptBody { public bool Surface { get; set; } public int PackId { get; set; } public int MapId { get; set; } public string? Label { get; set; } public List<SculptTile> Tiles { get; set; } = new(); public string? Operator { get; set; } }
     public sealed class PlaceBody : PlacementInput { public int PackId { get; set; } public int PlacementId { get; set; } public string? Operator { get; set; } }
     public sealed class IdBody { public int PackId { get; set; } public int PlacementId { get; set; } public string? Operator { get; set; } }
     public sealed class PublishBody { public bool RestartServer { get; set; } = true; public string? Operator { get; set; } }
@@ -131,7 +134,7 @@ public class WorldPacksController : Controller
     public Task<IActionResult> Sculpt([FromBody] SculptBody r) => Guard(async () => new
     {
         success = true,
-        result = await _store.SculptAsync(r.PackId, new SculptRequest { MapId = r.MapId, Label = r.Label, Tiles = r.Tiles }, Op(r.Operator), Ip),
+        result = await _store.SculptAsync(r.PackId, new SculptRequest { MapId = r.MapId, Surface = r.Surface, Label = r.Label, Tiles = r.Tiles }, Op(r.Operator), Ip),
     });
 
     [HttpPost]
@@ -275,6 +278,13 @@ public class WorldPacksController : Controller
                     : it.Key ?? throw new ArgumentException("deleting a worldmap needs its map:area key");
                 if (it.Body is not null)
                     _ = WorldPackCoast.Read(new[] { new DocRow { Kind = "worldmap", DocKey = key, Body = it.Body.ToJsonString() } });
+            }
+            else if (kind == "npc-replacement")
+            {
+                key = it.Body is not null ? WorldPackNpcReplacements.Parse(it.Body).SpawnGuid.ToString()
+                    : it.Key ?? throw new ArgumentException("deleting an NPC replacement needs its spawn GUID");
+                if (!uint.TryParse(key, out uint spawn) || spawn == 0 || spawn >= WorldPackContent.SpawnGuidBase)
+                    throw new ArgumentException("NPC replacement key must be a stock spawn GUID");
             }
             else if (kind == "path")
             {

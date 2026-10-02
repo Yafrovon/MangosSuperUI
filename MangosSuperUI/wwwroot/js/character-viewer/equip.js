@@ -601,7 +601,7 @@ function deriveCharacterIdentity(character) {
     const datasetUrl = document.getElementById('char-preview-canvas')?.dataset.glbUrl;
     const parserUrl = character?.gltf?.parser?.options?.path;
     const assetUrl = character?.gltf?.asset?.url;
-    const glbUrl = datasetUrl || assetUrl || parserUrl || '';
+    const glbUrl = character?.sourceUrl || datasetUrl || assetUrl || parserUrl || '';
     // Tolerate optional ".v{N}" version stamp between key and extension
     // (CacheVersionRegistry — bumped when SkinnedGlbWriter changes).
     //   /character_models/HumanMale.glb       → key="HumanMale"

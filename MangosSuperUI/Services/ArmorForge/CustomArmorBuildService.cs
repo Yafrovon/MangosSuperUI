@@ -25,7 +25,7 @@ namespace MangosSuperUI.Services.ArmorForge;
 /// vanilla bonuses are the operator's own business, editable afterwards) and every member stamped
 /// with <c>set_id</c> (item_template.set_id too). ItemSet.dbc is emitted for the client tooltip.
 /// </summary>
-public sealed class CustomArmorBuildService : ICustomMpqMemberSource
+public sealed partial class CustomArmorBuildService : ICustomMpqMemberSource
 {
     public const string PatchFileName = "patch-6.MPQ";
 
@@ -1340,6 +1340,15 @@ public sealed class CustomArmorBuildService : ICustomMpqMemberSource
         await conn.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
 
+        await PersistInTransactionAsync(conn, tx, row, components, models);
+        await tx.CommitAsync();
+    }
+
+    private static async Task PersistInTransactionAsync(MySqlConnector.MySqlConnection conn,
+        MySqlConnector.MySqlTransaction tx, ArmorPersistRow row,
+        IReadOnlyList<ArmorComponentBlob> components, IReadOnlyList<MpqMember> models)
+    {
+
         await conn.ExecuteAsync(
             @"INSERT INTO custom_armor_display
                 (display_id, item_entry, build_id, set_id, render_kind, armor_type_key, material,
@@ -1369,7 +1378,6 @@ public sealed class CustomArmorBuildService : ICustomMpqMemberSource
                 @"INSERT INTO custom_armor_model (display_id, mpq_path, compiled_m2, created_at) VALUES (@DisplayId, @MpqPath, @Data, NOW())",
                 new { row.DisplayId, m.MpqPath, m.Data }, tx);
 
-        await tx.CommitAsync();
     }
 
     /// <summary>Mirror the patch-6 ItemDisplayInfo row into the in-memory DBC the web previewer reads.
@@ -2560,34 +2568,23 @@ public sealed class CustomArmorBuildService : ICustomMpqMemberSource
     }
 
     /// <summary>
-    /// Is the SERVER's ItemSet.dbc the one we last built, and has mangosd been restarted since?
+    /// Compare the SERVER's ItemSet.dbc to the exact current unified artifact. The controller
+    /// checks the core startup epoch separately; legacy per-lane sidecars are not authoritative.
     ///
     /// Unlike the client patch this has a second failure mode beyond "stale": the core reads DBCs once,
     /// at startup (<c>World::SetInitialWorldSettings</c> → <c>LoadDBCStores</c>, and no <c>.reload</c>
     /// command touches a DBC store), so a correctly deployed file still does nothing until the world
     /// server is restarted. Until then every forged <c>set_id</c> is zeroed at load.
     /// </summary>
-    public (bool Configured, bool Stale, DateTime? WrittenUtc, string Message) ServerItemSetStatus()
+    public (bool Configured, UnifiedPatch.ForgeFileComparison Comparison) ServerItemSetStatus(string unifiedPatchPath)
     {
         var (dir, detail) = ResolveServerDbcDir();
-        if (dir is null) return (false, false, null, $"no server dbc directory resolved — forged sets cannot work in game (tried: {detail})");
-
-        string target = Path.Combine(dir, "ItemSet.dbc");
-        string? canonical = CanonicalItemSetPath;
-        if (canonical is null)
-            return (true, false, File.Exists(target) ? File.GetLastWriteTimeUtc(target) : null,
-                $"no forged sets — server ItemSet.dbc untouched ({detail})");
-        if (!File.Exists(target))
-            return (true, true, null, $"forged sets exist but {target} is missing — click Rebuild patch");
-        try
+        if (dir is null) return (false, new UnifiedPatch.ForgeFileComparison
         {
-            var a = File.ReadAllBytes(canonical); var b = File.ReadAllBytes(target);
-            bool same = a.Length == b.Length && a.AsSpan().SequenceEqual(b);
-            return (true, !same, File.GetLastWriteTimeUtc(target), same
-                ? $"server ItemSet.dbc matches the last build ({target})"
-                : $"server ItemSet.dbc is STALE — it does not match the last build; click Rebuild patch ({target})");
-        }
-        catch (Exception ex) { return (true, false, null, $"could not compare the server ItemSet.dbc: {ex.Message}"); }
+            ReferencePath = unifiedPatchPath, ReferenceMember = ArmorNaming.ItemSetMember,
+            Message = $"no server dbc directory resolved (tried: {detail})",
+        });
+        return (true, UnifiedPatch.ForgeArtifactDiagnostics.CompareServerItemSet(unifiedPatchPath, Path.Combine(dir, "ItemSet.dbc")));
     }
 
     /// <summary>The base ItemDisplayInfo.dbc: the mounted copy from strictly BENEATH patch-6, so

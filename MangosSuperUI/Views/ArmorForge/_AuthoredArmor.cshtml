@@ -1,0 +1,25 @@
+<div class="af-card" id="authoredArmorCard">
+    <h3><span class="phase">Create</span> Original armor set</h3>
+    <p>Upload eight original pieces with body paint, sixteen fitted helm variants and both shoulders. The forge checks the authored surfaces and previews the compiled game assets.</p>
+    <p><a href="/AuthoredArmor/Schema" target="_blank" rel="noopener">Package format and dimensions</a> · Maximum 1,500 triangles per attachment.</p>
+    <div style="margin:12px 0;padding:12px;border:1px solid var(--border,#454b55);border-radius:6px">
+        <label for="authoredArmorCandidate">Original workshop candidates</label>
+        <select id="authoredArmorCandidate" class="af-input" aria-describedby="authoredArmorCandidateNote"><option value="">Loading candidates…</option></select>
+        <p id="authoredArmorCandidateNote">Choose a candidate to inspect its design review status and notes. Rejected designs remain available for comparison.</p>
+        <img id="authoredArmorCandidatePaint" alt="Original painted materials and body component layout" hidden style="width:100%;max-width:550px;height:auto;margin:8px 0">
+        <button type="button" id="authoredArmorLoadCandidate" class="af-btn" disabled>Load candidate and validate</button>
+    </div>
+    <form id="authoredArmorForm">
+        <label for="authoredArmorZip">Armor package (.zip)</label>
+        <input id="authoredArmorZip" name="package" type="file" accept=".zip,application/zip" class="af-input" required>
+        <button type="submit" class="af-btn" style="margin-top:8px">Validate and compile</button>
+    </form>
+    <p id="authoredArmorState" role="status" style="margin-top:10px">No package staged. Compilation, design review and game verification are separate checks.</p>
+    <div id="authoredArmorActions" hidden>
+        <button type="button" id="authoredArmorPreview" class="af-btn secondary">Preview full set</button>
+        <button type="button" id="authoredArmorBuild" class="af-btn">Save eight pieces</button>
+        <a id="authoredArmorReport" target="_blank" rel="noopener">Full measurements</a>
+        <p style="margin-top:8px">Save creates rare level-60 items requiring level 55 and queues the patch. Review gameplay in the registry. Deployment and game verification remain separate steps.</p>
+    </div>
+    <div id="authoredArmorMetrics" class="af-diag" style="max-height:260px" aria-live="polite"></div>
+</div>

@@ -27,6 +27,7 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { applyBlendSuffix } from './blend-suffix.js';
 import { installM2Fx, createFxRegistry } from './m2fx.js';
+import { loadRaceAppearance } from './race-appearance.js';
 
 const _loader = new GLTFLoader();
 
@@ -49,7 +50,7 @@ export function loadCharacterGlb(url) {
     return new Promise((resolve, reject) => {
         _loader.load(
             url,
-            (gltf) => {
+            async (gltf) => {
                 try {
                     // Reconfigure any materials with _blendN suffix (Session M
                     // phase 2.5). Character bodies are typically all opaque so
@@ -58,6 +59,8 @@ export function loadCharacterGlb(url) {
                     applyBlendSuffix(gltf.scene);
 
                     const character = indexCharacter(gltf);
+                    character.sourceUrl = url;
+                    character.raceAppearance = await loadRaceAppearance(url);
 
                     // Material animation (m2fx). The character's own body rarely
                     // animates its materials — the eye-glow geosets are the usual

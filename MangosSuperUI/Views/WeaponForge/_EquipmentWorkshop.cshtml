@@ -1,0 +1,95 @@
+<section class="wf-card ew-card" id="equipmentWorkshop">
+    <h3><span class="phase">Custom create</span> Original equipment study &amp; authored candidates</h3>
+    <div class="ew-content">
+        <p>Study original client assets, inspect custom geometry from fixed angles, then configure an item. A structural report and a preview do not establish that it looks right in game.</p>
+        <div class="ew-status" id="ewStatus" role="status" aria-live="polite">Choose an authored candidate or browse original references.</div>
+        <div class="wf-row">
+            <div class="wf-field ew-grow"><label for="ewCandidate">Authored weapon candidate</label><select id="ewCandidate"><option value="">Loading candidate catalog…</option></select></div>
+            <button class="wf-btn secondary" type="button" id="ewInspectCandidate">Inspect import</button>
+            <button class="wf-btn" type="button" id="ewConfigure" disabled>Configure item…</button>
+        </div>
+        <p id="ewCandidateNotes" class="ew-note"></p>
+        <div class="ew-viewer" id="ewViewer" aria-label="Equipment study viewer"></div>
+        <div class="wf-row ew-toolbar">
+            <div class="wf-field"><label for="ewMode">Inspection mode</label><select id="ewMode"><option value="textured">Textured</option><option value="unlit">Unlit texture</option><option value="clay">Neutral clay</option><option value="wireframe">Wireframe</option><option value="silhouette">Silhouette</option><option value="normals">Normals</option></select></div>
+            <div class="wf-field"><label for="ewCamera">Fixed camera</label><select id="ewCamera"><option value="front">Front</option><option value="back">Back</option><option value="edge">End / edge</option><option value="top">Top</option><option value="three-quarter">Three-quarter</option></select></div>
+            <button type="button" class="wf-btn secondary" id="ewFit">Fit</button>
+            <label class="wf-check"><input type="checkbox" id="ewGuides" checked> origin / bounds</label>
+        </div>
+        <p class="ew-note">Orthographic views use fixed lighting and pose at time zero. Drag to orbit; select a camera to restore its exact view. Normal colors reveal surface direction. Compare silhouette, edges, UVs and texture values together.</p>
+        <div id="ewMetrics" class="ew-metrics"></div>
+        <div id="ewTextures" class="ew-textures"></div>
+        <div class="wf-field"><label for="ewReviewNotes">Review observations (not a pass)</label><textarea id="ewReviewNotes" rows="2" placeholder="Record the exact angle, surface, seam or fit issue to fix."></textarea></div>
+        <div class="wf-row ew-toolbar">
+            <button type="button" class="wf-btn secondary" id="ewReport" disabled>Download inspection JSON</button>
+            <button type="button" class="wf-btn secondary" id="ewSheet" disabled>Download 30-view sheet</button>
+        </div>
+        <div class="wf-note">Runtime verification: pending. Forging queues the client patch; use <strong>Rebuild patch</strong> to package and deploy when ready.</div>
+        <details class="ew-reference">
+            <summary>Revise an existing custom weapon</summary>
+            <p class="ew-note">Keep the existing item and display IDs, gameplay, and grip coordinates. Preview the exact compiled replacement before applying. Native fit and live visual review remain separate.</p>
+            <div class="wf-field"><label for="ewRevisionMode">Revision scope</label><select id="ewRevisionMode"><option value="geometry">Geometry only — keep registered skin and icon</option><option value="art">Complete art — geometry, painted skin and icon</option></select></div>
+            <p class="ew-note">Use a rigid opaque, single-sided GLB. No automatic orientation or decimation is applied. Complete art uses the two explicit PNGs below; geometry-only revisions ignore embedded GLB images.</p>
+            <div class="wf-row">
+                <div class="wf-field"><label for="ewRevisionItem">Existing item entry</label><input id="ewRevisionItem" type="number" min="1" step="1"></div>
+                <div class="wf-field"><label for="ewRevisionDisplay">Existing display ID</label><input id="ewRevisionDisplay" type="number" min="1" step="1"></div>
+                <button type="button" class="wf-btn secondary" id="ewRevisionTarget">Load current target</button>
+            </div>
+            <div class="wf-row" id="ewRevisionPaint" hidden style="display:none">
+                <div class="wf-field"><label for="ewRevisionTexture">Painted skin (opaque 256×256 PNG, maximum 2 MiB)</label><input id="ewRevisionTexture" type="file" accept=".png,image/png"></div>
+                <div class="wf-field"><label for="ewRevisionIcon">Inventory icon (64×64 PNG, alpha retained as DXT3, maximum 2 MiB)</label><input id="ewRevisionIcon" type="file" accept=".png,image/png"></div>
+            </div>
+            <div id="ewRevisionArtImages" class="ew-textures"></div>
+            <div class="wf-field"><label for="ewRevisionHash">Current compiled model SHA-256</label><input id="ewRevisionHash" readonly></div>
+            <div class="wf-row">
+                <div class="wf-field ew-grow"><label for="ewRevisionFile">Replacement GLB (maximum 16 MiB)</label><input id="ewRevisionFile" type="file" accept=".glb,model/gltf-binary"></div>
+                <button type="button" class="wf-btn secondary" id="ewRevisionCandidate">Use selected candidate</button>
+            </div>
+            <div class="wf-row">
+                <button type="button" class="wf-btn secondary" id="ewRevisionPreview">Preview revision</button>
+                <button type="button" class="wf-btn" id="ewRevisionApply" disabled>Apply reviewed revision</button>
+                <button type="button" class="wf-btn secondary" id="ewRevisionReport" disabled>Download revision report</button>
+            </div>
+            <p class="ew-note" id="ewRevisionStatus" role="status" aria-live="polite">Load the current item/display pair, then preview the replacement. Applying queues a patch rebuild; native fit and visual review remain pending.</p>
+            <pre id="ewRevisionResult" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre>
+        </details>
+        <details class="ew-reference">
+            <summary>Rename an existing authored weapon</summary>
+            <p class="ew-note">Preview a name-only change against the exact current item, display and old name. Stats, equipment type and art stay fixed. World and Forge records must support one atomic transaction.</p>
+            <div class="wf-row">
+                <div class="wf-field"><label for="ewRenameItem">Existing item entry</label><input id="ewRenameItem" type="number" min="1" step="1"></div>
+                <div class="wf-field"><label for="ewRenameDisplay">Existing display ID</label><input id="ewRenameDisplay" type="number" min="1" step="1"></div>
+                <div class="wf-field"><label for="ewRenameOld">Exact current name</label><input id="ewRenameOld" maxlength="255"></div>
+                <div class="wf-field"><label for="ewRenameNew">New name</label><input id="ewRenameNew" maxlength="255"></div>
+            </div>
+            <div class="wf-row"><button type="button" class="wf-btn secondary" id="ewRenamePreview">Preview name change</button><button type="button" class="wf-btn" id="ewRenameApply" disabled>Apply reviewed name</button><button type="button" class="wf-btn secondary" id="ewRenameReport" disabled>Download name report</button></div>
+            <p class="ew-note" id="ewRenameStatus" role="status" aria-live="polite">No rename performed. A committed rename still needs the normal item-template reload and a fresh client query.</p>
+            <pre id="ewRenameResult" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></pre>
+        </details>
+        <details class="ew-reference">
+            <summary>Attach offline native capture evidence</summary>
+            <p class="ew-note">Attach one JSON file containing <code>{"schemaVersion":1,"summary":{...},"assets":[...]}</code>, with the contents of the native capture's summary.json and assets.json. Maximum 2 MiB and 1,024 assets.</p>
+            <div class="wf-row"><div class="wf-field ew-grow"><label for="ewEvidenceFile">Offline capture bundle</label><input type="file" id="ewEvidenceFile" accept=".json,application/json"></div><button type="button" class="wf-btn secondary" id="ewEvidenceAttach">Check and attach</button></div>
+            <p id="ewEvidenceStatus" class="ew-note" role="status" aria-live="polite">Capture counts are supplied claims. The server can compare asset hashes with compiled Forge registry bytes; it does not certify image content or live-world behavior.</p>
+            <div id="ewEvidenceResult"></div>
+        </details>
+        <details class="ew-reference" open>
+            <summary>Original vanilla / TBC references</summary>
+            <div class="wf-row">
+                <div class="wf-field"><label for="ewSource">Client</label><select id="ewSource"><option value="vanilla">Original 1.12</option><option value="tbc">Original TBC</option></select></div>
+                <div class="wf-field"><label for="ewKind">Equipment</label><select id="ewKind"><option value="weapon">Weapons</option><option value="armor">Armor</option></select></div>
+                <div class="wf-field"><label for="ewFamily">Family / slot</label><select id="ewFamily"><option value="">All</option></select></div>
+                <div class="wf-field"><label for="ewSearch">Name or display ID</label><input id="ewSearch" type="text" maxlength="200"></div>
+                <button class="wf-btn secondary" type="button" id="ewBrowse">Browse</button>
+            </div>
+            <div class="wf-row ew-toolbar">
+                <div class="wf-field"><label for="ewRace">Helm variant</label><select id="ewRace"><option>HuM</option><option>HuF</option><option>DwM</option><option>DwF</option><option>NiM</option><option>NiF</option><option>GnM</option><option>GnF</option><option>OrM</option><option>OrF</option><option>ScM</option><option>ScF</option><option>TaM</option><option>TaF</option><option>TrM</option><option>TrF</option><option>BeM</option><option>BeF</option><option>DrM</option><option>DrF</option></select></div>
+                <button class="wf-btn secondary" type="button" id="ewPrevious" disabled>Previous</button><button class="wf-btn secondary" type="button" id="ewNext" disabled>Next</button>
+                <button class="wf-btn secondary" type="button" id="ewMeasure" disabled>Measure this page</button>
+            </div>
+            <div id="ewPage" class="ew-note"></div>
+            <div id="ewReferences" class="ew-reference-list"></div>
+            <div id="ewReferenceNotes" class="ew-note"></div>
+        </details>
+    </div>
+</section>

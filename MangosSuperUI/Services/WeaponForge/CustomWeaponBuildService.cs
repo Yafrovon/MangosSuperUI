@@ -29,7 +29,7 @@ namespace MangosSuperUI.Services.WeaponForge;
 /// always also written to the artifact root). The one step that stays manual is restarting the
 /// client, which nothing can automate away.
 /// </summary>
-public sealed class CustomWeaponBuildService : ICustomMpqMemberSource
+public sealed partial class CustomWeaponBuildService : ICustomMpqMemberSource
 {
     public const string PatchFileName = "patch-5.MPQ";
     private const string LegacyPatchFileName = "patch-4.MPQ"; // pre-rename Forge output; cleaned up on write
@@ -2194,9 +2194,10 @@ public sealed class CustomWeaponBuildService : ICustomMpqMemberSource
             weaponsPackaged = packagedCount,
             weaponsSkipped = skippedCount,
             baseRowsReplaced = replacedInBase,
-            note = $"{PatchFileName} is the single unified weapon patch: it contains EVERY custom weapon recorded in the " +
-                   "database, and its DBC also carries the Retexture Engine's patch-4 rows (it is built on the state beneath patch-5). " +
-                   "Install it ALONGSIDE patch-4, never instead of it.",
+            deployable = false,
+            note = $"{PatchFileName} is a weapon-lane diagnostic artifact. Use Rebuild patch to assemble and deploy " +
+                   "the current unified patch-4.MPQ, containing all retexture, weapon, and armor registry assets. " +
+                   "Installing this diagnostic archive would shadow the unified display database.",
         },
         sql = new { sha256 = sql.Sha256 },
         dbc = new { sha256 = patch.DbcSha256, sizeBytes = patch.DbcBytes.Length },
@@ -2290,15 +2291,14 @@ public sealed class CustomWeaponBuildService : ICustomMpqMemberSource
         var sb = new StringBuilder();
         sb.AppendLine($"# VERIFY — weapon build {buildId}");
         sb.AppendLine();
-        sb.AppendLine("The Forge already applied this build: item_template row inserted (fail-closed), `.reload");
-        sb.AppendLine($"item_template` issued, and `{PatchFileName}` deployed to the client Data folder — per-step");
-        sb.AppendLine("results are in the build result and the Activity Log. If a step failed, this folder has the");
-        sb.AppendLine("files to do it by hand (`item_template.sql`, the patch).");
+        sb.AppendLine("The Forge attempted the item_template insert and reload, then queued the client patch.");
+        sb.AppendLine("Check each apply result and the Activity Log; a compiled model does not establish deployment");
+        sb.AppendLine("or game verification. Use Rebuild patch after closing clients to deploy the unified patch-4.MPQ.");
         sb.AppendLine();
         sb.AppendLine($"- Item entry: **{entry}**   Display id: **{display}**");
         sb.AppendLine($"- MPQ SHA-256: `{patch.MpqSha256}`   SQL SHA-256: `{sql.Sha256}`");
-        sb.AppendLine($"- `{PatchFileName}` contains EVERY forged weapon and sits ABOVE the Retexture Engine's");
-        sb.AppendLine("  patch-4.MPQ — the two install side by side; never overwrite patch-4 with this file.");
+        sb.AppendLine($"- `{PatchFileName}` is a weapon-lane diagnostic artifact. Do not install it:");
+        sb.AppendLine("  it would shadow the unified patch-4.MPQ and hide current armor/retexture rows.");
         sb.AppendLine();
         sb.AppendLine("1. Fully close the Blizzard client and MSUIClient (a warm client caches DBC/model lookups).");
         sb.AppendLine("   If this entry was ever seen with different metadata, remove WDB\\itemcache.wdb (or the whole WDB cache directory) before relaunching; WoW recreates it.");

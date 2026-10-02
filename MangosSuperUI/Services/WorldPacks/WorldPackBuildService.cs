@@ -365,6 +365,7 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         _mapAdtBytes = new();
         _serverDbcs = new();
         var sculpt = new Dictionary<(int map, int col, int row), Dictionary<int, float>>();
+        var surfaceSculpt = new Dictionary<(int map, int col, int row), Dictionary<int, float>>();
         var wmos = new Dictionary<(int map, int col, int row), List<(PlacementRow p, Vector3 pos, Vector3 min, Vector3 max)>>();
         var m2s = new Dictionary<(int map, int col, int row), List<(PlacementRow p, Vector3 pos, float radius)>>();
         var includedPlacements = new List<int>();
@@ -385,12 +386,16 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         var sculptMaps = new HashSet<int>();
         using (var conn = _db.Admin())
             foreach (var m in await conn.QueryAsync<int>(
-                "SELECT DISTINCT s.map_id FROM wp_sculpt s JOIN wp_pack p ON p.id = s.pack_id WHERE p.enabled = 1"))
+                "SELECT DISTINCT s.map_id FROM (SELECT pack_id,map_id FROM wp_sculpt UNION SELECT pack_id,map_id FROM wp_surface_sculpt) s JOIN wp_pack p ON p.id = s.pack_id WHERE p.enabled = 1"))
                 sculptMaps.Add(m);
 
         foreach (int map in sculptMaps)
-            foreach (var t in await _store.SculptAsync(null, map, enabledOnly: true))
+        {
+            foreach (var t in await _store.SculptAsync(null, map, enabledOnly: true, surface: false))
                 sculpt[(map, t.Col, t.Row)] = t.Deltas;
+            foreach (var t in await _store.SculptAsync(null, map, enabledOnly: true, surface: true))
+                surfaceSculpt[(map, t.Col, t.Row)] = t.Deltas;
+        }
 
         var wmoBounds = new Dictionary<string, (Vector3, Vector3)?>(StringComparer.OrdinalIgnoreCase);
         var m2Bounds = new Dictionary<string, (Vector3, Vector3)?>(StringComparer.OrdinalIgnoreCase);
@@ -424,7 +429,7 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         }
 
         var paths = docs.Where(d => d.Kind == "path").Select(d => GradedPath.Parse(d.DocKey, d.Body)).ToList();
-        var touched = sculpt.Keys.Concat(wmos.Keys).Concat(m2s.Keys).Concat(_baseAdts.Keys)
+        var touched = sculpt.Keys.Concat(surfaceSculpt.Keys).Concat(wmos.Keys).Concat(m2s.Keys).Concat(_baseAdts.Keys)
             .Concat(paths.SelectMany(p => p.Tiles().Select(t => (p.Map, t.col, t.row))))
             .Where(k => mapDirs.ContainsKey(k.Item1)).Distinct().OrderBy(k => k).ToList();
         var present = new List<(int map, int col, int row)>();
@@ -466,6 +471,9 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         }
         StitchSeamsAndCarryWater(s, stock, mapDirs, built, sculpt, paths);
         WorldPackCoast.Apply(docs, stock, mapDirs, built, placements, message => Log(s, message));
+        // Human edits are deltas to the finished surface, after all absolute shaping and stitching.
+        // Shared border samples are mirrored at save time; Write rebuilds changed normals and minimaps see final heights.
+        WorldPackSculptLayers.ApplySurface(built, surfaceSculpt);
         foreach (var key in present)
         {
             var (map, col, row) = key;
@@ -475,7 +483,7 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
             list.Add((col, row, files[adtPath]));
         }
         BuildMinimaps(s, stock, docs, mapDirs, files, built, present);
-        return (files, present, sculpt, includedPlacements);
+        return (files, present, WorldPackSculptLayers.Totals(sculpt, surfaceSculpt), includedPlacements);
     }
 
     /// <summary>
@@ -996,11 +1004,11 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
     /// </summary>
     private async Task<int> ApplyDbRowsAsync(BuildState s)
     {
-        var docs = await _store.DocsAsync(null, "dbrow:", enabledOnly: true);
+        var allDocs = await _store.DocsAsync(null, null, enabledOnly: true);
+        var docs = allDocs.Where(d => d.Kind.StartsWith("dbrow:", StringComparison.Ordinal)).ToList();
         var desired = new Dictionary<(string tbl, string key), (int pack, JsonObject row)>();
         foreach (var d in docs) desired[(d.Kind[6..], d.DocKey)] = (d.PackId, JsonNode.Parse(d.Body)!.AsObject());
         var previous = await _store.InstalledRowsAsync();
-        if (desired.Count == 0 && previous.Count == 0) return 0;
 
         int changed = 0;
         using var conn = _db.Mangos();
@@ -1011,6 +1019,11 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         // (2) record the union of old + new rows as installed first, so a crash mid-way can never
         // leave rows the next publish does not know to clean up.
         await ValidateRowsAsync(conn, desired.Select(kv => (kv.Key.tbl, kv.Value.row)));
+        using var admin = _db.Admin();
+        await admin.OpenAsync();
+        var replacements = await WorldPackNpcReplacements.PrepareAsync(conn, admin, allDocs);
+        // Restore stock spawn links before deleting the reserved templates they used.
+        changed += await WorldPackNpcReplacements.ApplyAsync(conn, admin, replacements.Where(r => r.Restore));
         await _store.SetInstalledRowsAsync(desired.Select(kv => (kv.Key.tbl, kv.Key.key, kv.Value.pack))
             .Concat(previous.Where(p => !desired.ContainsKey(p)).Select(p => (p.tbl, p.key, 0))));
 
@@ -1039,6 +1052,8 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
             changed++;
         }
         await tx.CommitAsync();
+        // Reserved templates and their services exist before a stock spawn points to them.
+        changed += await WorldPackNpcReplacements.ApplyAsync(conn, admin, replacements.Where(r => !r.Restore));
         await _store.SetInstalledRowsAsync(desired.Select(kv => (kv.Key.tbl, kv.Key.key, kv.Value.pack)));
         Log(s, $"world DB: {desired.Count} pack row(s) written, {previous.Count(r => !desired.ContainsKey(r))} removed");
         return changed;

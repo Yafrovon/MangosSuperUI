@@ -32,7 +32,9 @@ public class WorldPackCoastProbe(ITestOutputHelper output)
             DocKey=(string)d["docKey"]!,Body=d["body"]!.ToJsonString() }).ToList();
         var state=JsonNode.Parse(File.ReadAllText(statePath))!.AsObject();
         var placements=state["placements"]!.Deserialize<List<PlacementRow>>(JsonOptions)!.Where(p=>p.MapId==0&&!p.Deleted).ToList();
-        var sculpt=(state["sculpt"]!.Deserialize<List<SculptTile>>(JsonOptions)??[])
+        var sculpt=((state["sourceSculpt"]??state["sculpt"])!.Deserialize<List<SculptTile>>(JsonOptions)??[])
+            .ToDictionary(t=>(map:0,col:t.Col,row:t.Row),t=>t.Deltas);
+        var surfaceSculpt=(state["surfaceSculpt"]?.Deserialize<List<SculptTile>>(JsonOptions)??[])
             .ToDictionary(t=>(map:0,col:t.Col,row:t.Row),t=>t.Deltas);
         bool MapZero(DocRow d)
         {
@@ -87,7 +89,7 @@ public class WorldPackCoastProbe(ITestOutputHelper output)
             }
         }
         var paths=geometryDocs.Where(d=>d.Kind=="path").Select(d=>GradedPath.Parse(d.DocKey,d.Body)).ToList();
-        var touched=built.Keys.Concat(sculpt.Keys).Concat(wmos.Keys).Concat(doodads.Keys)
+        var touched=built.Keys.Concat(sculpt.Keys).Concat(surfaceSculpt.Keys).Concat(wmos.Keys).Concat(doodads.Keys)
             .Concat(paths.SelectMany(p=>p.Tiles().Select(t=>(p.Map,t.col,t.row)))).Distinct().ToList();
         foreach(var key in touched)
         {
@@ -112,6 +114,7 @@ public class WorldPackCoastProbe(ITestOutputHelper output)
         InvokeBuild("StitchSeamsAndCarryWater",buildState,stock,mapDirs,built,sculpt,paths);
         var beforeCoast=built.ToDictionary(kv=>kv.Key,kv=>kv.Value.WmoPlacementsFull().Select(w=>(w.path,w.pos,w.rot)).ToList());
         WorldPackCoast.Apply(geometryDocs,stock,mapDirs,built,placements,line=>buildState.Log.Add(line));
+        WorldPackSculptLayers.ApplySurface(built,surfaceSculpt);
         foreach(var (key,adt) in built)
         {
             string path=WorldCoords.AdtPath(mapDirs[key.map],key.col,key.row);

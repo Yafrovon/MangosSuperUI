@@ -984,6 +984,10 @@ public sealed class WorldPackAudit
         if (_in.Facts == null) Add("C", "info", "stock facts", "offline run: references to stock rows (items, spells, displays) were not checked");
         var templates = Rows("creature_template").ToDictionary(r => L(r, "entry"));
         var spawnsByEntry = Rows("creature").GroupBy(r => L(r, "id")).ToDictionary(g => g.Key, g => g.Count());
+        // A replacement retargets one existing stock spawn; it has no reserved creature row.
+        // Count validated replacement documents for both unused-template and quest-reachability checks.
+        foreach (var replacement in WorldPackNpcReplacements.ReadDesired(_in.Docs))
+            spawnsByEntry[replacement.ReplacementEntry] = spawnsByEntry.GetValueOrDefault(replacement.ReplacementEntry) + 1;
         int Spawned(long e) => spawnsByEntry.GetValueOrDefault(e) + (templates.ContainsKey(e) ? 0 : _in.Facts?.StockSpawns(e) ?? 1);
         var summoned = Rows("creature_ai_scripts").Where(r => I(r, "command") == 10).Select(r => L(r, "datalong")).ToHashSet();
         var starters = Rows("creature_questrelation").ToLookup(r => L(r, "quest"), r => L(r, "id"));

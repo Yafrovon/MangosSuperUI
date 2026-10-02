@@ -3,6 +3,7 @@
 }
 
 @section Styles {
+    <link rel="stylesheet" href="/css/equipment-workshop.css" asp-append-version="true" />
     <style>
         .wf-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         .wf-header { padding: 20px 28px 14px; border-bottom: 1px solid var(--border-light); }
@@ -322,10 +323,10 @@
     <div class="wf-header">
         <h1><i class="fa-solid fa-hammer"></i> Weapon Forge</h1>
         <div class="wf-header-sub">
-            The import station: bring a <strong>finished GLB</strong> (UVs + texture authored elsewhere), decimate it
-            to a game budget, and forge it into the game. Forging inserts the item into the world database, reloads
-            <code>item_template</code>, and deploys <code>patch-4.MPQ</code> to the client Data folder. Restart the
-            client, then <code>.additem</code> the new entry. If an existing custom entry shows an old name or equip
+            Study original equipment, inspect an authored candidate or bring a <strong>finished GLB</strong>
+            with UVs and texture. Forging inserts the item into the world database, reloads
+            <code>item_template</code>, and queues the client patch. Use <strong>Rebuild patch</strong> to package
+            and deploy it, then restart the client and <code>.additem</code> the new entry. If an existing custom entry shows an old name or equip
             slot, fully close WoW and remove <code>WDB\itemcache.wdb</code> (or the whole <code>WDB</code> cache
             directory) before relaunching; the client recreates it. All build files are also kept in the artifact folder.
         </div>
@@ -340,14 +341,16 @@
     <div class="wf-body">
         <div class="wf-controls">
 
+            @await Html.PartialAsync("_RaidWeaponReview")
+            @await Html.PartialAsync("_EquipmentWorkshop")
+
             <div class="wf-card">
                 <h3><span class="phase">Import</span> Pre-textured GLB → Game item</h3>
                 <p>Accepts any triangle count — a ZBrush export, a TRELLIS reconstruction, anything with
                    <strong>UV0 and an embedded texture</strong> already authored. The slider decimates it with a
-                   UV-preserving edge collapse (seams locked, the texture never smears), so what you preview is
-                   byte-for-byte what forges. Vanilla weapons are ~100–250 triangles; detail-heavy exports (separate gems,
-                   fittings, pommels) keep their pieces best at 1,000–2,000 — every part keeps a floor of detail, so nothing
-                   vanishes, it just gets coarser. The Forge ceiling is 4,000.</p>
+                    UV-preserving edge collapse. Inspect the resulting shape and texture before forging.
+                    Use the original-reference study to measure the relevant weapon family; triangle count alone
+                    does not establish the right style. The Forge capacity ceiling is 4,000 triangles.</p>
                 <div class="wf-row">
                     <div class="wf-field" style="flex:1;min-width:220px;">
                         <label>Finished GLB (.glb, UVs + texture)</label>
@@ -367,6 +370,8 @@
                     <div class="wf-group" title="Discrete orientation fixes, applied after the automatic orientation">
                         <div class="wf-group-title"><span>Orientation</span></div>
                         <div class="wf-checks">
+                            <label title="Keep the model's authored axes and palm origin instead of fitting a stock donor"><input type="checkbox" id="impPreserveAxes"> preserve authored axes / grip</label>
+                            <label title="Keep the source topology instead of applying the triangle target"><input type="checkbox" id="impKeepTopology"> no decimation</label>
                             <label title="Rotate 180° so the grip and tip swap ends"><input type="checkbox" id="impFlip"> flip grip/tip</label>
                             <label title="Roll 180° about the long axis — bow string side, rifle stock, crossbow stock or axe blade ended up on the wrong side"><input type="checkbox" id="impFlipUp"> flip upside down</label>
                             <label title="Mirror left/right across the hand (true reflection; faces stay outward) — bolt handles, one-sided ornaments"><input type="checkbox" id="impMirror"> mirror left/right</label>
@@ -1093,6 +1098,7 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { applyBlendSuffix, applyEnvMapping, applyMultiTexture } from '/js/character-viewer/blend-suffix.js';
         import { installM2Fx } from '/js/character-viewer/m2fx.js';
+        import { initEquipmentWorkshop } from '/js/equipment-workshop.js';
 
         // ---------- 3D viewer ----------
         const host = document.getElementById('wfViewer');
@@ -2367,7 +2373,8 @@
         function targetTris() { return +targetEl.value; }
         function importParams(fd) {
             fd.append('weaponType', document.getElementById('impType').value || 'sword1h');
-            fd.append('targetTriangles', targetTris());
+            fd.append('reorient', !document.getElementById('impPreserveAxes').checked);
+            fd.append('targetTriangles', document.getElementById('impKeepTopology').checked ? 0 : targetTris());
             fd.append('rollDegrees', +document.getElementById('impRoll').value || 0);
             fd.append('flipGripEnd', document.getElementById('impFlip').checked);
             fd.append('straightenBlade', document.getElementById('impStraighten').checked);
@@ -2383,7 +2390,7 @@
             fd.append('depthPercent', +document.getElementById('impDepth').value || 100);
             fd.append('headPercent', +document.getElementById('impHead').value || 100);
             fd.append('haftPercent', +document.getElementById('impHaft').value || 100);
-            fd.append('gripPercent', +document.getElementById('impGrip').value);
+            fd.append('gripPercent', document.getElementById('impPreserveAxes').checked ? -1 : +document.getElementById('impGrip').value);
             fd.append('offsetUpCm', +document.getElementById('impUp').value || 0);
             fd.append('offsetSideCm', +document.getElementById('impSide').value || 0);
             fd.append('pitchDegrees', +document.getElementById('impPitch').value || 0);
@@ -2515,11 +2522,11 @@
                         ? `Recolored at ${Math.round(hexToHue(document.getElementById('impRcColor').value))}° (${impRcTheory}, ${document.getElementById('impRcTier').value}) — will bake on forge.`
                         : 'No recolorable colour families in the embedded texture — showing the original.';
                 setResult({
-                    title: d.ok ? 'Imported & decimated (preview only)' : 'Import finished with issues',
+                    title: d.ok ? (d.decimation ? 'Imported & decimated (preview only)' : 'Imported (preview only)') : 'Import finished with issues',
                     kv: {
                         'Type': d.weaponTypeLabel || d.weaponType || '1H Sword',
                         'Source triangles': (d.originalTriangleCount ?? 0).toLocaleString(),
-                        'After decimation': (d.triangleCount ?? 0).toLocaleString() + (d.withinForgeBudget === false ? '  — OVER the 1000 forge ceiling' : ''),
+                        'Imported triangles': (d.triangleCount ?? 0).toLocaleString() + (d.withinForgeBudget === false ? '  — OVER the forge capacity ceiling' : ''),
                         'Vertices': (d.vertexCount ?? 0).toLocaleString(),
                         'Texture': d.hasTexture ? 'embedded ✓' : 'MISSING',
                         'Source sha': (d.sourceSha256 || '').slice(0, 12),
@@ -2529,6 +2536,7 @@
                 });
                 previewedOnce = true;
                 loadGlb(previewUrl(d), 'glb');
+                return d;
             },
             async forgeGlb(btn) {
                 const f = document.getElementById('glbFile').files[0];
@@ -3313,14 +3321,13 @@
                 document.getElementById('pillContract').textContent = 'contract v' + s.coordinateContractVersion;
                 const dp = s.deployedPatch || {};
                 const dpEl = document.getElementById('pillDeploy');
-                // Queue depth first: it is the thing the operator acts on. Stale is the failure
-                // mode (client was running during the deploy); the rest is plain state.
-                dpEl.textContent = !dp.configured ? 'deploy: no client path'
-                    : dp.pending > 0 ? `${dp.pending} change${dp.pending === 1 ? '' : 's'} queued — close WoW, Rebuild patch`
-                    : dp.stale ? 'patch-4 STALE in client — close WoW, Rebuild patch'
-                    : dp.deployedExists ? 'patch-4 deployed ✓'
-                    : dp.built ? 'patch-4 not deployed yet' : 'no patch yet';
-                dpEl.className = 'wf-pill ' + (!dp.configured ? 'warn' : dp.pending > 0 ? 'warn' : dp.stale ? 'bad' : dp.deployedExists ? 'ok' : '');
+                // Only the app host's configured Data copy is inspected.
+                dpEl.textContent = !dp.configured ? 'configured client Data: unavailable'
+                    : dp.pending > 0 ? `${dp.pending} change${dp.pending === 1 ? '' : 's'} queued — Rebuild patch`
+                    : !dp.comparisonKnown ? 'configured client Data: comparison unavailable'
+                    : dp.stale ? 'configured client Data: patch-4 differs or is missing'
+                    : 'configured client Data: patch-4 matches ✓';
+                dpEl.className = 'wf-pill ' + (!dp.configured || dp.pending > 0 || !dp.comparisonKnown ? 'warn' : dp.stale ? 'bad' : 'ok');
                 dpEl.title = (dp.message || '') + (dp.pendingReasons && dp.pendingReasons.length ? '\n\nPending:\n• ' + dp.pendingReasons.join('\n• ') : '');
                 fillWeaponTypes(s.weaponTypes || []);
             } catch { pill('pillFixture', false, '', 'status unavailable'); }
@@ -3378,6 +3385,56 @@
         })();
 
         initViewer();
+        let preparedWorkshopSource = null;
+        function workshopImportSettings() {
+            const data = new FormData();
+            importParams(data);
+            return JSON.stringify([...data.entries()]);
+        }
+        initEquipmentWorkshop({
+            async prepareCandidate(candidate) {
+                // The workshop feeds the established GLB route and shared item configuration.
+                // It never writes an item or creates a second packaging implementation.
+                preparedWorkshopSource = null;
+                clearTimeout(sliderTimer);
+                const response = await fetch(candidate.glbUrl);
+                if (!response.ok) throw new Error(`Candidate GLB is unavailable (${response.status}).`);
+                const blob = await response.blob();
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([blob], `${candidate.key}.glb`, { type: 'model/gltf-binary' }));
+                document.getElementById('glbFile').files = transfer.files;
+                const type = document.getElementById('impType');
+                if (![...type.options].some(option => option.value === candidate.weaponType))
+                    type.add(new Option(candidate.weaponType, candidate.weaponType));
+                type.value = candidate.weaponType;
+                document.getElementById('glbName').value = candidate.name;
+                document.getElementById('impPreserveAxes').checked = candidate.placement?.reorient === false;
+                document.getElementById('impKeepTopology').checked = candidate.placement?.targetTriangles === 0;
+                for (const [id, value] of [['impSize', 100], ['impLength', 100], ['impWidth', 100], ['impDepth', 100], ['impHead', 100], ['impHaft', 100], ['impProfile', 0], ['impRoll', 0], ['impUp', 0], ['impSide', 0], ['impPitch', 0], ['impYaw', 0], ['impBright', 0], ['impSat', 0], ['impVisual', 0]])
+                    document.getElementById(id).value = value;
+                for (const id of ['impFlip', 'impFlipUp', 'impMirror', 'impStraighten', 'impRcOn']) document.getElementById(id).checked = false;
+                const file = document.getElementById('glbFile').files[0];
+                const settings = workshopImportSettings();
+                const result = await actions.uploadGlb();
+                if (result?.ok) {
+                    if (file !== document.getElementById('glbFile').files[0] || settings !== workshopImportSettings())
+                        throw new Error('The import inputs changed while the candidate was being inspected. Inspect it again.');
+                    preparedWorkshopSource = { file, settings, sourceSha256: result.sourceSha256 };
+                    result.workshopImportSettings = JSON.parse(settings);
+                }
+                return result;
+            },
+            async configureCandidate(candidate, reviewed) {
+                // Bind this review to the exact File object and settings used by UploadGlb.
+                if (!preparedWorkshopSource || document.getElementById('glbFile').files[0] !== preparedWorkshopSource.file
+                    || preparedWorkshopSource.sourceSha256 !== reviewed.sourceSha256
+                    || workshopImportSettings() !== preparedWorkshopSource.settings)
+                    throw new Error('The prepared GLB or its import settings changed. Inspect this candidate again before configuring it.');
+                await itemBuildOpen('glb');
+            }
+        });
+        for (const id of ['impPreserveAxes', 'impKeepTopology'])
+            document.getElementById(id).addEventListener('change', schedulePreviewIfLive);
         loadStatus();
         LEGACY_LANES.forEach(loadLaneStatus);
         loadItemVisuals();

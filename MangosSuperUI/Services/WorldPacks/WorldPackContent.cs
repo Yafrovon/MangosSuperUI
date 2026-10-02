@@ -106,9 +106,20 @@ public static class WorldPackContent
             parts.Add(v is null ? "0" : Scalar(v));
         }
         var rangeValue = row[rule.RangeColumn] ?? row.FirstOrDefault(kv => kv.Key.Equals(rule.RangeColumn, StringComparison.OrdinalIgnoreCase)).Value;
-        if (rangeValue is null || !uint.TryParse(Scalar(rangeValue), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint id) || id < rule.Floor)
+        // A reserved NPC may retain its stock quests; a stock NPC may offer a reserved quest.
+        // A relationship between two stock IDs remains outside pack ownership.
+        bool npcRelation = table.Equals("creature_questrelation", StringComparison.OrdinalIgnoreCase) ||
+            table.Equals("creature_involvedrelation", StringComparison.OrdinalIgnoreCase);
+        var npc = row["id"] ?? row.FirstOrDefault(kv => kv.Key.Equals("id", StringComparison.OrdinalIgnoreCase)).Value;
+        bool ownedNpcRelation = npcRelation && npc is not null &&
+            uint.TryParse(Scalar(npc), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint npcId) && npcId >= TemplateBase;
+        if (ownedNpcRelation && (rangeValue is null ||
+            !uint.TryParse(Scalar(rangeValue), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint questId) || questId == 0))
+            throw new ArgumentException($"{table}.quest must be a positive quest ID.");
+        if (!ownedNpcRelation && (rangeValue is null || !uint.TryParse(Scalar(rangeValue), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint id) || id < rule.Floor))
             throw new ArgumentException($"{table}.{rule.RangeColumn} must be >= {rule.Floor} (packs only add rows in reserved ranges)");
-        if (rule.Floor == SpawnGuidBase && id >= SpawnGuidCeiling)
+        uint rangeId = rangeValue is not null && uint.TryParse(Scalar(rangeValue), out uint parsedRange) ? parsedRange : 0;
+        if (rule.Floor == SpawnGuidBase && rangeId >= SpawnGuidCeiling)
             throw new ArgumentException($"{table}.{rule.RangeColumn} must be < {SpawnGuidCeiling}: vanilla spawn guids are 24-bit and mangosd needs runtime headroom above them");
         // A pack links only its own spawns: the leader is a pack guid too (never a stock creature).
         if (table.Equals("creature_groups", StringComparison.OrdinalIgnoreCase) &&

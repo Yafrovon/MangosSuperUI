@@ -4,6 +4,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using MangosSuperUI.Services.ArmorForge;
 
 namespace MangosSuperUI.Services;
 
@@ -36,6 +37,8 @@ public sealed class PreviewGlbAssets
 /// </summary>
 public class ItemTextureService
 {
+    public List<string> ShoulderFitErrors { get; } = new();
+    public List<ShoulderFitSelection> ShoulderFitSelections { get; } = new();
     private readonly MpqReaderService _mpq;
     private readonly DbcService _dbc;
     private readonly BlpWriterService _blpWriter;
@@ -985,13 +988,19 @@ public class ItemTextureService
     ///         TextureName2 is empty, which is common — both spaulders
     ///         usually share the same texture).
     /// </summary>
-    public string? EnsureShoulderGlb(uint displayId, ShoulderSide side)
+    public static string ShoulderBodyCode(string? race, string? gender) =>
+        HelmRaceCodes.TryGetValue(race ?? "", out var raceCode)
+        && (string.Equals(gender, "Female", StringComparison.OrdinalIgnoreCase) || string.Equals(gender, "Male", StringComparison.OrdinalIgnoreCase))
+            ? raceCode + (string.Equals(gender, "Female", StringComparison.OrdinalIgnoreCase) ? "F" : "M") : "invalid";
+
+    public string? EnsureShoulderGlb(uint displayId, ShoulderSide side, string? race = "Human", string? gender = "Male")
     {
         if (displayId == 0) return null;
 
         var sideSuffix = side == ShoulderSide.Left ? "lshoulder" : "rshoulder";
         var glbDir = Path.Combine(_env.WebRootPath, "item_models");
-        var naturalFilename = $"{displayId}_{sideSuffix}.glb";
+        string bodyCode = ShoulderBodyCode(race, gender);
+        var naturalFilename = $"{displayId}_{sideSuffix}_{bodyCode}.glb";
         var versionedFilename = CacheVersionRegistry.MakeVersioned(
             naturalFilename, CacheVersionRegistry.RigidGlbVersion);
         var glbPath = Path.Combine(glbDir, versionedFilename);
@@ -1018,7 +1027,8 @@ public class ItemTextureService
 
         Directory.CreateDirectory(glbDir);
         return BuildAttachmentGlb(
-            displayId, modelName, textureName, glbPath, versionedFilename, sideSuffix);
+            displayId, modelName, textureName, glbPath, versionedFilename, sideSuffix,
+            bodyCode, side == ShoulderSide.Left ? "L" : "R");
     }
 
     /// <summary>
@@ -1047,7 +1057,9 @@ public class ItemTextureService
         string? textureName,
         string glbPath,
         string versionedFilename,
-        string kindLabel)
+        string kindLabel,
+        string? bodyCode = null,
+        string? shoulderSide = null)
     {
         if (string.IsNullOrEmpty(modelName))
         {
@@ -1057,6 +1069,8 @@ public class ItemTextureService
             return null;
         }
 
+        bool declaredShoulder = false;
+        byte[]? declaredShoulderSkin = null;
         try
         {
             // The MPQ singleton may have mounted before patch-5/patch-6 existed.
@@ -1082,6 +1096,27 @@ public class ItemTextureService
                 return null;
             }
 
+            if (shoulderSide is not null)
+            {
+                declaredShoulder = m2Model.Name.Contains("|MSUI_SHOULDER_FITS_", StringComparison.Ordinal);
+                string defaultPath = @"Item\ObjectComponents\Shoulder\" + Path.GetFileNameWithoutExtension(modelName) + ".m2";
+                string skinPath = @"Item\ObjectComponents\Shoulder\" + textureName + ".blp";
+                var selected = ShoulderFitResolver.Resolve(defaultPath, m2Data, m2Model.Name, bodyCode!, skinPath,
+                    shoulderSide, member => _mpq.ExtractFile(member));
+                if (selected.ManifestPath is not null)
+                {
+                    declaredShoulderSkin = _mpq.ExtractFile(selected.SkinPath!);
+                    if (declaredShoulderSkin is null || ShoulderFitResolver.Hash(declaredShoulderSkin) != selected.SkinSha256)
+                        throw new InvalidDataException("Declared shoulder shared skin changed during preview resolution.");
+                    ShoulderFitSelections.Add(selected);
+                    modelName = selected.Path;
+                    m2Data = selected.Bytes;
+                    m2Model = M2Reader.Parse(m2Data);
+                    if (m2Model is null || !m2Model.IsValid) throw new InvalidDataException("Declared shoulder-fit M2 cannot be parsed.");
+                    kindLabel += $"|{bodyCode}|{selected.ManifestSha256}";
+                }
+            }
+
             // ── Texture collection ──
             // Mirrors the EnsureGlb pattern: first apply any embedded-by-
             // filename textures from the M2's own texture array (these are
@@ -1102,11 +1137,12 @@ public class ItemTextureService
 
             if (!string.IsNullOrEmpty(textureName))
             {
-                var blpData = FindItemBlp(textureName, modelName);
+                var blpData = declaredShoulderSkin ?? FindItemBlp(textureName, modelName);
                 if (blpData != null)
                 {
                     int slot = FindSkinTextureSlot(m2Model, textures);
                     if (slot >= 0) textures[slot] = blpData;
+                    else if (declaredShoulder) throw new InvalidDataException("Declared shoulder has no shared-skin material slot.");
                 }
                 else
                 {
@@ -1152,6 +1188,7 @@ public class ItemTextureService
         }
         catch (Exception ex)
         {
+            if (declaredShoulder) ShoulderFitErrors.Add($"display {displayId} {shoulderSide}/{bodyCode}: {ex.Message}");
             _logger.LogWarning(ex,
                 "ItemTexture/Attachment: Exception generating displayId {Id} {Kind}",
                 displayId, kindLabel);

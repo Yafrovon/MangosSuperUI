@@ -14,8 +14,8 @@ namespace MangosSuperUI.Services.WeaponForge.RawM2;
 ///
 ///  • SINGLE-PASS (mesh.Passes == null): one submesh + one batch per view, reusing the donor's
 ///    preserved lookup/bone/texture tables BY INDEX (the copied batch resolves against the untouched
-///    donor arrays). Optionally patches the donor render-flag record in place for alpha-key /
-///    two-sided materials (fixed-width, offset-preserving).
+///    donor arrays). An explicit material replaces blend mode and the two-sided bit in the
+///    donor render-flag record (fixed-width, offset-preserving); null keeps donor state.
 ///
 ///  • MULTI-PASS (mesh.Passes set — TBC imports): N submeshes + the complete source batch stack per
 ///    view. Textures, render flags, texture/coordinate/weight/transform combo tables, and constant
@@ -618,8 +618,9 @@ public static class M2VariableTopologyBuilder
         // Single-pass material carry-over: the copied batch references the donor's render-flag
         // record (index at batch +10). That record is 4 fixed-width bytes inside the preserved donor
         // region, and only OUR views' batch points at it — patching in place is offset-preserving.
-        if (!multiPass && material is not null &&
-            (material.BlendMode != WeaponBlendMode.Opaque || material.TwoSided))
+        // Default values are explicit too: an opaque, single-sided source must clear an
+        // alpha/two-sided donor. A null material intentionally preserves geometry-only callers.
+        if (!multiPass && material is not null)
         {
             ushort rfIndex = BinaryPrimitives.ReadUInt16LittleEndian(batchTemplate.AsSpan(10, 2));
             uint nRenderFlags = BinaryPrimitives.ReadUInt32LittleEndian(outp.AsSpan(0x84, 4));
@@ -627,18 +628,14 @@ public static class M2VariableTopologyBuilder
             if (rfIndex < nRenderFlags && ofsRenderFlags + (rfIndex + 1L) * 4 <= outp.Length)
             {
                 int rf = (int)(ofsRenderFlags + rfIndex * 4u);
-                if (material.TwoSided)
-                {
-                    ushort flags = BinaryPrimitives.ReadUInt16LittleEndian(outp.AsSpan(rf, 2));
-                    U16(outp, rf, (ushort)(flags | 0x04));
-                }
-                if (material.BlendMode == WeaponBlendMode.AlphaKey)
-                    U16(outp, rf + 2, 1); // GxBlend_AlphaKey
+                ushort flags = BinaryPrimitives.ReadUInt16LittleEndian(outp.AsSpan(rf, 2));
+                U16(outp, rf, (ushort)((flags & ~0x04) | (material.TwoSided ? 0x04 : 0)));
+                U16(outp, rf + 2, (ushort)material.BlendMode);
             }
             else
             {
                 throw new InvalidOperationException(
-                    $"Donor render-flag index {rfIndex} unresolvable (n={nRenderFlags}); cannot carry the alpha/two-sided material.");
+                    $"Donor render-flag index {rfIndex} unresolvable (n={nRenderFlags}); cannot apply the explicit material.");
             }
         }
 

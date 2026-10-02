@@ -101,6 +101,9 @@ public class ArmorForgeController : Controller
             return new
             {
                 configured = st.Configured, built = st.Built, deployedExists = st.Deployed, stale = st.Stale,
+                comparisonKnown = st.ComparisonKnown, comparisonState = st.ComparisonState,
+                referencePath = st.ReferencePath, targetPath = st.TargetPath,
+                expectedSha256 = st.ExpectedSha256, actualSha256 = st.ActualSha256,
                 pending = st.Pending, pendingReasons = st.PendingReasons, message = st.Message,
             };
         }
@@ -113,14 +116,17 @@ public class ArmorForgeController : Controller
     {
         try
         {
-            var (configured, stale, writtenUtc, message) = _armor.ServerItemSetStatus();
+            var (configured, comparison) = _armor.ServerItemSetStatus(_unified.ArtifactPath);
+            var writtenUtc = comparison.WrittenUtc;
             bool restartRequired = false;
+            bool restartCheckKnown = false;
             string? serverStarted = null;
             // The process probe is its own failure domain — a status pill must never take the page down.
             try
             {
-                if (writtenUtc is DateTime written && _processes.GetMangosdStatus().StartTime is DateTime started)
+                if (comparison.State == "match" && writtenUtc is DateTime written && _processes.GetMangosdStatus().StartTime is DateTime started)
                 {
+                    restartCheckKnown = true;
                     serverStarted = started.ToUniversalTime().ToString("u");
                     restartRequired = written > started.ToUniversalTime();
                 }
@@ -128,7 +134,10 @@ public class ArmorForgeController : Controller
             catch (Exception ex) { _logger.LogDebug(ex, "ArmorForge: mangosd start-time probe failed"); }
             return new
             {
-                configured, stale, restartRequired, message,
+                configured, stale = comparison.Stale, restartRequired, restartCheckKnown, message = comparison.Message,
+                comparisonKnown = comparison.ComparisonKnown, comparisonState = comparison.State,
+                referencePath = comparison.ReferencePath, referenceMember = comparison.ReferenceMember, targetPath = comparison.TargetPath,
+                expectedSha256 = comparison.ExpectedSha256, actualSha256 = comparison.ActualSha256,
                 writtenUtc = writtenUtc?.ToString("u"), serverStarted,
             };
         }

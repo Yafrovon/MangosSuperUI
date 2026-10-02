@@ -26,7 +26,7 @@ namespace MangosSuperUI.Controllers;
 /// Everything here is build/staging only in spirit: forging inserts and deploys via the audited
 /// build service; nothing else touches a live server or client.
 /// </summary>
-public class WeaponForgeController : Controller
+public partial class WeaponForgeController : Controller
 {
     // Golden donor fixture paths (WEAPON_GEN.md §13.3).
     private const string DonorM2Path = @"ITEM\ObjectComponents\WEAPON\Sword_1H_Short_A_01.m2";
@@ -324,6 +324,9 @@ public class WeaponForgeController : Controller
             return new
             {
                 configured = st.Configured, built = st.Built, deployedExists = st.Deployed, stale = st.Stale,
+                comparisonKnown = st.ComparisonKnown, comparisonState = st.ComparisonState,
+                referencePath = st.ReferencePath, targetPath = st.TargetPath,
+                expectedSha256 = st.ExpectedSha256, actualSha256 = st.ActualSha256,
                 pending = st.Pending, pendingReasons = st.PendingReasons, message = st.Message,
             };
         }
@@ -740,6 +743,7 @@ public class WeaponForgeController : Controller
             hasTexture = import.TexturePng is { Length: > 0 },
             withinForgeBudget = mesh.TriangleCount <= MaxForgeTriangles,
             normalization = mesh.Normalization,
+            qualityAudit = EquipmentMeshAudit.Analyze(mesh, AdjustTexture(texturePng, brightness, saturation)),
             recolorApplied,
             grip = BuildGripInfo(mesh, profile, donor),
             preview,

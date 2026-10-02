@@ -3209,8 +3209,9 @@ public class ItemsController : Controller
         }
         else if (inventoryType == 3)
         {
-            var lUrl = _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Left);
-            var rUrl = _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Right);
+            var lUrl = _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Left, race, gender);
+            var rUrl = _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Right, race, gender);
+            if (_itemTextures.ShoulderFitErrors.Count > 0) return UnprocessableEntity(new { message = "Shoulder-fit resolution failed.", errors = _itemTextures.ShoulderFitErrors });
             if (lUrl != null) attachments["shoulderLeft"] = lUrl;
             if (rUrl != null) attachments["shoulderRight"] = rUrl;
         }
@@ -3249,6 +3250,7 @@ public class ItemsController : Controller
             bodyTextures = info.Value.BodyTextures ?? new string[8],
             slotUrls = atlas?.SlotUrls ?? new Dictionary<int, string>(),
             attachments,
+            shoulderFits = _itemTextures.ShoulderFitSelections,
             capeTextureUrl,
             modelName1 = info.Value.ModelName1 ?? "",
             modelName2 = info.Value.ModelName2 ?? "",
@@ -3549,16 +3551,16 @@ public class ItemsController : Controller
 
         // ── Stage 6: actually generate the GLB (the real test) ──
         var glbDir = Path.Combine(_env.WebRootPath, "item_models");
-        // Helms cache as {displayId}_helm_RrG.glb (e.g. _helm_HuM); shoulders as
-        // {displayId}_lshoulder.glb / _rshoulder.glb (race-independent).
+        // Both helmets and shoulders include the requested body in their preview cache key.
         // The on-disk filename includes the RigidGlbVersion stamp via
         // CacheVersionRegistry — must match what EnsureHelmGlb /
         // EnsureShoulderGlb write so the existence checks here line up.
+        string shoulderBody = ItemTextureService.ShoulderBodyCode(race, gender);
         string suffix = kindNormalized switch
         {
             "helm" => $"_helm{helmSuffix}",
-            "shoulderleft" or "lshoulder" => "_lshoulder",
-            "shoulderright" or "rshoulder" => "_rshoulder",
+            "shoulderleft" or "lshoulder" => "_lshoulder_" + shoulderBody,
+            "shoulderright" or "rshoulder" => "_rshoulder_" + shoulderBody,
             _ => "_unknown",
         };
         var versionedFilename = CacheVersionRegistry.MakeVersioned(
@@ -3581,11 +3583,13 @@ public class ItemsController : Controller
         {
             "helm" => _itemTextures.EnsureHelmGlb(displayId, race, gender),
             "shoulderleft" or "lshoulder" =>
-                _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Left),
+                _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Left, race, gender),
             "shoulderright" or "rshoulder" =>
-                _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Right),
+                _itemTextures.EnsureShoulderGlb(displayId, ItemTextureService.ShoulderSide.Right, race, gender),
             _ => null,
         };
+        report["shoulderFits"] = _itemTextures.ShoulderFitSelections;
+        report["shoulderFitErrors"] = _itemTextures.ShoulderFitErrors;
         bool glbExistsNow = System.IO.File.Exists(expectedGlbPath);
         long glbSize = glbExistsNow ? new FileInfo(expectedGlbPath).Length : 0;
 

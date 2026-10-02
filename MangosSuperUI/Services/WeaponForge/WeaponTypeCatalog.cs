@@ -273,8 +273,9 @@ public static class WeaponTypeCatalog
             Subclass = 19, InventoryType = 26, Sheath = 0, Material = 2, DelayMs = 1600,
             IsRanged = true, AmmoType = 0, RangeMod = 100,
             DefaultDamageType = 6, // arcane — a wand's Shoot deals its dmg_type school, never physical
-            // Wand_1H_Standard_A_02: one static bone, one submesh/batch, DBC-driven texture.
-            PinnedDisplayRow = 5720,
+            // Lesser Magic Wand: same simple Wand_1H_Standard_A_02 scaffold as row 5720,
+            // but its display carries the real arcane Shoot visual (2799). Row 5720 has none.
+            PinnedDisplayRow = 21096,
             DonorModelPatterns = ["wand_1h_standard", "wand_1h"],
         },
 

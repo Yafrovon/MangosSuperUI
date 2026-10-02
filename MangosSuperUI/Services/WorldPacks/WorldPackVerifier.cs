@@ -112,13 +112,19 @@ public sealed class WorldPackVerifier
         var report = new Report { Packs = packs.Select(p => p.PackKey).ToList() };
         using var conn = _db.Mangos();
         await conn.OpenAsync();
+        using (var admin = _db.Admin())
+        {
+            await admin.OpenAsync();
+            try { _ = await WorldPackNpcReplacements.PrepareAsync(conn, admin, docs); }
+            catch (Exception ex) { report.Findings.Add(new AuditFinding("C0", "error", "NPC replacements", ex.Message)); }
+        }
         var audit = new WorldPackAudit(new WorldPackAudit.AuditInput
         {
             Stock = _ => null, Built = _ => null, MapDirs = new(), Docs = docs, Placements = new(),
             Facts = new DbFacts(conn),
             Mmaps = Path.Combine(_serverData, "mmaps"),   // G15 on the installed navmesh
         });
-        report.Findings = await Task.Run(audit.RunContent);
+        report.Findings.AddRange(await Task.Run(audit.RunContent));
         try
         {
             await WorldPackBuildService.ValidateRowsAsync(conn, docs.Where(d => d.Kind.StartsWith("dbrow:") && !string.IsNullOrEmpty(d.Body))

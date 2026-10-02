@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS wp_sculpt (
   vertex_index INT NOT NULL,
   delta FLOAT NOT NULL,
   PRIMARY KEY (pack_id, map_id, tile_col, tile_row, vertex_index));
+CREATE TABLE IF NOT EXISTS wp_surface_sculpt (
+  pack_id INT NOT NULL,
+  map_id INT NOT NULL,
+  tile_col INT NOT NULL,
+  tile_row INT NOT NULL,
+  vertex_index INT NOT NULL,
+  delta FLOAT NOT NULL,
+  PRIMARY KEY (pack_id, map_id, tile_col, tile_row, vertex_index));
 CREATE TABLE IF NOT EXISTS wp_placement (
   id INT AUTO_INCREMENT PRIMARY KEY,
   pack_id INT NOT NULL,
@@ -109,7 +117,13 @@ CREATE TABLE IF NOT EXISTS wp_installed_row (
   tbl VARCHAR(64) NOT NULL,
   row_key VARCHAR(190) NOT NULL,
   pack_id INT NOT NULL,
-  PRIMARY KEY (tbl, row_key));");
+  PRIMARY KEY (tbl, row_key));
+CREATE TABLE IF NOT EXISTS wp_npc_baseline (
+  spawn_guid INT UNSIGNED PRIMARY KEY,
+  original_entry INT UNSIGNED NOT NULL,
+  installed_entry INT UNSIGNED NULL,
+  pending_entry INT UNSIGNED NULL,
+  pack_id INT NOT NULL);");
         _schemaReady = true;
     }
 
@@ -122,7 +136,8 @@ CREATE TABLE IF NOT EXISTS wp_installed_row (
         return (await conn.QueryAsync<PackRow>(@"
 SELECT p.id AS Id, p.pack_key AS PackKey, p.name AS Name, p.description AS Description, p.enabled AS Enabled,
        (SELECT COUNT(*) FROM wp_placement x WHERE x.pack_id = p.id AND x.deleted = 0) AS Placements,
-       (SELECT COUNT(*) FROM wp_sculpt s WHERE s.pack_id = p.id) AS SculptVertices,
+       ((SELECT COUNT(*) FROM wp_sculpt s WHERE s.pack_id = p.id) +
+        (SELECT COUNT(*) FROM wp_surface_sculpt s WHERE s.pack_id = p.id)) AS SculptVertices,
        (SELECT COUNT(*) FROM wp_op o WHERE o.pack_id = p.id AND o.kind <> 'undo' AND o.undone_by IS NULL) AS UndoableOps
 FROM wp_pack p ORDER BY p.id")).ToList();
     }
@@ -146,13 +161,16 @@ ORDER BY p.id", new { packId, mapId, includeDeleted })).ToList();
     }
 
     /// <summary>Sculpt deltas of one pack (or all enabled packs summed when packId is null) on a map.</summary>
-    public async Task<List<SculptTile>> SculptAsync(int? packId, int mapId, bool enabledOnly, int includePackId = 0)
+    public async Task<List<SculptTile>> SculptAsync(int? packId, int mapId, bool enabledOnly, int includePackId = 0, bool? surface = null)
     {
         await EnsureSchemaAsync();
         using var conn = _db.Admin();
-        var rows = await conn.QueryAsync<(int col, int row, int idx, double delta)>(@"
+        // Aggregate preview totals retain the published subtraction contract; builds request each layer.
+        string table = surface is { } layer ? WorldPackSculptLayers.Table(layer)
+            : "(SELECT * FROM wp_sculpt UNION ALL SELECT * FROM wp_surface_sculpt)";
+        var rows = await conn.QueryAsync<(int col, int row, int idx, double delta)>($@"
 SELECT s.tile_col, s.tile_row, s.vertex_index, SUM(s.delta)
-FROM wp_sculpt s JOIN wp_pack p ON p.id = s.pack_id
+FROM {table} s JOIN wp_pack p ON p.id = s.pack_id
 WHERE s.map_id = @mapId AND (@packId IS NULL OR s.pack_id = @packId) AND (NOT @enabledOnly OR p.enabled = 1 OR p.id = @includePackId)
 GROUP BY s.tile_col, s.tile_row, s.vertex_index", new { mapId, packId, enabledOnly, includePackId });
         return Group(rows);
@@ -240,7 +258,8 @@ FROM wp_op WHERE pack_id = @packId ORDER BY id DESC LIMIT @limit", new { packId,
             .Where(t => t.Deltas.Count > 0 && t.Col is >= 0 and < 64 && t.Row is >= 0 and < 64)
             .ToList();
         if (tiles.Count == 0) throw new ArgumentException("sculpt stroke has no vertices");
-        var payload = new SculptPayload { MapId = req.MapId, Tiles = tiles };
+        if (req.Surface) tiles = WorldPackSculptLayers.SurfaceStroke(tiles);
+        var payload = new SculptPayload { MapId = req.MapId, Surface = req.Surface, Tiles = tiles };
 
         await _writeLock.WaitAsync();
         try
@@ -346,6 +365,10 @@ SELECT LAST_INSERT_ID();", new { packId, p.MapId, p.Kind, p.ModelPath, p.PosX, p
             var docs = (await conn.QueryAsync<DocRow>(@"
 SELECT pack_id AS PackId, kind AS Kind, doc_key AS DocKey, body AS Body FROM wp_doc WHERE pack_id = @packId FOR UPDATE",
                 new { packId }, tx)).ToList();
+            var otherDocs = (await conn.QueryAsync<DocRow>(@"
+SELECT pack_id AS PackId, kind AS Kind, doc_key AS DocKey, body AS Body FROM wp_doc WHERE pack_id <> @packId FOR UPDATE",
+                new { packId }, tx)).ToList();
+            WorldPackRelocation.ValidateDestination(packId, docs, otherDocs, spec);
             var bodies = docs.ToDictionary(d => (d.Kind, d.DocKey), d => (string?)d.Body);
             var changes = docs.SelectMany(d => WorldPackRelocation.Transform(d.Kind, d.DocKey,
                     System.Text.Json.Nodes.JsonNode.Parse(d.Body) as System.Text.Json.Nodes.JsonObject, spec)
@@ -375,23 +398,22 @@ SELECT pack_id AS PackId, kind AS Kind, doc_key AS DocKey, body AS Body FROM wp_
                 payload.Placements.Add(new PlacementPayload { Before = before, After = await ReadPlacementAsync(conn, tx, id) });
             }
 
-            var rows = await conn.QueryAsync<(int col, int row, int idx, double delta)>(@"
-SELECT tile_col, tile_row, vertex_index, delta FROM wp_sculpt WHERE pack_id = @packId AND map_id = @from",
-                new { packId, from = spec.FromMap }, tx);
-            var from = new SculptPayload { MapId = spec.FromMap, Tiles = Group(rows) };
-            var to = new SculptPayload
+            foreach (bool surface in new[] { false, true })
             {
-                MapId = spec.ToMap,
-                Tiles = from.Tiles.Select(t => new SculptTile { Col = t.Col + spec.DCol, Row = t.Row + spec.DRow, Deltas = t.Deltas }).ToList(),
-            };
-            if (to.Tiles.Any(t => t.Col is < 0 or > 63 || t.Row is < 0 or > 63)) throw new ArgumentException("the moved sculpt leaves the 64x64 tile grid");
-            await AddSculptAsync(conn, tx, packId, from, -1f);
-            await AddSculptAsync(conn, tx, packId, to, +1f);
-            payload.SculptFrom = from;
-            payload.SculptTo = to;
+                string table = WorldPackSculptLayers.Table(surface);
+                var rows = await conn.QueryAsync<(int col, int row, int idx, double delta)>($@"
+SELECT tile_col, tile_row, vertex_index, delta FROM {table} WHERE pack_id = @packId AND map_id = @from",
+                    new { packId, from = spec.FromMap }, tx);
+                var from = new SculptPayload { MapId = spec.FromMap, Surface = surface, Tiles = Group(rows) };
+                var to = WorldPackSculptLayers.Relocate(from, spec.ToMap, spec.DCol, spec.DRow);
+                await AddSculptAsync(conn, tx, packId, from, -1f);
+                await AddSculptAsync(conn, tx, packId, to, +1f);
+                if (surface) { payload.SurfaceFrom = from; payload.SurfaceTo = to; }
+                else { payload.SculptFrom = from; payload.SculptTo = to; }
+            }
 
             string label = $"move region map {spec.FromMap} -> {spec.ToMap} by ({spec.DCol:+0;-0}, {spec.DRow:+0;-0}) tiles: " +
-                           $"{payload.Docs.Items.Count} doc change(s), {ids.Count} placement(s), {from.Tiles.Count} sculpted tile(s)";
+                           $"{payload.Docs.Items.Count} doc change(s), {ids.Count} placement(s), {payload.SculptFrom!.Tiles.Count + payload.SurfaceFrom!.Tiles.Count} sculpted tile layer(s)";
             long opId = await InsertOpAsync(conn, tx, packId, "relocate", label, payload, op, ip, null);
             await tx.CommitAsync();
             long auditId = await AuditOpAsync(conn, opId, packId, "relocate", op, ip, new { spec, from = spec.FromMap }, new { spec, to = spec.ToMap }, null);
@@ -459,6 +481,8 @@ WHERE pack_id = @packId AND kind <> 'undo' AND undone_by IS NULL ORDER BY id DES
                             await conn.ExecuteAsync("UPDATE wp_placement SET map_id = @MapId, pos_x = @PosX, pos_y = @PosY WHERE id = @Id", b, tx);
                     if (rp.SculptTo is not null) await AddSculptAsync(conn, tx, packId, rp.SculptTo, -1f);
                     if (rp.SculptFrom is not null) await AddSculptAsync(conn, tx, packId, rp.SculptFrom, +1f);
+                    if (rp.SurfaceTo is not null) await AddSculptAsync(conn, tx, packId, rp.SurfaceTo, -1f);
+                    if (rp.SurfaceFrom is not null) await AddSculptAsync(conn, tx, packId, rp.SurfaceFrom, +1f);
                     break;
                 }
                 default:
@@ -602,14 +626,15 @@ ON DUPLICATE KEY UPDATE body = VALUES(body)", new { packId, kind, key, body }, t
 
     private static async Task AddSculptAsync(MySqlConnection conn, MySqlTransaction tx, int packId, SculptPayload s, float sign)
     {
+        string table = WorldPackSculptLayers.Table(s.Surface);
         foreach (var t in s.Tiles)
             foreach (var batch in t.Deltas.Chunk(500))
-                await conn.ExecuteAsync(@"
-INSERT INTO wp_sculpt (pack_id, map_id, tile_col, tile_row, vertex_index, delta)
+                await conn.ExecuteAsync($@"
+INSERT INTO {table} (pack_id, map_id, tile_col, tile_row, vertex_index, delta)
 VALUES (@packId, @map, @col, @row, @Key, @delta)
 ON DUPLICATE KEY UPDATE delta = delta + VALUES(delta)",
                     batch.Select(kv => new { packId, map = s.MapId, col = t.Col, row = t.Row, kv.Key, delta = kv.Value * sign }), tx);
-        await conn.ExecuteAsync("DELETE FROM wp_sculpt WHERE pack_id = @packId AND ABS(delta) < 0.0001", new { packId }, tx);
+        await conn.ExecuteAsync($"DELETE FROM {table} WHERE pack_id = @packId AND ABS(delta) < 0.0001", new { packId }, tx);
     }
 
     private static async Task<long> InsertOpAsync(MySqlConnection conn, MySqlTransaction tx, int packId, string kind, string label,
@@ -709,6 +734,7 @@ public sealed class SculptTile
 
 public sealed class SculptRequest
 {
+    public bool Surface { get; set; }
     public int MapId { get; set; }
     public string? Label { get; set; }
     public List<SculptTile> Tiles { get; set; } = new();
@@ -716,6 +742,7 @@ public sealed class SculptRequest
 
 public sealed class SculptPayload
 {
+    public bool Surface { get; set; }
     public int MapId { get; set; }
     public List<SculptTile> Tiles { get; set; } = new();
 }
@@ -727,6 +754,8 @@ public sealed class RelocatePayload
     public List<PlacementPayload> Placements { get; set; } = new();
     public SculptPayload? SculptFrom { get; set; }
     public SculptPayload? SculptTo { get; set; }
+    public SculptPayload? SurfaceFrom { get; set; }
+    public SculptPayload? SurfaceTo { get; set; }
 }
 
 public sealed class PlacementPayload

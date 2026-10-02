@@ -106,7 +106,7 @@ public sealed class UnifiedPatchService
     }
 
     /// <summary>What the operator needs to know on the forge pages: is there a patch, is it in the
-    /// client, is the client's copy the one we built, and how many changes are waiting for a rebuild.
+    /// configured client Data directory, does that copy match, and how many changes await a rebuild.
     /// This replaces the per-lane checks that compared patch-5 / patch-6 files that no longer exist.</summary>
     public UnifiedPatchDeployStatus DeployStatus()
     {
@@ -115,44 +115,41 @@ public sealed class UnifiedPatchService
         bool built = File.Exists(ArtifactPath);
         string? target = dataPath is null ? null : Path.Combine(dataPath, PatchFileName);
         bool deployed = target is not null && File.Exists(target);
-        bool stale = false;
+        ForgeFileComparison? comparison = null;
         string message;
 
         if (dataPath is null)
-            message = "no client Data path configured — download the patch and copy it in yourself";
+            message = "no existing configured client Data directory; other clients are not inspected";
         else if (!built && !deployed)
             message = "no patch built yet";
         else if (built && !deployed)
         {
-            stale = true;
-            message = $"{PatchFileName} is built but not in the client Data folder — click Rebuild patch";
+            comparison = ForgeArtifactDiagnostics.CompareFiles(ArtifactPath, target!);
+            message = comparison.Message;
         }
         else if (!built)
-            message = $"{PatchFileName} is in the client but nothing has been built in this install yet";
+            message = $"{PatchFileName} exists in the configured client Data directory, but no unified build is available for comparison";
         else
         {
-            try
-            {
-                var a = new FileInfo(ArtifactPath); var b = new FileInfo(target!);
-                bool same = a.Length == b.Length && Sha256(File.ReadAllBytes(ArtifactPath)) == Sha256(File.ReadAllBytes(target!));
-                stale = !same;
-                message = same
-                    ? $"deployed {PatchFileName} matches the last build ({b.LastWriteTime:yyyy-MM-dd HH:mm})"
-                    : $"deployed {PatchFileName} is STALE ({b.LastWriteTime:yyyy-MM-dd HH:mm}, built {a.LastWriteTime:yyyy-MM-dd HH:mm}) — " +
-                      "the client was probably running during the last deploy; close it and click Rebuild patch";
-            }
-            catch (Exception ex) { message = $"could not compare the deployed patch: {ex.Message}"; }
+            comparison = ForgeArtifactDiagnostics.CompareFiles(ArtifactPath, target!);
+            message = comparison.Message;
         }
 
         if (pending.Count > 0)
-            message = $"{pending.Count} change(s) queued since the last rebuild — close WoW and click Rebuild patch to ship them. " + message;
+            message = $"{pending.Count} change(s) queued since the last rebuild; Rebuild patch packages these changes. " + message;
 
         return new UnifiedPatchDeployStatus
         {
             Configured = dataPath is not null,
             Built = built,
             Deployed = deployed,
-            Stale = stale,
+            Stale = comparison?.Stale ?? false,
+            ComparisonKnown = comparison?.ComparisonKnown ?? false,
+            ComparisonState = comparison?.State ?? "unavailable",
+            ReferencePath = ArtifactPath,
+            TargetPath = target,
+            ExpectedSha256 = comparison?.ExpectedSha256,
+            ActualSha256 = comparison?.ActualSha256,
             Pending = pending.Count,
             PendingReasons = pending.Select(c => $"{c.Lane}: {c.Reason}").ToArray(),
             Message = message,
@@ -368,8 +365,14 @@ public sealed class UnifiedPatchDeployStatus
     public bool Configured { get; init; }
     public bool Built { get; init; }
     public bool Deployed { get; init; }
-    /// <summary>The client's copy is missing or differs from the last build.</summary>
+    /// <summary>The configured client Data copy is missing or differs from the unified build.</summary>
     public bool Stale { get; init; }
+    public bool ComparisonKnown { get; init; }
+    public string ComparisonState { get; init; } = "unavailable";
+    public string? ReferencePath { get; init; }
+    public string? TargetPath { get; init; }
+    public string? ExpectedSha256 { get; init; }
+    public string? ActualSha256 { get; init; }
     /// <summary>Registry changes queued since the artifact was last rebuilt.</summary>
     public int Pending { get; init; }
     public IReadOnlyList<string> PendingReasons { get; init; } = Array.Empty<string>();

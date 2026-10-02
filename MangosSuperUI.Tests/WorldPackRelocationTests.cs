@@ -120,6 +120,83 @@ public class WorldPackRelocationTests
         Assert.Equal(land.OuterHeights(), reparsed.OuterHeights());
     }
 
+    [Fact]
+    public void PathFollowsMapAndTranslationWhileKeepingHeightWidthAndKey()
+    {
+        var original = J("""{"map":800,"points":[[-500,100,25],[-700,200,30]],"width":24,"falloff":45,"clear":false}""");
+        string snapshot = original.ToJsonString();
+        var c = Assert.Single(WorldPackRelocation.Transform("path", "mountain-pass", original, Spec));
+        var b = J(c.Body!);
+        Assert.Equal("mountain-pass", c.Key); Assert.Equal(0, (int)b["map"]!);
+        Assert.InRange(Math.Abs((-500 + Spec.Dx) - (double)b["points"]![0]![0]!), 0, .001);
+        Assert.InRange(Math.Abs((200 + Spec.Dy) - (double)b["points"]![1]![1]!), 0, .001);
+        Assert.Equal(30, (int)b["points"]![1]![2]!); Assert.Equal(24, (int)b["width"]!);
+        Assert.False((bool)b["clear"]!); Assert.Equal(snapshot, original.ToJsonString());
+        Assert.Empty(WorldPackRelocation.Transform("path", "other-pass", J("""{"map":801}"""), Spec));
+    }
+
+    [Fact]
+    public void CoastlineMovesPolygonCoastTilesAndNorthJoinWithNewKey()
+    {
+        var move = new RelocateSpec(0, 1, -1, -2, true);
+        var original = Coast(); string snapshot = original.ToJsonString();
+        var changes = WorldPackRelocation.Transform("worldmap", "0:7001", original, move);
+        Assert.Equal(2, changes.Count); Assert.Null(changes[0].Body); Assert.Equal("1:7001", changes[1].Key);
+        var b = J(changes[1].Body!);
+        Assert.Equal(1, (int)b["map"]!); Assert.Equal(-1200 + move.Dx, (double)b["polygon"]![0]![0]!, 3);
+        Assert.Equal(1600 + move.Dy, (double)b["polygon"]![0]![1]!, 3);
+        Assert.Equal((27, 32), ((int)b["terrain"]!["tiles"]![0]![0]!, (int)b["terrain"]!["tiles"]![0]![1]!));
+        Assert.Equal(-1200 + move.Dx, (double)b["terrain"]!["joinNorth"]!, 3);
+        Assert.Equal(180, (int)b["terrain"]!["coastWidth"]!); Assert.Equal(snapshot, original.ToJsonString());
+        var roundtrip = WorldPackRelocation.Transform("worldmap", "1:7001", b, new(1, 0, 1, 2, true));
+        var restored = J(roundtrip.Last().Body!);
+        Assert.Equal(-1200, (double)restored["polygon"]![0]![0]!, 3);
+        Assert.Equal(1600, (double)restored["polygon"]![0]![1]!, 3);
+        Assert.Empty(WorldPackRelocation.Transform("worldmap", "1:7001", J("""{"map":1}"""), new(0, 0, 1, 0, true)));
+    }
+
+    [Fact]
+    public void CoastRejectsInstanceDestinationAndOutOfGridScope()
+    {
+        Assert.Throws<ArgumentException>(() => WorldPackRelocation.Transform("worldmap", "0:7001", Coast(), new(0, 801, 0, 0, false)));
+        Assert.Throws<ArgumentException>(() => WorldPackRelocation.Transform("worldmap", "0:7001", Coast(), new(0, 0, 40, 0, true)));
+        Assert.Throws<ArgumentException>(() => WorldPackRelocation.Transform("tile", "0:63:34", J("""{"map":0,"col":63,"row":34}"""), new(0, 0, 1, 0, true)));
+    }
+
+    [Fact]
+    public void DestinationOwnershipRejectsOtherPacksAndMissingCustomMaps()
+    {
+        var own = new List<DocRow> { Doc("tile", "0:28:34", """{"map":0,"col":28,"row":34}""") };
+        var other = new List<DocRow> { Doc("tile", "0:29:34", """{"map":0,"col":29,"row":34}""", 2) };
+        Assert.Throws<InvalidOperationException>(() => WorldPackRelocation.ValidateDestination(1, own, other, new(0, 0, 1, 0, true)));
+        Assert.Throws<ArgumentException>(() => WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(0, 801, 0, 0, false)));
+        own.Add(Doc("map", "801", """{"mapId":801,"directory":"TestDungeon"}"""));
+        WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(0, 801, 0, 0, false));
+        WorldPackRelocation.ValidateDestination(1, own, other, new(0, 0, -1, 0, true));
+    }
+
+    [Fact]
+    public void DestinationOwnershipAllowsVacatedTilesButRejectsStationaryTargets()
+    {
+        var own = new List<DocRow> { Doc("tile", "0:28:34", """{"map":0,"col":28,"row":34}"""),
+            Doc("tile", "0:29:34", """{"map":0,"col":29,"row":34}""") };
+        WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(0, 0, 1, 0, true));
+        own.Add(Doc("tile", "1:29:34", """{"map":1,"col":29,"row":34}"""));
+        Assert.Throws<InvalidOperationException>(() => WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(0, 1, 1, 0, true)));
+    }
+
+    [Fact]
+    public void SourcePatrolRoutesAreRefusedInsteadOfSilentlyLeftBehind()
+    {
+        var own = new List<DocRow> { Doc("dbrow:creature", "1500000", """{"guid":1500000,"map":0}"""),
+            Doc("dbrow:creature_movement", "1500000|1", """{"id":1500000,"point":1,"position_x":-2000,"position_y":2000,"position_z":10}""") };
+        Assert.Contains("patrol routes", Assert.Throws<ArgumentException>(() => WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(0, 0, 1, 0, true))).Message);
+        WorldPackRelocation.ValidateDestination(1, own, new List<DocRow>(), new(1, 1, 1, 0, true));
+    }
+
+    private static DocRow Doc(string kind, string key, string body, int pack = 1) => new() { PackId = pack, Kind = kind, DocKey = key, Body = body };
+    private static JsonObject Coast() => J("""{"map":0,"area":7001,"directory":"TestCoast","polygon":[[-1200,1600],[-2000,1600],[-2000,2400],[-1200,2400]],"terrain":{"tiles":[[28,34],[29,34]],"joinNorth":-1200,"joinWidth":80,"coastWidth":180,"seaDepth":515,"seaLevel":0,"minimumLand":6}}""");
+
     private static string? DataDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
