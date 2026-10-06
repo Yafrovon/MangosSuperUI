@@ -363,6 +363,39 @@
             color: var(--text-primary);
         }
 
+        /* Every CPU core remains visible at 0% usage. These existing theme tokens
+           follow light/dark mode and the user's color customizations. */
+        .core-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+        }
+
+        .core-cell {
+            position: relative;
+            width: 22px;
+            height: 36px;
+            overflow: hidden;
+            background: var(--bg-card-alt);
+            border: 1px solid var(--border-medium);
+            border-radius: 3px;
+        }
+
+        .core-cell-fill {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            left: 0;
+        }
+
+        .core-cell-fill-world {
+            background: var(--accent);
+        }
+
+        .core-cell-fill-superui {
+            background: var(--text-secondary);
+        }
+
         /* Database health chips */
         .db-health-chips {
             display: flex;
