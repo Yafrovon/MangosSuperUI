@@ -10,14 +10,18 @@ namespace MangosSuperUI.Services.WorldPacks;
 /// seams are stitched, so the result is exact and the same on both sides of every tile border it crosses.
 /// Clear (default on): the props standing IN the lane (half the width) are removed - a road has no tree in it
 /// (2026-09-27 live: the first walk of greymane-pass stopped at a trunk the grading had left standing).
+/// Grade off ("grade": false): a CLEARED LANE - the props in it go, the ground stays exactly as it is. A narrow
+/// lane graded onto the ~4-yd ADT grid tilts its own triangles (WoW Karting, 2026-10-04: a 42-degree sideways
+/// facet inside an 8-yd lane stopped a kart where the ungraded road had been fine).
 /// </summary>
-public sealed record GradedPath(string Name, int Map, List<Vector3> Points, float Width, float Falloff, bool Clear = true)
+public sealed record GradedPath(string Name, int Map, List<Vector3> Points, float Width, float Falloff, bool Clear = true, bool Grade = true)
 {
     public static GradedPath Parse(string name, string body)
     {
         var b = JsonNode.Parse(body)!.AsObject();
         var pts = b["points"]!.AsArray().Select(p => new Vector3((float)p![0]!, (float)p[1]!, (float)p[2]!)).ToList();
-        return new GradedPath(name, (int)b["map"]!, pts, (float)b["width"]!, (float?)b["falloff"] ?? 20f, (bool?)b["clear"] ?? true);
+        return new GradedPath(name, (int)b["map"]!, pts, (float)b["width"]!, (float?)b["falloff"] ?? 20f, (bool?)b["clear"] ?? true,
+            (bool?)b["grade"] ?? true);
     }
 
     public float Reach => Width / 2f + Falloff;

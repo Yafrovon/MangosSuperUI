@@ -299,6 +299,8 @@ public class WorldPacksController : Controller
                 }
                 key = it.Key ?? throw new ArgumentException("a path needs a key (its name)");
             }
+            else if (kind == "asset")
+                key = WorldPackContent.ValidateAsset(it.Key ?? throw new ArgumentException("an asset needs its archive path as key"), it.Body);
             else throw new ArgumentException($"unknown content kind '{kind}'");
             items.Add((kind, key, it.Body?.ToJsonString()));
         }

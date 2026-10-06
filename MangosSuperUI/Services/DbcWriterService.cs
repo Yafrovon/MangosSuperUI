@@ -180,6 +180,20 @@ public class DbcWriterService
         return removed;
     }
 
+    /// <summary>
+    /// Keep only the rows whose ID matches <paramref name="keep"/>, in one pass (RemoveRowsWhere re-indexes per
+    /// removal, which is quadratic on a 22,000-row Spell.dbc). The string block is left whole, so string
+    /// offsets in the kept rows stay valid. Returns the number of rows dropped.
+    /// </summary>
+    public int RetainRows(Func<uint, bool> keep)
+    {
+        int removed = _records.RemoveAll(row => row.Length == 0 || !keep(row[0]));
+        _idIndex.Clear();
+        for (int i = 0; i < _records.Count; i++)
+            _idIndex[_records[i][0]] = i;
+        return removed;
+    }
+
     /// <summary>Add a new row with the given field values. Must have the correct field count.</summary>
     public void AddRow(uint[] fields)
     {

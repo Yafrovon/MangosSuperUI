@@ -77,6 +77,7 @@ public sealed class WorldPackAudit
         Guard("G14", PatrolGround);
         Guard("G15", Reachability);
         Guard("G16", () => _out.AddRange(WorldPackWorldMap.Verify(_in.Docs, _in.Stock, _in.Built)));
+        Guard("G18", PublicPortals);
         Guard("C", Content);
         return _out;
     }
@@ -118,6 +119,42 @@ public sealed class WorldPackAudit
     }
 
     /// <summary>Terrain height at a world point (bilinear over the outer grid), or null off the map.</summary>
+    /// <summary>Is (x, y) inside an ADT terrain hole (MCNK hole bits)? There the terrain height is not a surface:
+    /// a building's floor (Stormwind sits in holes) is what anything stands on.</summary>
+    /// <summary>Does a building (WMO group box) stand within RADIUS yd of AT at its height (AT.Z-1 .. AT.Z+4)? A portal
+    /// beside a wall walkway or a rooftop is reachable from that surface though the terrain is far below.</summary>
+    public bool NearBuildingAtHeight(int map, Vector3 at, float radius)
+    {
+        var (wmos, _) = Around(map, WorldCoords.WorldToPlacement(at), 1);
+        for (int k = 0; k < 16; k++)
+        {
+            float a = k * MathF.PI / 8f;
+            for (float d = 1f; d <= radius; d += 1f)
+                for (float dz = -1f; dz <= 4f; dz += 1f)
+                {
+                    var q = new Vector3(at.X + MathF.Cos(a) * d, at.Y + MathF.Sin(a) * d, at.Z + dz);
+                    if (wmos.Any(w => w.Boxes.Any(bx => bx.Depth(WorldCoords.WorldToPlacement(q)) > 0))) return true;
+                }
+        }
+        return false;
+    }
+
+    public bool InTerrainHole(int map, float x, float y)
+    {
+        var adt = Adt(map, WorldCoords.TileCol(y), WorldCoords.TileRow(x));
+        if (adt == null) return false;
+        for (int i = 0; i < 256; i++)
+        {
+            var (_, _, ox, oy, _) = adt.ChunkInfo(i);
+            if (x > ox || x <= ox - WorldCoords.Chunk || y > oy || y <= oy - WorldCoords.Chunk) continue;
+            ushort mask = adt.HolesOf(i);
+            int hy = Math.Clamp((int)((ox - x) / (WorldCoords.Chunk / 4f)), 0, 3);
+            int hx = Math.Clamp((int)((oy - y) / (WorldCoords.Chunk / 4f)), 0, 3);
+            return (mask & (1 << (hy * 4 + hx))) != 0;
+        }
+        return false;
+    }
+
     public float? Ground(int map, float x, float y)
     {
         int col = WorldCoords.TileCol(y), row = WorldCoords.TileRow(x);
@@ -417,6 +454,8 @@ public sealed class WorldPackAudit
                 int map = I(r, "map");
                 var at = new Vector3(F(r, "position_x"), F(r, "position_y"), F(r, "position_z"));
                 long entry = L(r, "id");
+                // A placed public Real Portal may hang in the air (a kart jumps into it off a lip): G18 checks it.
+                if (table == "gameobject" && PublicPortalTemplate(entry) != null) continue;
                 string subject = $"{table} {L(r, "guid")} ({Name(table, entry)})";
                 if (!_in.MapDirs.ContainsKey(map)) { Add("G7", "error", subject, $"map {map} does not exist", map, at); continue; }
                 float? h = Ground(map, at.X, at.Y);
@@ -469,6 +508,68 @@ public sealed class WorldPackAudit
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════ G18 public Real Portals
+
+    /// <summary>A pack gameobject_template that is a PUBLIC Real Portal (WoW Karting: SuiPortal::IsPublicPackPortal):
+    /// type 22 spellcaster, not party-only, casting a pack spell.</summary>
+    private JsonObject? PublicPortalTemplate(long entry) =>
+        Rows("gameobject_template").FirstOrDefault(t => L(t, "entry") == entry && I(t, "type") == 22 &&
+            L(t, "data2") == 0 && L(t, "data0") >= WorldPackContent.SpellIdBase && L(t, "data0") < WorldPackContent.SpellIdCeiling);
+
+    private void PublicPortals()
+    {
+        int checkedPortals = 0;
+        foreach (var (_, r) in Docs("dbrow:gameobject"))
+        {
+            long entry = L(r, "id");
+            if (PublicPortalTemplate(entry) is not { } t) continue;
+            checkedPortals++;
+            int map = I(r, "map");
+            var at = new Vector3(F(r, "position_x"), F(r, "position_y"), F(r, "position_z"));
+            long spell = L(t, "data0");
+            string subject = $"portal {L(r, "guid")} ({S(t, "name")})";
+            if (!Rows("spell_template").Any(s => L(s, "entry") == spell))
+                Add("G18", "error", subject, $"its teleport spell {spell} is not a pack spell_template row");
+            var targets = Rows("spell_target_position").Where(p => L(p, "id") == spell).ToList();
+            if (targets.Count != 1)
+            {
+                Add("G18", "error", subject, targets.Count == 0
+                    ? $"spell {spell} has no spell_target_position: the portal goes nowhere"
+                    : $"spell {spell} has {targets.Count} spell_target_position rows (one per map): a moved destination left its old row behind");
+                continue;
+            }
+            // The aperture is 8 yd tall from 0.1 yd above the object (SuiPortal PORTAL_HALF_HEIGHT/BOTTOM_CLEARANCE).
+            if (Ground(map, at.X, at.Y) is { } h)
+            {
+                float reach = float.MinValue;
+                for (int k = 0; k < 16; k++)
+                {
+                    float a = k * MathF.PI / 8f;
+                    for (float d = 2f; d <= 10f; d += 2f)
+                        if (Ground(map, at.X + MathF.Cos(a) * d, at.Y + MathF.Sin(a) * d) is { } n) reach = MathF.Max(reach, n);
+                }
+                if (InTerrainHole(map, at.X, at.Y))
+                    Add("G18", "info", subject, $"window {at.Z + 0.1f:F1}..{at.Z + 8.1f:F1} over a terrain hole (a building's surface, not the terrain, is the ground here - e.g. a city wall walkway)", map, at);
+                else if (at.Z + 8.1f < h + 1f)
+                    Add("G18", "error", subject, $"the window is buried: its top is {h - at.Z - 8.1f + 1f:F1} yd below a body standing there", map, at);
+                else if (at.Z + 0.1f > reach + 3f && !NearBuildingAtHeight(map, at, 10f))
+                    Add("G18", "error", subject, $"the window floats {at.Z + 0.1f - reach:F1} yd above any ground within 10 yd: nobody can drive or jump into it", map, at);
+                else
+                    Add("G18", "info", subject, $"window {at.Z + 0.1f:F1}..{at.Z + 8.1f:F1} over ground {h:F1} (highest ground within 10 yd {reach:F1})", map, at);
+            }
+            var p = targets[0];
+            int tm = I(p, "target_map");
+            var dest = new Vector3(F(p, "target_position_x"), F(p, "target_position_y"), F(p, "target_position_z"));
+            if (!_in.MapDirs.ContainsKey(tm)) { Add("G18", "error", subject, $"target map {tm} does not exist", tm, dest); continue; }
+            if (Ground(tm, dest.X, dest.Y) is not { } dh) { Add("G18", "error", subject, "arrival is off the map's terrain", tm, dest); continue; }
+            string? inWmo = IndoorsOf(tm, dest);
+            if (inWmo == null && dest.Z < dh - 0.5f) Add("G18", "error", subject, $"arrival {dh - dest.Z:F1} yd under the ground", tm, dest);
+            else if (inWmo == null && dest.Z > dh + 4f) Add("G18", "warn", subject, $"arrival {dest.Z - dh:F1} yd above the ground (riders fall)", tm, dest);
+            else Add("G18", "info", subject, $"arrival on the ground (terrain {dh:F1}) facing {F(p, "target_orientation"):F2}", tm, dest);
+        }
+        if (checkedPortals > 0) Add("G18", "info", "public portals", $"{checkedPortals} placed public Real Portal(s) checked");
+    }
+
     // ═══════════════════════════════════════════════════════════════ G13 graded paths
 
     /// <summary>
@@ -483,6 +584,8 @@ public sealed class WorldPackAudit
             string key = doc.DocKey;
             var path = GradedPath.Parse(key, b.ToJsonString());
             int samples = 0; float worst = 0f; Vector3? worstAt = null; Vector3? wet = null;
+            float worstCross = 0f; Vector3? crossAt = null;
+            float side = MathF.Min(MathF.Max(path.Width / 2f - 0.5f, 0.5f), 3f);
             (string wmo, Vector3 at)? building = null;
             float? prev = null; Vector2 prevP = default;
             for (int i = 0; i + 1 < path.Points.Count; i++)
@@ -500,6 +603,18 @@ public sealed class WorldPackAudit
                         float deg = MathF.Atan(MathF.Abs(h - ph) / Vector2.Distance(p, prevP)) * 180f / MathF.PI;
                         if (deg > worst) { worst = deg; worstAt = new Vector3(p.X, p.Y, h); }
                     }
+                    // Cross slope: a lane that tilts sideways stops a walker or a kart as surely as a steep grade
+                    // (2026-10-04, WoW Karting: a 42-degree facet inside a graded 8-yd lane; the grade along it was 11).
+                    if (ab.LengthSquared() > 0.01f)
+                    {
+                        var nrm = Vector2.Normalize(new Vector2(-ab.Y, ab.X));
+                        foreach (float sgn in new[] { -1f, 1f })
+                            if (Ground(path.Map, p.X + nrm.X * side * sgn, p.Y + nrm.Y * side * sgn) is float hs)
+                            {
+                                float cdeg = MathF.Atan(MathF.Abs(hs - h) / side) * 180f / MathF.PI;
+                                if (cdeg > worstCross) { worstCross = cdeg; crossAt = new Vector3(p.X, p.Y, h); }
+                            }
+                    }
                     if (wet == null && Water(path.Map, p.X, p.Y) is float lvl && lvl - h > 1.5f) wet = new Vector3(p.X, p.Y, h);
                     // 2026-09-27 live: greymane-pass ENDED inside a farmhouse footprint - the walk stopped at its wall.
                     if (building == null && IndoorsOf(path.Map, new Vector3(p.X, p.Y, h)) is { } wmo) building = (wmo, new Vector3(p.X, p.Y, h));
@@ -507,8 +622,11 @@ public sealed class WorldPackAudit
                 }
             }
             if (samples == 0) { Add("G13", "error", $"path {key}", "no published ground under the path (is it on a patched tile?)", path.Map, path.Points[0]); continue; }
-            if (worst > 45f) Add("G13", "error", $"path {key}", $"grade {worst:F0} degrees at ({worstAt!.Value.X:F0}, {worstAt.Value.Y:F0}) - players cannot walk it (45 max)", path.Map, worstAt.Value);
-            else Add("G13", "info", $"path {key}", $"{samples} samples, steepest grade {worst:F0} degrees", path.Map, path.Points[0]);
+            // A cleared lane ("grade": false) only removes props; the ground it crosses is stock (a jump lane may hang over a cliff).
+            if (worst > 45f && path.Grade) Add("G13", "error", $"path {key}", $"grade {worst:F0} degrees at ({worstAt!.Value.X:F0}, {worstAt.Value.Y:F0}) - players cannot walk it (45 max)", path.Map, worstAt.Value);
+            else Add("G13", "info", $"path {key}", $"{samples} samples, steepest grade {worst:F0} degrees, steepest cross slope {worstCross:F0} degrees{(path.Grade ? "" : " (cleared lane, ground not graded)")}", path.Map, path.Points[0]);
+            if (worstCross > 40f && path.Grade)
+                Add("G13", "error", $"path {key}", $"the lane tilts {worstCross:F0} degrees sideways at ({crossAt!.Value.X:F0}, {crossAt.Value.Y:F0}) - a driver or walker is stopped there: widen it, soften the falloff, or clear it without grading (\"grade\": false)", path.Map, crossAt.Value);
             if (wet is { } w) Add("G13", "warn", $"path {key}", $"runs under water at ({w.X:F0}, {w.Y:F0}) - raise it or it is a swim", path.Map, w);
             if (building is { } bd)
                 Add("G13", "warn", $"path {key}", $"runs into {bd.wmo} at ({bd.at.X:F0}, {bd.at.Y:F0}) - a wall stops the walk unless it is a passage (arch, gate): move the point or prove it with tier 3 paths", path.Map, bd.at);

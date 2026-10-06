@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Globalization;
 using System.Text.Json.Nodes;
 
@@ -32,6 +33,18 @@ public static class WorldPackContent
     public const uint AreaIdBase = 7_000;            // area_template / AreaTable.dbc / AreaTrigger ids
     /// <summary>gossip_menu.entry is SMALLINT UNSIGNED in VMaNGOS (max 65535); stock stops at 60402.</summary>
     public const uint GossipMenuBase = 62_000;
+    /// <summary>
+    /// Pack spells (spell_template / spell_target_position / Spell.dbc), [38,000, 40,000). Spell ids are
+    /// uint16 on the 1.12 wire and SpellMgr sizes a vector by the highest id, so 7,000,000 is impossible.
+    /// Stock tops out at 33,392; the Spell Creator owns 40,000-49,999 (custom) and 50,000-65,000
+    /// (trainer wrappers) and allocates by MAX(entry) inside those ranges, so packs stay below them.
+    /// </summary>
+    public const uint SpellIdBase = 38_000;
+    public const uint SpellIdCeiling = 40_000;
+    // Custom creature models (WoW Karting's go-kart, 2026-10-04): stock 1.12 tops out at display 17548 and
+    // model 2365, and neither the Spell Creator nor the item lanes write these tables.
+    public const uint CreatureDisplayIdBase = 71_000;
+    public const uint CreatureModelIdBase = 7_100;
 
     /// <summary>Table → (key columns, the key column that must sit in a reserved range, its floor).</summary>
     public static readonly IReadOnlyDictionary<string, (string[] Key, string RangeColumn, uint Floor)> Tables =
@@ -39,6 +52,7 @@ public static class WorldPackContent
         {
             ["creature_template"] = (new[] { "entry", "patch" }, "entry", TemplateBase),
             ["creature"] = (new[] { "guid" }, "guid", SpawnGuidBase),
+            ["creature_display_info_addon"] = (new[] { "display_id", "build" }, "display_id", CreatureDisplayIdBase),
             ["creature_addon"] = (new[] { "guid", "patch" }, "guid", SpawnGuidBase),
             ["creature_movement"] = (new[] { "id", "point" }, "id", SpawnGuidBase),
             // Linked packs and patrol formations (leader_guid, member_guid, dist, angle, flags - CreatureGroups.h
@@ -74,7 +88,18 @@ public static class WorldPackContent
             ["areatrigger_teleport"] = (new[] { "id", "patch" }, "id", AreaIdBase),
             ["game_graveyard_zone"] = (new[] { "id", "ghost_zone", "patch_max" }, "ghost_zone", AreaIdBase),
             ["game_tele"] = (new[] { "id" }, "id", AreaIdBase),
+            // Pack spells (karting: kart mounts, portal teleports). spell_target_position is the
+            // destination of a TELEPORT_UNITS effect (target 17), keyed by the spell id.
+            ["spell_template"] = (new[] { "entry", "build" }, "entry", SpellIdBase),
+            ["spell_target_position"] = (new[] { "id", "target_map" }, "id", SpellIdBase),
         };
+
+    /// <summary>Tables whose reserved range also has a ceiling (spell ids are uint16 on the wire).</summary>
+    private static readonly IReadOnlyDictionary<string, uint> Ceilings = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["spell_template"] = SpellIdCeiling,
+        ["spell_target_position"] = SpellIdCeiling,
+    };
 
     /// <summary>Client DBCs a pack may extend → the floor of the ids it may add.</summary>
     public static readonly IReadOnlyDictionary<string, uint> Dbcs = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase)
@@ -86,10 +111,55 @@ public static class WorldPackContent
         ["LoadingScreens"] = 700,
         ["WorldSafeLocs"] = AreaIdBase,
         ["Light"] = AreaIdBase,   // a pack map needs its own map-wide light (row 1 = Eastern Kingdoms')
+        ["Spell"] = SpellIdBase,
+        ["CreatureDisplayInfo"] = CreatureDisplayIdBase,
+        ["CreatureModelData"] = CreatureModelIdBase,
     };
 
+    /// <summary>
+    /// DBCs another patch lane already owns. MPQ resolves whole files, so a patch-7 Spell.dbc would hide
+    /// patch-3's (the Spell Creator's custom spells, PatchController.RebuildClientPatch). These ship as a
+    /// ROWS-ONLY DBC at <see cref="PackRowsPath"/> that MSUIClient merges over the real table
+    /// (SpellCatalog.Load), the same additive pattern as the pack teleport TSV.
+    /// </summary>
+    public static readonly IReadOnlySet<string> RowsOnlyDbcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Spell" };
+
+    public static string PackRowsPath(string dbc) => $"WorldPacks\\{dbc}.dbc";
+
     /// <summary>DBCs mangosd reads from its own DataDir (5875/dbc) — installed there too.</summary>
-    public static readonly IReadOnlySet<string> ServerDbcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "WorldSafeLocs" };
+    public static readonly IReadOnlySet<string> ServerDbcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "WorldSafeLocs", "CreatureDisplayInfo", "CreatureModelData" };
+
+    /// <summary>
+    /// Server DBCs whose mangosd copy is NOT byte-equal to the client's (a different extraction): the server
+    /// file is mangosd's OWN stock table plus the pack rows, never the client table copied over it. A mount
+    /// aura needs its display in sCreatureDisplayInfoStore (Unit::Mount).
+    /// </summary>
+    public static readonly IReadOnlySet<string> ServerBaseDbcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "CreatureDisplayInfo", "CreatureModelData" };
+
+    /// <summary>
+    /// Pack ASSETS: model and texture files a pack ships in patch-7 (doc kind "asset", key = archive path,
+    /// body { "base64": ... }). Confined to Creature\SUI*\ so a pack can add models but never shadow a stock file.
+    /// </summary>
+    public const int AssetMaxBytes = 8 << 20;
+
+    public static string ValidateAsset(string path, JsonObject? body)
+    {
+        path = path.Replace('/', '\\').Trim();
+        if (!Regex.IsMatch(path, @"^Creature\\SUI[A-Za-z0-9_]+\\[A-Za-z0-9_]+\.(m2|blp)$", RegexOptions.IgnoreCase))
+            throw new ArgumentException(@"asset path must be Creature\SUI<Name>\<file>.m2 or .blp");
+        if (body is not null)
+        {
+            if (body["base64"] is not JsonValue v || !v.TryGetValue<string>(out var b64)) throw new ArgumentException("asset body needs 'base64'");
+            byte[] bytes = Convert.FromBase64String(b64);
+            if (bytes.Length < 4 || bytes.Length > AssetMaxBytes) throw new ArgumentException($"asset must be 4..{AssetMaxBytes} bytes");
+            string magic = System.Text.Encoding.ASCII.GetString(bytes, 0, 4);
+            string want = path.EndsWith(".m2", StringComparison.OrdinalIgnoreCase) ? "MD20" : "BLP2";
+            if (magic != want) throw new ArgumentException($"asset {path} starts with '{magic}', not '{want}'");
+        }
+        return path;
+    }
 
     /// <summary>Validate a DB row and return its canonical doc key. Throws on anything unsafe.</summary>
     public static string RowKey(string table, JsonObject row)
@@ -121,6 +191,8 @@ public static class WorldPackContent
         uint rangeId = rangeValue is not null && uint.TryParse(Scalar(rangeValue), out uint parsedRange) ? parsedRange : 0;
         if (rule.Floor == SpawnGuidBase && rangeId >= SpawnGuidCeiling)
             throw new ArgumentException($"{table}.{rule.RangeColumn} must be < {SpawnGuidCeiling}: vanilla spawn guids are 24-bit and mangosd needs runtime headroom above them");
+        if (Ceilings.TryGetValue(table, out uint ceiling) && rangeId >= ceiling)
+            throw new ArgumentException($"{table}.{rule.RangeColumn} must be < {ceiling} (pack spell range [{SpellIdBase}, {SpellIdCeiling}))");
         // A pack links only its own spawns: the leader is a pack guid too (never a stock creature).
         if (table.Equals("creature_groups", StringComparison.OrdinalIgnoreCase) &&
             (row["leader_guid"] is not { } leader || !uint.TryParse(Scalar(leader), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint lead) ||
@@ -137,6 +209,8 @@ public static class WorldPackContent
     {
         if (!Dbcs.TryGetValue(name, out uint floor)) throw new ArgumentException($"DBC '{name}' is not pack-writable");
         if (id < floor) throw new ArgumentException($"{name}.dbc ids added by packs must be >= {floor}");
+        if (name.Equals("Spell", StringComparison.OrdinalIgnoreCase) && id >= SpellIdCeiling)
+            throw new ArgumentException($"Spell.dbc ids added by packs must be < {SpellIdCeiling}");
         if (body["fields"] is not JsonObject) throw new ArgumentException("dbc body needs a 'fields' object");
     }
 }
