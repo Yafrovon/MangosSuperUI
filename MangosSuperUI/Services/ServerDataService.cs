@@ -536,7 +536,7 @@ public class ServerDataService
 
         try
         {
-            string match = Directory.GetFiles(buildingsDir, "*.wmo")
+            string? match = Directory.GetFiles(buildingsDir, "*.wmo")
                 .Select(Path.GetFileName)
                 .FirstOrDefault(f => string.Equals(f, plainName, StringComparison.OrdinalIgnoreCase));
 

@@ -233,7 +233,7 @@ public class BodyAtlasTextureService
                 if (string.IsNullOrEmpty(partial)) continue;
 
                 result.SlotPartialNames[slot] = partial;
-                var url = await ResolveSlotAsync(displayId, slot, partial);
+                var url = ResolveSlot(displayId, slot, partial);
 
                 if (url != null)
                 {
@@ -366,7 +366,7 @@ public class BodyAtlasTextureService
     ///
     /// Note: failures are NOT cached at the calling layer — see class doc.
     /// </summary>
-    private async Task<string?> ResolveSlotAsync(uint displayId, int slot, string partialName)
+    private string? ResolveSlot(uint displayId, int slot, string partialName)
     {
         if (!SlotToSubdir.TryGetValue(slot, out var subdir))
         {

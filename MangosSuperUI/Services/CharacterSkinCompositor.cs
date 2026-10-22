@@ -380,20 +380,23 @@ public class CharacterSkinCompositor
         int x, int y, int w, int h)
     {
         using var surface = new SKCanvas(canvas);
-        using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
+        using var paint = new SKPaint();
+        // Mitchell cubic is what the obsolete SKFilterQuality.High resolved to.
+        var sampling = new SKSamplingOptions(SKCubicResampler.Mitchell);
+        using var image = SKImage.FromBitmap(source);
 
         bool fullCanvas = source.Width == canvas.Width && source.Height == canvas.Height;
         if (fullCanvas)
         {
             // 1:1 overlay. The texture's own alpha decides where it lands; the
             // region rectangle is not involved at all.
-            surface.DrawBitmap(source, 0, 0, paint);
+            surface.DrawImage(image, 0, 0, sampling, paint);
             return;
         }
 
         var dst = new SKRect(x, y, x + w, y + h);
         var src = new SKRect(0, 0, source.Width, source.Height);
-        surface.DrawBitmap(source, src, dst, paint);
+        surface.DrawImage(image, src, dst, sampling, paint);
     }
 
     private static SKBitmap? DecodeBlp(byte[] blpData)

@@ -3534,9 +3534,8 @@ public class LootifierController : Controller
             new { CE = creatureEntry, Base = baseItemEntry });
 
         int refEntry;
-        bool freshMint = priorCreate == null;
-
-        if (freshMint)
+        // No earlier create row for this creature: mint a fresh reference entry.
+        if (priorCreate is null)
         {
             refEntry = await GetNextLootifierRefEntry(mangosConn);
 

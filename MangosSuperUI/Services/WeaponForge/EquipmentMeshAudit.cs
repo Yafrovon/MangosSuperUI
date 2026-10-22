@@ -52,7 +52,7 @@ public static class EquipmentMeshAudit
             if (uv.X < 0 || uv.X > 1 || uv.Y < 0 || uv.Y > 1) r.UvOutsideUnitSquare++;
         }
         r.UniquePositions = weld.Count;
-        var parents = Enumerable.Range(0, weld.Count).ToArray();
+        int[] parents = Enumerable.Range(0, weld.Count).ToArray();
         int Root(int a) { while (parents[a] != a) { parents[a] = parents[parents[a]]; a = parents[a]; } return a; }
         void Join(int a, int b) { a = Root(a); b = Root(b); if (a != b) parents[b] = a; }
         var edges = new Dictionary<(int, int), (int Count, int Direction)>();
