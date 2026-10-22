@@ -196,6 +196,8 @@ builder.Services.AddSingleton<SpellProgressionLoader>();
 builder.Services.AddSingleton<ZoneDataLoader>();
 builder.Services.AddSingleton<CreatureSpawnLoader>();   // Scatter Build 2: per-entry spawn footprint sampler (QuestPlanner)
 builder.Services.AddSingleton<QuestGraphLoader>();
+builder.Services.AddSingleton<MangosSuperUI.Services.QuestAtlas.ReliefService>();   // Quest Atlas: compiled tabletop relief (QUEST_ATLAS.md)
+builder.Services.AddSingleton<MangosSuperUI.Services.QuestAtlas.QuestAtlasService>();
 builder.Services.AddSingleton<BotBrainDbInit>();
 
 // Brain spine (Strategy B rebuild): executor + supervisor + driver

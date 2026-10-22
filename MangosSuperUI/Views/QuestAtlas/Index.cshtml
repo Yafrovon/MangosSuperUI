@@ -1,0 +1,79 @@
+@{
+    ViewData["Title"] = "Quest Atlas";
+}
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/questatlas.css" asp-append-version="true" />
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="qa-stage" id="qaStage">
+            <div class="qa-canvas" id="qaCanvas"></div>
+
+            <!-- Loading veil -->
+            <div class="qa-veil" id="qaVeil">
+                <div class="qa-veil-title" id="qaVeilTitle">Quest Atlas</div>
+                <div class="qa-veil-sub" id="qaVeilSub">Choose a zone to set the table.</div>
+                <div class="qa-veil-bar"><div id="qaVeilBar"></div></div>
+            </div>
+
+            <!-- Left drawer: zone, search, filters, quest list -->
+            <aside class="qa-panel qa-left" id="qaLeft">
+                <div class="qa-panel-head">
+                    <i class="fa-solid fa-chess-board"></i>
+                    <select id="qaZone" class="qa-input" title="Zone"></select>
+                </div>
+                <div class="qa-zone-meta" id="qaZoneMeta"></div>
+                <input id="qaSearch" class="qa-input" type="search" placeholder="Search quests, NPCs, items…" autocomplete="off" />
+                <div class="qa-filters">
+                    <div class="qa-seg" id="qaFaction" title="Faction (from RequiredRaces)">
+                        <button data-v="all" class="on">All</button>
+                        <button data-v="alliance">Alliance</button>
+                        <button data-v="horde">Horde</button>
+                    </div>
+                    <div class="qa-levels" title="Quest level range">
+                        <span>Lv</span>
+                        <input id="qaLvMin" class="qa-input qa-num" type="number" min="1" max="70" value="1" />
+                        <span>–</span>
+                        <input id="qaLvMax" class="qa-input qa-num" type="number" min="1" max="70" value="70" />
+                    </div>
+                    <label class="qa-check"><input type="checkbox" id="qaHomeOnly" /> Filed in this zone only</label>
+                    <label class="qa-check"><input type="checkbox" id="qaClassQuests" checked /> Class &amp; race quests</label>
+                </div>
+                <div class="qa-list-head"><span id="qaCount">—</span><button class="qa-link" id="qaClear" title="Clear selection">clear</button></div>
+                <div class="qa-list" id="qaList"></div>
+            </aside>
+
+            <!-- Layers control (Google-Maps style) -->
+            <div class="qa-layers" id="qaLayers">
+                <button class="qa-layers-btn" id="qaLayersBtn" title="Layers"><i class="fa-solid fa-layer-group"></i></button>
+                <div class="qa-layers-body" id="qaLayersBody"></div>
+            </div>
+
+            <!-- Right drawer: quest / NPC card -->
+            <aside class="qa-panel qa-right" id="qaRight" hidden>
+                <button class="qa-close" id="qaRightClose" title="Close"><i class="fa-solid fa-xmark"></i></button>
+                <div id="qaCard"></div>
+            </aside>
+
+            <div class="qa-hover" id="qaHover" hidden></div>
+            <div class="qa-hud" id="qaHud"></div>
+            <div class="qa-loadchip" id="qaLoad" hidden></div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "/lib/three/build/three.module.js",
+            "three/addons/": "/lib/three/examples/jsm/"
+          }
+        }
+    </script>
+    <script type="module" src="~/js/questatlas/index.js" asp-append-version="true"></script>
+}

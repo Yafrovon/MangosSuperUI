@@ -10,18 +10,41 @@ namespace MangosSuperUI.Services.WorldPacks;
 /// seams are stitched, so the result is exact and the same on both sides of every tile border it crosses.
 /// Clear (default on): the props standing IN the lane (half the width) are removed - a road has no tree in it
 /// (2026-09-27 live: the first walk of greymane-pass stopped at a trunk the grading had left standing).
-/// Grade off ("grade": false): a CLEARED LANE - the props in it go, the ground stays exactly as it is. A narrow
-/// lane graded onto the ~4-yd ADT grid tilts its own triangles (WoW Karting, 2026-10-04: a 42-degree sideways
-/// facet inside an 8-yd lane stopped a kart where the ungraded road had been fine).
 /// </summary>
-public sealed record GradedPath(string Name, int Map, List<Vector3> Points, float Width, float Falloff, bool Clear = true, bool Grade = true)
+/// <remarks>
+/// 2026-10-14 road surfaces: <c>grade</c> (default true, so every older doc still grades) turns the height grading off for
+/// a road that follows the land; <c>surface {texture, width, softEdge, strength}</c> paints a stock Tileset texture along
+/// the polyline with <see cref="TerrainPaint"/> - the rule MSUIClient previews with.
+/// </remarks>
+public sealed record GradedPath(string Name, int Map, List<Vector3> Points, float Width, float Falloff, bool Clear = true,
+    bool Grade = true, PathSurface? Surface = null)
 {
     public static GradedPath Parse(string name, string body)
     {
         var b = JsonNode.Parse(body)!.AsObject();
         var pts = b["points"]!.AsArray().Select(p => new Vector3((float)p![0]!, (float)p[1]!, (float)p[2]!)).ToList();
+        PathSurface? surface = null;
+        if (b["surface"] is JsonObject s && s["texture"]?.GetValue<string>() is { Length: > 0 } texture)
+            surface = new PathSurface(texture, (float?)s["width"] ?? (float)b["width"]!, (float?)s["softEdge"] ?? 1.5f,
+                Math.Clamp((float?)s["strength"] ?? 1f, 0f, 1f));
         return new GradedPath(name, (int)b["map"]!, pts, (float)b["width"]!, (float?)b["falloff"] ?? 20f, (bool?)b["clear"] ?? true,
-            (bool?)b["grade"] ?? true);
+            (bool?)b["grade"] ?? true, surface);
+    }
+
+    /// <summary>Tiles the build must touch: the grading reach when graded, the painted reach when surfaced.</summary>
+    public IEnumerable<(int col, int row)> TouchedTiles() =>
+        (Grade ? Tiles() : Enumerable.Empty<(int, int)>())
+            .Concat(Surface is { } s ? TilesWithin(s.Width / 2f + s.SoftEdge) : Enumerable.Empty<(int, int)>())
+            .Distinct();
+
+    /// <summary>Paint this path's surface into one built tile; returns the chunks changed (0 without a surface).</summary>
+    public int PaintSurface(AdtDocument doc)
+    {
+        if (Surface is not { } s) return 0;
+        float reach = s.Width / 2f + s.SoftEdge;
+        return doc.PaintTexture(s.Texture,
+            (cx, cy) => Nearest(new Vector2(cx, cy)).Distance <= reach + TerrainPaint.ChunkSize * 0.75f,
+            (x, y) => TerrainPaint.RoadAmount(Nearest(new Vector2(x, y)).Distance, s.Width, s.SoftEdge, s.Strength));
     }
 
     public float Reach => Width / 2f + Falloff;
@@ -50,10 +73,12 @@ public sealed record GradedPath(string Name, int Map, List<Vector3> Points, floa
     }
 
     /// <summary>Tiles the path can reach.</summary>
-    public IEnumerable<(int col, int row)> Tiles()
+    public IEnumerable<(int col, int row)> Tiles() => TilesWithin(Reach);
+
+    private IEnumerable<(int col, int row)> TilesWithin(float reach)
     {
-        float minX = Points.Min(p => p.X) - Reach, maxX = Points.Max(p => p.X) + Reach;
-        float minY = Points.Min(p => p.Y) - Reach, maxY = Points.Max(p => p.Y) + Reach;
+        float minX = Points.Min(p => p.X) - reach, maxX = Points.Max(p => p.X) + reach;
+        float minY = Points.Min(p => p.Y) - reach, maxY = Points.Max(p => p.Y) + reach;
         for (int col = WorldCoords.TileCol(maxY); col <= WorldCoords.TileCol(minY); col++)
             for (int row = WorldCoords.TileRow(maxX); row <= WorldCoords.TileRow(minX); row++)
                 yield return (col, row);
@@ -77,3 +102,6 @@ public sealed record GradedPath(string Name, int Map, List<Vector3> Points, floa
         return deltas;
     }
 }
+
+/// <summary>A road surface: a stock ground texture (Tileset\Zone\Name.blp) painted along a path.</summary>
+public sealed record PathSurface(string Texture, float Width, float SoftEdge, float Strength);

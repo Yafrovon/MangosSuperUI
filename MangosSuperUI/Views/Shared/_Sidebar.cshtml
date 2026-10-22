@@ -20,7 +20,7 @@
         "gameobjects" => "archive",
         "items" or "retextureengine" => "content",
         "loottuner" or "instances" or "lootifier" or "questlootifier" or "craftinglootifier" or "professiontuning" => "loot",
-        "worldeditor" or "worldmap" => "world",
+        "worldeditor" or "worldmap" or "questatlas" => "world",
         "database" or "functiongraph" or "sourcemap" => "data",
         "circuittrace" => "devtools",
         "weaponforge" or "armorforge" => "gamedev",
@@ -64,6 +64,9 @@
 
 <!-- ========== Top Navigation (macro sections) ========== -->
 <nav class="topnav">
+    <button type="button" class="topnav-rail-toggle" id="sidebarRailToggle" title="Hide the sidebar" aria-label="Toggle sidebar">
+        <i class="fa-solid fa-bars"></i>
+    </button>
     <a class="topnav-brand" asp-controller="Home" asp-action="Index">
         <span class="topnav-brand-sub">SuperUI</span>
     </a>
@@ -307,6 +310,12 @@
                     <a asp-controller="WorldMap" asp-action="Index" class="@NavClass("WorldMap")">
                         <i class="fa-solid fa-map-location-dot"></i>
                         World Map
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="questatlas">
+                    <a asp-controller="QuestAtlas" asp-action="Index" class="@NavClass("QuestAtlas")">
+                        <i class="fa-solid fa-chess-board"></i>
+                        Quest Atlas
                     </a>
                 </li>
                 <li class="sidebar-nav-item" data-nav-key="worldeditor">

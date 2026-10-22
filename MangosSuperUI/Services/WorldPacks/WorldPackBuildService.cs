@@ -379,11 +379,6 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         BuildDbcs(s, stock, mapDocs.Concat(ZoneWorldMapAreas(s, mapDocs)).ToList(), files);
         WorldPackWorldMap.BuildAssets(stock.ReadFile, docs, files, message => Log(s, message));
         BuildTeleportTable(s, docs, files);
-        foreach (var asset in docs.Where(d => d.Kind == "asset" && !string.IsNullOrEmpty(d.Body)))
-        {
-            files[asset.DocKey] = Convert.FromBase64String((string)JsonNode.Parse(asset.Body)!["base64"]!);
-            Log(s, $"asset {asset.DocKey}: {files[asset.DocKey].Length} byte(s)");
-        }
 
         var placements = new List<PlacementRow>();
         foreach (var pack in packs)
@@ -435,7 +430,7 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
 
         var paths = docs.Where(d => d.Kind == "path").Select(d => GradedPath.Parse(d.DocKey, d.Body)).ToList();
         var touched = sculpt.Keys.Concat(surfaceSculpt.Keys).Concat(wmos.Keys).Concat(m2s.Keys).Concat(_baseAdts.Keys)
-            .Concat(paths.SelectMany(p => p.Tiles().Select(t => (p.Map, t.col, t.row))))
+            .Concat(paths.SelectMany(p => p.TouchedTiles().Select(t => (p.Map, t.col, t.row))))
             .Where(k => mapDirs.ContainsKey(k.Item1)).Distinct().OrderBy(k => k).ToList();
         var present = new List<(int map, int col, int row)>();
         var built = new Dictionary<(int map, int col, int row), AdtDocument>();
@@ -479,6 +474,19 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         // Human edits are deltas to the finished surface, after all absolute shaping and stitching.
         // Shared border samples are mirrored at save time; Write rebuilds changed normals and minimaps see final heights.
         WorldPackSculptLayers.ApplySurface(built, surfaceSculpt);
+        // Road surfaces last: texture only, after every height change (they never move ground). The same TerrainPaint
+        // rule paints the client's live preview, so what the author saw is what ships.
+        foreach (var path in paths.Where(p => p.Surface is not null))
+        {
+            if (stock.ReadFile(path.Surface!.Texture) is null)
+            {
+                Log(s, $"path {path.Name}: surface texture {path.Surface.Texture} is not in the game archives - not painted");
+                continue;
+            }
+            foreach (var (col, row) in path.TouchedTiles())
+                if (built.TryGetValue((path.Map, col, row), out var doc) && path.PaintSurface(doc) is var painted && painted > 0)
+                    Log(s, $"path {path.Name}: tile {path.Map}:{col},{row} painted {path.Surface.Texture} ({painted} chunk(s))");
+        }
         foreach (var key in present)
         {
             var (map, col, row) = key;
@@ -595,9 +603,10 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         }
         // Graded paths last (after the seams): absolute heights, the same for every tile they cross.
         foreach (var path in paths)
-            foreach (var (col, row) in path.Tiles())
+            foreach (var (col, row) in path.TouchedTiles())
                 if (built.TryGetValue((path.Map, col, row), out var doc))
                 {
+                    // grade:false = a road that follows the land (surface only); it still clears its lane.
                     int moved = path.Grade ? doc.ApplySculpt(path.Deltas(col, row, doc.OuterHeights())) : 0;
                     int cleared = path.Clear ? doc.DropDoodads((_, pos) => path.InLane(pos)) : 0;
                     if (moved > 0 || cleared > 0) Log(s, $"path {path.Name}: tile {path.Map}:{col},{row} graded ({moved} height(s), {cleared} prop(s) cleared from the lane)");
@@ -966,64 +975,39 @@ WHERE id = @BuildId", new { s.Status, s.MpqSha1, s.MpqSize, log, s.BuildId });
         {
             string path = $"DBFilesClient\\{group.Key}.dbc";
             var dbc = DbcWriterService.ReadDbc(stock.ReadFile(path) ?? throw new InvalidOperationException($"{path} missing from stock archives"), path);
-            ApplyDbcRows(dbc, group.Key, group);
-            if (WorldPackContent.RowsOnlyDbcs.Contains(group.Key))
+            foreach (var d in group.OrderBy(d => uint.Parse(d.DocKey)))
             {
-                // Another lane owns the real file (patch-3 for Spell.dbc): ship the pack's rows only, merged
-                // by the client over whatever table it already has.
-                var ids = group.Select(d => uint.Parse(d.DocKey)).ToHashSet();
-                dbc.RetainRows(ids.Contains);
-                path = WorldPackContent.PackRowsPath(group.Key);
+                uint id = uint.Parse(d.DocKey);
+                var body = JsonNode.Parse(d.Body)!.AsObject();
+                dbc.RemoveRowsWhere(x => x == id);
+                if (body["cloneFrom"] is JsonNode from) dbc.CloneRow((uint)from, id);
+                else
+                {
+                    var fresh = new uint[dbc.FieldCount];
+                    fresh[0] = id;
+                    dbc.AddRow(fresh);
+                }
+                foreach (var (index, value) in body["fields"]!.AsObject())
+                {
+                    int field = int.Parse(index);
+                    if (field <= 0 || field >= dbc.FieldCount) throw new InvalidOperationException($"{group.Key}.dbc has no field {field}");
+                    // string → string block; { "f": x } → float bits; number → integer.
+                    if (value is JsonValue v && v.TryGetValue<string>(out var str)) dbc.PatchRow(id, field, dbc.AddString(str));
+                    else if (value is JsonObject fo && fo["f"] is JsonNode fv) dbc.PatchRowFloat(id, field, (float)(double)fv);
+                    else dbc.PatchRow(id, field, unchecked((uint)(long)value!));
+                }
             }
             dbc.SortById();
             files[path] = dbc.Write();
-            // DBCs mangosd itself reads (WorldSafeLocs = graveyards, creature displays) also go to the server DataDir.
+            // DBCs mangosd itself reads (WorldSafeLocs = graveyards) also go to the server DataDir.
             if (WorldPackContent.ServerDbcs.Contains(group.Key))
             {
-                string rel = $"5875/dbc/{group.Key}.dbc";
-                byte[] serverFile = files[path];
-                if (WorldPackContent.ServerBaseDbcs.Contains(group.Key))
-                {
-                    // mangosd's own stock table (the baseline once a publish has replaced it) + the pack rows.
-                    string baseline = Path.Combine(Baseline, rel), live = Path.Combine(ServerData, rel);
-                    var server = DbcWriterService.ReadDbc(File.ReadAllBytes(File.Exists(baseline) ? baseline : live), rel);
-                    ApplyDbcRows(server, group.Key, group);
-                    server.SortById();
-                    serverFile = server.Write();
-                }
                 string local = Path.Combine(Work, "serverdbc", group.Key + ".dbc");
                 Directory.CreateDirectory(Path.GetDirectoryName(local)!);
-                File.WriteAllBytes(local, serverFile);
-                _serverDbcs[rel] = local;
+                File.WriteAllBytes(local, files[path]);
+                _serverDbcs[$"5875/dbc/{group.Key}.dbc"] = local;
             }
             Log(s, $"{group.Key}.dbc: +{group.Count()} row(s)");
-        }
-    }
-
-    /// <summary>Apply a pack's row docs (cloneFrom + fields) to one DBC table.</summary>
-    private static void ApplyDbcRows(DbcWriterService dbc, string name, IEnumerable<DocRow> rows)
-    {
-        foreach (var d in rows.OrderBy(d => uint.Parse(d.DocKey)))
-        {
-            uint id = uint.Parse(d.DocKey);
-            var body = JsonNode.Parse(d.Body)!.AsObject();
-            dbc.RemoveRowsWhere(x => x == id);
-            if (body["cloneFrom"] is JsonNode from) dbc.CloneRow((uint)from, id);
-            else
-            {
-                var fresh = new uint[dbc.FieldCount];
-                fresh[0] = id;
-                dbc.AddRow(fresh);
-            }
-            foreach (var (index, value) in body["fields"]!.AsObject())
-            {
-                int field = int.Parse(index);
-                if (field <= 0 || field >= dbc.FieldCount) throw new InvalidOperationException($"{name}.dbc has no field {field}");
-                // string → string block; { "f": x } → float bits; number → integer.
-                if (value is JsonValue v && v.TryGetValue<string>(out var str)) dbc.PatchRow(id, field, dbc.AddString(str));
-                else if (value is JsonObject fo && fo["f"] is JsonNode fv) dbc.PatchRowFloat(id, field, (float)(double)fv);
-                else dbc.PatchRow(id, field, unchecked((uint)(long)value!));
-            }
         }
     }
 

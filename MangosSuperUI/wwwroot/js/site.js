@@ -827,6 +827,42 @@
 
 
     // =========================================================
+    //  6b. SIDEBAR RAIL — hide/show the whole sidebar (topnav button)
+    // =========================================================
+    // Pages like the Quest Atlas need the width. Remembered per browser.
+    // Runs immediately: this script sits at the end of <body>, so the
+    // sidebar exists and there is no flash of the wrong state.
+
+    var RAIL_STORAGE_KEY = 'msui_sidebar_rail_hidden';
+
+    function initSidebarRail() {
+        var btn = document.getElementById('sidebarRailToggle');
+        var hidden = false;
+        try { hidden = localStorage.getItem(RAIL_STORAGE_KEY) === '1'; } catch (e) { /* private window */ }
+
+        function apply() {
+            document.body.classList.toggle('sidebar-rail-hidden', hidden);
+            if (btn) btn.title = hidden ? 'Show the sidebar' : 'Hide the sidebar';
+        }
+        apply();
+        if (!btn) return;
+
+        btn.addEventListener('click', function () {
+            hidden = !hidden;
+            apply();
+            try { localStorage.setItem(RAIL_STORAGE_KEY, hidden ? '1' : '0'); } catch (e) { /* private window */ }
+        });
+
+        // Maps and canvases that only listen to window resize get told once the slide ends.
+        var sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.addEventListener('transitionend', function (ev) {
+            if (ev.propertyName === 'width') window.dispatchEvent(new Event('resize'));
+        });
+    }
+
+    initSidebarRail();
+
+    // =========================================================
     //  7. INIT — on DOMContentLoaded
     // =========================================================
 

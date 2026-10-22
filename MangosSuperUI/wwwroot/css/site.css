@@ -132,9 +132,33 @@ html, body {
 
 /* Wordmark only - matches the sidebar width so the tabs start where the
    sidebar ends. The logo itself sits at the top of the sidebar. */
+/* Hides/shows the sidebar on any page (site.js, remembered per browser). The brand
+   gives up the toggle's width so the tabs still start where the sidebar ends. */
+.topnav-rail-toggle {
+    width: 44px;
+    flex-shrink: 0;
+    background: none;
+    border: 0;
+    border-right: 1px solid var(--sidebar-border);
+    color: var(--text-sidebar);
+    font-size: 15px;
+    cursor: pointer;
+}
+
+    .topnav-rail-toggle:hover {
+        color: var(--text-sidebar-strong);
+        background: var(--bg-sidebar-hover);
+    }
+
+body.sidebar-rail-hidden .sidebar {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
 .topnav-brand {
-    width: var(--sidebar-width);
-    min-width: var(--sidebar-width);
+    width: calc(var(--sidebar-width) - 44px);
+    min-width: calc(var(--sidebar-width) - 44px);
     flex-shrink: 0;
     display: flex;
     align-items: center;

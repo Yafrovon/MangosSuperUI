@@ -53,6 +53,8 @@ public class WorldPacksController : Controller
         success = true,
         mapId,
         surfaceSculptSupported = true,
+        // Path docs honour "grade" (false = follow the land) and paint "surface" textures (MSUIClient road painting).
+        roadSurfaceSupported = true,
         packs = await _store.ListPacksAsync(),
         placements = await _store.PlacementsAsync(null, mapId, includeDeleted: true),
         sculpt = await _store.SculptAsync(null, mapId, enabledOnly: true, includePackId),
@@ -296,6 +298,16 @@ public class WorldPacksController : Controller
                     float width = (float?)it.Body["width"] ?? 0f;
                     if (pts is null || pts.Count < 2 || pts.Any(p => p is not System.Text.Json.Nodes.JsonArray { Count: 3 }) || width <= 0f)
                         throw new ArgumentException("a path needs points [[x,y,z],...] (2+) and a width");
+                    if (it.Body["surface"] is System.Text.Json.Nodes.JsonObject surface)
+                    {
+                        string texture = surface["texture"]?.ToString() ?? "";
+                        float sw = (float?)surface["width"] ?? width;
+                        if (!texture.StartsWith("Tileset\\", StringComparison.OrdinalIgnoreCase) || !texture.EndsWith(".blp", StringComparison.OrdinalIgnoreCase) ||
+                            texture.Contains("..") || sw <= 0f || ((float?)surface["softEdge"] ?? 0f) < 0f)
+                            throw new ArgumentException("a path surface needs a stock ground texture (Tileset\\...\\Name.blp) and a positive width");
+                    }
+                    if ((bool?)it.Body["grade"] == false && it.Body["surface"] is null)
+                        throw new ArgumentException("a path that does not level the ground needs a surface texture");
                 }
                 key = it.Key ?? throw new ArgumentException("a path needs a key (its name)");
             }

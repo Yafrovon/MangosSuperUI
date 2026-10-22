@@ -1016,6 +1016,120 @@ public sealed class AdtDocument
         return 0;
     }
 
+    // ═══════════════════════════════════════════════════════════════ texture paint
+
+    /// <summary>
+    /// Paint a ground texture into every chunk where <paramref name="amount"/>(worldX, worldY) &gt; 0, with the shared
+    /// <see cref="TerrainPaint"/> rule (MSUIClient previews with the same code). <paramref name="chunkNear"/>(centreX,
+    /// centreY) skips chunks that cannot be reached. Rewrites MCLY + MCAL (4-bit, 2048 bytes a layer, flag 0x100),
+    /// nLayers and sizeAlpha, appends the texture to MTEX once, and shifts the MCNK offsets after each splice. Chunks the
+    /// paint does not reach stay byte-identical. Returns how many chunks changed.
+    /// </summary>
+    public int PaintTexture(string texture, Func<float, float, bool> chunkNear, Func<float, float, float> amount)
+    {
+        var names = System.Text.Encoding.ASCII.GetString(_mtex).Split('\0', StringSplitOptions.RemoveEmptyEntries).ToList();
+        int texIndex = names.FindIndex(n => string.Equals(n, texture, StringComparison.OrdinalIgnoreCase));
+        bool appended = texIndex < 0;
+        if (appended) texIndex = names.Count;
+        int changed = 0;
+        for (int i = 0; i < 256; i++)
+        {
+            byte[] c = _mcnk[i];
+            int ix = I32(c, 8 + 0x04), iy = I32(c, 8 + 0x08);
+            var centre = TerrainPaint.PixelWorld(Col, Row, ix, iy, 31, 31);
+            if (!chunkNear(centre.X, centre.Y)) continue;
+            int n = I32(c, 8 + 0x0C), ofsLayer = I32(c, 8 + 0x1C), ofsAlpha = I32(c, 8 + 0x24);
+            if (ofsLayer <= 0 || ofsAlpha <= 0 || ofsLayer + 8 + n * 16 > c.Length) continue;
+
+            var textures = new List<int>();
+            var alphas = new List<byte[]?>();
+            var old = new Dictionary<int, (uint flags, int effect)>();
+            for (int k = 0; k < n; k++)
+            {
+                int e = ofsLayer + 8 + k * 16;
+                int tex = I32(c, e);
+                uint flags = BinaryPrimitives.ReadUInt32LittleEndian(c.AsSpan(e + 4));
+                textures.Add(tex);
+                old.TryAdd(tex, (flags, I32(c, e + 12)));
+                byte[]? alpha = null;
+                int at = ofsAlpha + 8 + I32(c, e + 8);
+                if (k > 0)
+                {
+                    alpha = new byte[TerrainPaint.Pixels];
+                    if ((flags & 0x100) != 0 && at + 2048 <= c.Length)
+                        for (int p = 0; p < 2048; p++)
+                        {
+                            byte b = c[at + p];
+                            alpha[p * 2] = (byte)((b & 0x0F) * 17);
+                            alpha[p * 2 + 1] = (byte)((b >> 4) * 17);
+                        }
+                }
+                alphas.Add(alpha);
+            }
+            if (!TerrainPaint.PaintChunk(textures, alphas, texIndex, (r, col) =>
+                {
+                    var w = TerrainPaint.PixelWorld(Col, Row, ix, iy, r, col);
+                    return amount(w.X, w.Y);
+                })) continue;
+
+            var mcly = new byte[textures.Count * 16];
+            var mcal = new byte[(textures.Count - 1) * 2048];
+            for (int k = 0; k < textures.Count; k++)
+            {
+                var (flags, effect) = old.TryGetValue(textures[k], out var o) ? o : (0u, 0);
+                flags &= ~0x300u;
+                if (k > 0) flags |= 0x100u;
+                WI32(mcly, k * 16, textures[k]);
+                WU32(mcly, k * 16 + 4, flags);
+                WI32(mcly, k * 16 + 8, k == 0 ? 0 : (k - 1) * 2048);
+                WI32(mcly, k * 16 + 12, effect);
+                if (k == 0) continue;
+                var a = alphas[k]!;
+                for (int p = 0; p < 2048; p++)
+                    mcal[(k - 1) * 2048 + p] = (byte)((a[p * 2] / 17) | ((a[p * 2 + 1] / 17) << 4));
+            }
+            c = ReplaceSubchunk(c, 0x1C, mcly);
+            c = ReplaceSubchunk(c, 0x24, mcal);
+            WI32(c, 8 + 0x0C, textures.Count);
+            WI32(c, 8 + 0x28, mcal.Length + 8);               // sizeAlpha includes the MCAL header (stock files agree)
+            _mcnk[i] = c;
+            changed++;
+        }
+        if (appended && changed > 0)
+        {
+            var bytes = System.Text.Encoding.ASCII.GetBytes(texture + "\0");
+            int keep = _mtex.Length;
+            while (keep > 0 && _mtex[keep - 1] == 0) keep--;   // exactly one terminator between names
+            var grown = new byte[(keep > 0 ? keep + 1 : 0) + bytes.Length];
+            Buffer.BlockCopy(_mtex, 0, grown, 0, keep);
+            Buffer.BlockCopy(bytes, 0, grown, keep > 0 ? keep + 1 : 0, bytes.Length);
+            _mtex = grown;
+        }
+        return changed;
+    }
+
+    /// <summary>Replace the payload of the sub-chunk whose offset is in MCNK header field <paramref name="field"/>; fix its
+    /// IFF size, the MCNK IFF size and every header offset that lies after it.</summary>
+    private static byte[] ReplaceSubchunk(byte[] c, int field, byte[] payload)
+    {
+        int ofs = I32(c, 8 + field);
+        int oldSize = I32(c, ofs + 4);
+        int delta = payload.Length - oldSize;
+        var n = new byte[c.Length + delta];
+        Buffer.BlockCopy(c, 0, n, 0, ofs + 8);
+        Buffer.BlockCopy(payload, 0, n, ofs + 8, payload.Length);
+        Buffer.BlockCopy(c, ofs + 8 + oldSize, n, ofs + 8 + payload.Length, c.Length - (ofs + 8 + oldSize));
+        WI32(n, ofs + 4, payload.Length);
+        WI32(n, 4, I32(n, 4) + delta);
+        if (delta != 0)
+            foreach (int f in new[] { 0x14, 0x18, 0x1C, 0x20, 0x24, 0x2C, 0x58, 0x60, 0x74 })
+            {
+                int v = I32(n, 8 + f);
+                if (v > ofs) WI32(n, 8 + f, v + delta);
+            }
+        return n;
+    }
+
     /// <summary>Insert one MCRF reference (doodads before map objects) and fix every offset after it.</summary>
     private void AddRef(int mcinIndex, bool doodad, int index)
     {
