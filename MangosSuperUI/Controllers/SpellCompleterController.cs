@@ -778,7 +778,7 @@ public class SpellCompleterController : Controller
                         @"SELECT skill_id, class_mask FROM skill_line_ability
                           WHERE spell_id = @E AND build = 5875 LIMIT 1",
                         new { E = req.SourceSpellEntry });
-                    if (sourceSla != null && (int)(sourceSla.skill_id ?? 0) > 0)
+                    if (sourceSla is not null && (int)(sourceSla.skill_id ?? 0) > 0)
                     {
                         int nextId = await slaConn.ExecuteScalarAsync<int>(
                             "SELECT COALESCE(MAX(id), 0) + 1 FROM skill_line_ability");

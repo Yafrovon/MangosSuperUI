@@ -291,6 +291,8 @@ public static class M2EmitterTransplanter
 
         // 2) Each donor's emitter block, verbatim. Offsets inside are fixed up by a constant delta.
         var deltaFor = new List<(Graft G, int RecInOut)>();
+        // One colour-key buffer for the whole loop: a stackalloc inside it grows the stack per graft.
+        Span<Vector3> keys = stackalloc Vector3[3];
         foreach (var (g, donor, ofs, rec) in usable)
         {
             Align4(outp);
@@ -333,7 +335,7 @@ public static class M2EmitterTransplanter
             var ramp = g.ColorRamp ?? (g.ColorRgb is { } flat ? new M2EmitterColorRamp(flat, flat, flat) : null);
             if (ramp is not null)
             {
-                Span<Vector3> keys = stackalloc Vector3[] { ramp.Start, ramp.Mid, ramp.End };
+                keys[0] = ramp.Start; keys[1] = ramp.Mid; keys[2] = ramp.End;
                 for (int key = 0; key < 3; key++)
                 {
                     int o = FldColorKeys + key * 4;

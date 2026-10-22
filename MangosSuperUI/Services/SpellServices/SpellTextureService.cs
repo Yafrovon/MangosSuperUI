@@ -685,7 +685,7 @@ public class SpellTextureService
             case "atlas":
                 _blpWriter.ApplyAtlasBrightnessFloorMask(resizedBitmap, gridSize, floorPercent, kneeWidth);
                 _logger.LogInformation("TextureGen: [{Index}] atlas brightness floor ({Grid}x{Grid}, floor={Floor})",
-                    slot.Index, gridSize, floorPercent);
+                    slot.Index, gridSize, gridSize, floorPercent);
                 break;
 
             case "content":

@@ -934,7 +934,7 @@ public class ItemTextureService
     /// race / gender accept the same casings CharacterModelService does
     /// ("Human"/"Male", case-insensitive). Unknown races return null.
     /// </summary>
-    public string? EnsureHelmGlb(uint displayId, string race, string gender)
+    public string? EnsureHelmGlb(uint displayId, string? race, string? gender)
     {
         if (displayId == 0) return null;
         if (string.IsNullOrEmpty(race) || string.IsNullOrEmpty(gender)) return null;

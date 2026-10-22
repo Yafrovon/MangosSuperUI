@@ -55,7 +55,7 @@ public class AdtPatcherService
     /// </summary>
     public class AdtFile
     {
-        public byte[] Raw;
+        public byte[] Raw = Array.Empty<byte>();
 
         public int MhdrDataOffset;
 
@@ -90,7 +90,7 @@ public class AdtPatcherService
     /// </summary>
     public class WmoPlacement
     {
-        public string WmoPath;         // e.g. "World\\wmo\\Azeroth\\Buildings\\human_farm\\farm.wmo"
+        public string WmoPath = "";    // e.g. "World\\wmo\\Azeroth\\Buildings\\human_farm\\farm.wmo"
         public float PosX, PosY, PosZ; // MODF position (ADT coordinate space)
         public float RotX, RotY, RotZ; // degrees
         public float BbMinX, BbMinY, BbMinZ;
@@ -256,13 +256,11 @@ public class AdtPatcherService
             // Check if path already exists in MWMO (original data only — appended paths checked below)
             int wmoByteOffsetInMwmo;
             int wmoMwidIndex;          // ← THIS is what MODF nameId actually needs
-            bool pathIsNew = true;
 
             int existingPathOffset = FindStringInChunk(originalAdt, mwmoDataStart, adt.MwmoSize, normalizedPath);
             if (existingPathOffset >= 0)
             {
                 wmoByteOffsetInMwmo = existingPathOffset;
-                pathIsNew = false;
 
                 // Find which MWID entry has this byte offset
                 wmoMwidIndex = -1;
@@ -287,7 +285,6 @@ public class AdtPatcherService
                 if (appendOffset >= 0)
                 {
                     wmoByteOffsetInMwmo = adt.MwmoSize + appendOffset;
-                    pathIsNew = false;
 
                     // Find the MWID index for this appended path
                     // It was added as a previous batch item — scan the append stream
