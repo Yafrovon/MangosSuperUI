@@ -5,6 +5,13 @@ namespace MangosSuperUI.Services;
 /// <summary>
 /// Spell Completer artifact store.
 ///
+/// WHERE (2026-10-25, MSUIClient SPELL_CREATOR_PLAN.md P0.6): App_Data/spell-completer/{entry}/
+/// under the content root, keyed by the completed spell's ENTRY. It used to live under
+/// wwwroot/images/textures/custom/{SafeName(spellName)}, which made two spells with the same
+/// name overwrite each other's design bytes and put unreviewed client uploads in a statically
+/// served folder. Reads still fall back to that legacy folder, so a spell completed before the
+/// move keeps rebuilding exactly as it did.
+///
 /// The MSUIClient creator exports a session file (spell-session.json) whose
 /// spells carry their design as CONCRETE BYTES: patched effect M2s keyed by the
 /// original model path, plus recolored BLPs. The Spell Completer page persists
@@ -91,6 +98,17 @@ public static class CompleterStore
     public static string SafeName(string spellName) =>
         new(spellName.Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
 
+    /// <summary>Which spell's store: the durable entry-keyed folder, with the legacy
+    /// name-keyed wwwroot folder as the read fallback.</summary>
+    public readonly record struct StoreKey(string ContentRoot, string WebRoot, int Entry, string SpellName)
+    {
+        public string Dir => Path.Combine(ContentRoot, "App_Data", "spell-completer", Entry.ToString());
+        public string LegacyDir => DirFor(WebRoot, SpellName);
+
+        /// <summary>The folder a READ uses: the durable one when it holds a manifest.</summary>
+        public string ReadDir => File.Exists(Path.Combine(Dir, ManifestName)) ? Dir : LegacyDir;
+    }
+
     public static string DirFor(string webRoot, string spellName) =>
         Path.Combine(webRoot, "images", "textures", "custom", SafeName(spellName));
 
@@ -106,12 +124,12 @@ public static class CompleterStore
 
     /// <summary>Persist a completed spell's design bytes. Replaces any previous
     /// completer artifacts for this spell (re-completing is idempotent).</summary>
-    public static void Save(string webRoot, string spellName, Manifest manifestMeta,
+    public static void Save(StoreKey key, Manifest manifestMeta,
         List<(string originalPath, byte[] bytes)> models,
         List<(string mpqPath, byte[] bytes)> extraFiles,
         List<(ManifestAudio meta, byte[] bytes)>? audioTracks = null)
     {
-        string dir = DirFor(webRoot, spellName);
+        string dir = key.Dir;
         Directory.CreateDirectory(dir);
 
         foreach (string stale in Directory.GetFiles(dir, "completer_*"))
@@ -149,9 +167,9 @@ public static class CompleterStore
             JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    public static Manifest? LoadManifest(string webRoot, string spellName)
+    public static Manifest? LoadManifest(StoreKey key)
     {
-        string path = Path.Combine(DirFor(webRoot, spellName), ManifestName);
+        string path = Path.Combine(key.ReadDir, ManifestName);
         if (!File.Exists(path)) return null;
         try
         {
@@ -165,11 +183,11 @@ public static class CompleterStore
 
     /// <summary>Patched effect M2s keyed by NormalizeM2Key(original path), for
     /// SpellPatchRequest.PerPathPatchedM2s. Null when this spell has none.</summary>
-    public static Dictionary<string, byte[]>? LoadPerPathM2s(string webRoot, string spellName)
+    public static Dictionary<string, byte[]>? LoadPerPathM2s(StoreKey key)
     {
-        var manifest = LoadManifest(webRoot, spellName);
+        var manifest = LoadManifest(key);
         if (manifest is null || manifest.Models.Count == 0) return null;
-        string dir = DirFor(webRoot, spellName);
+        string dir = key.ReadDir;
         var result = new Dictionary<string, byte[]>();
         foreach (var model in manifest.Models)
         {
@@ -184,11 +202,11 @@ public static class CompleterStore
     /// Null when it has none. A track whose blob went missing is dropped rather
     /// than returned empty — the patch builder would otherwise mint a
     /// SoundEntries row pointing at a file the MPQ never receives.</summary>
-    public static List<CustomAudioTrack>? LoadAudio(string webRoot, string spellName)
+    public static List<CustomAudioTrack>? LoadAudio(StoreKey key)
     {
-        var manifest = LoadManifest(webRoot, spellName);
+        var manifest = LoadManifest(key);
         if (manifest is null || manifest.AudioTracks.Count == 0) return null;
-        string dir = DirFor(webRoot, spellName);
+        string dir = key.ReadDir;
         var result = new List<CustomAudioTrack>();
         foreach (var track in manifest.AudioTracks)
         {
@@ -215,11 +233,11 @@ public static class CompleterStore
 
     /// <summary>Verbatim MPQ files (tinted BLPs, geometry M2s), for
     /// SpellPatchRequest.ExtraMpqFiles. Null when this spell has none.</summary>
-    public static Dictionary<string, byte[]>? LoadExtraFiles(string webRoot, string spellName)
+    public static Dictionary<string, byte[]>? LoadExtraFiles(StoreKey key)
     {
-        var manifest = LoadManifest(webRoot, spellName);
+        var manifest = LoadManifest(key);
         if (manifest is null || manifest.ExtraFiles.Count == 0) return null;
-        string dir = DirFor(webRoot, spellName);
+        string dir = key.ReadDir;
         var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var extra in manifest.ExtraFiles)
         {

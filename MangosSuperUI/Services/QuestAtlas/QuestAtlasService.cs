@@ -80,10 +80,23 @@ public class QuestAtlasService
         var templates = new Dictionary<int, object>();
         if (ids.Count > 0)
             foreach (var t in await conn.QueryAsync(@"
-                SELECT t.entry, t.name, t.subname, t.level_min, t.level_max, t.faction, t.npc_flags, t.rank, t.type, t.display_scale1
+                SELECT t.entry, t.name, t.subname, t.level_min, t.level_max, t.faction, t.npc_flags, t.rank, t.type,
+                       t.display_id1, t.display_id2, t.display_id3, t.display_id4,
+                       t.display_scale1, t.display_scale2, t.display_scale3, t.display_scale4
                 FROM creature_template t
                 JOIN (SELECT entry, MAX(patch) AS p FROM creature_template WHERE entry IN @ids GROUP BY entry) m
                   ON m.entry = t.entry AND m.p = t.patch", new { ids }))
+            {
+                // The model the client draws: the first non-zero display slot and that slot's scale, so the client
+                // needs no local creature catalogue (the tabletop's figures work on any machine).
+                var row = (IDictionary<string, object>)t;
+                uint displayId = 0;
+                float scale = 0f;
+                for (int i = 1; i <= 4 && displayId == 0; i++)
+                {
+                    displayId = Convert.ToUInt32(row[$"display_id{i}"] ?? 0u);
+                    if (displayId != 0) scale = Convert.ToSingle(row[$"display_scale{i}"] ?? 0f);
+                }
                 templates[(int)t.entry] = new
                 {
                     name = (string)t.name,
@@ -94,8 +107,10 @@ public class QuestAtlasService
                     npcFlags = Convert.ToInt64(t.npc_flags),
                     rank = (int)t.rank,
                     type = (int)t.type,
-                    scale = t.display_scale1 == null || (float)t.display_scale1 <= 0 ? 1f : (float)t.display_scale1   // 0 = model default
+                    displayId,
+                    scale = scale <= 0 ? 1f : scale   // 0 = model default
                 };
+            }
 
         return new
         {
@@ -103,6 +118,44 @@ public class QuestAtlasService
             templates,
             spawns = spawns.Select(s => new[] { s.id, MathF.Round(s.x, 1), MathF.Round(s.y, 1), MathF.Round(s.z, 1), MathF.Round(s.o, 2) })
         };
+    }
+
+    /// <summary>The MSUIClient creator catalogue (creator-creatures.tsv): one row per template entry at its highest
+    /// patch, the first non-zero display slot and its scale; entries without a model are dropped. Tabs and line
+    /// breaks inside names become spaces so a row is always one line of nine fields.</summary>
+    public async Task<string> CreatureCatalogueTsvAsync()
+    {
+        using var conn = _db.Mangos();
+        var rows = await conn.QueryAsync(@"
+            SELECT t.entry, t.name, t.subname, t.level_min, t.level_max, t.rank, t.type,
+                   t.display_id1, t.display_id2, t.display_id3, t.display_id4,
+                   t.display_scale1, t.display_scale2, t.display_scale3, t.display_scale4
+            FROM creature_template t
+            JOIN (SELECT entry, MAX(patch) AS p FROM creature_template GROUP BY entry) m
+              ON m.entry = t.entry AND m.p = t.patch
+            ORDER BY t.entry");
+        static string Clean(object? v) => (v as string ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        var sb = new System.Text.StringBuilder(600_000);
+        sb.Append("entry\tname\tsubname\tlevel_min\tlevel_max\trank\ttype\tdisplay_id\tdisplay_scale\n");
+        foreach (var t in rows)
+        {
+            var row = (IDictionary<string, object>)t;
+            uint displayId = 0;
+            float scale = 0f;
+            for (int i = 1; i <= 4 && displayId == 0; i++)
+            {
+                displayId = Convert.ToUInt32(row[$"display_id{i}"] ?? 0u);
+                if (displayId != 0) scale = Convert.ToSingle(row[$"display_scale{i}"] ?? 0f);
+            }
+            if (displayId == 0) continue;
+            uint entry = Convert.ToUInt32(row["entry"]);
+            int levelMin = Convert.ToInt32(row["level_min"]), levelMax = Convert.ToInt32(row["level_max"]);
+            int rank = Convert.ToInt32(row["rank"]), type = Convert.ToInt32(row["type"]);
+            string name = Clean(row["name"]), subname = Clean(row["subname"]);
+            sb.Append(System.FormattableString.Invariant(
+                $"{entry}\t{name}\t{subname}\t{levelMin}\t{levelMax}\t{rank}\t{type}\t{displayId}\t{scale}\n"));
+        }
+        return sb.ToString();
     }
 
     // ── Zone bundle ──────────────────────────────────────────────────────

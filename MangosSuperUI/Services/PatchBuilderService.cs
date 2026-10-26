@@ -359,8 +359,20 @@ public class PatchBuilderService
                     }
 
                     var newSpellRow = spellDbc.CloneRow(request.SourceSpellEntry, request.SpellEntry);
+                    // The server's spell_template row, mirrored WHOLE (SpellDbcColumnMap): every
+                    // field both sides read - targets, ranges, radii, implicit targets, triggers,
+                    // cooldowns, reagents, attributes - so the client never disagrees with what the
+                    // server runs. The legacy per-field overrides below only run without it.
+                    bool fullMirror = request.TemplateRow is { Count: > 0 };
+                    if (fullMirror)
+                    {
+                        int mirrored = SpellDbcColumnMap.Apply(spellDbc, request.SpellEntry, request.TemplateRow!);
+                        newSpellRow = spellDbc.GetRow(request.SpellEntry)!;
+                        _logger.LogInformation("PatchBuilder: [{Name}] mirrored {N} spell_template field(s) into Spell.dbc",
+                            request.SpellName, mirrored);
+                    }
                     spellDbc.PatchRow(request.SpellEntry, FIELD_SPELL_VISUAL_ID, cloneResult.NewVisualId);
-                    if (request.MissileSpeed is { } unifiedSpeed && unifiedSpeed > 0f)
+                    if (!fullMirror && request.MissileSpeed is { } unifiedSpeed && unifiedSpeed > 0f)
                         spellDbc.PatchRowFloat(request.SpellEntry, FIELD_SPEED, unifiedSpeed);
 
                     // ── Icon ──
@@ -391,7 +403,10 @@ public class PatchBuilderService
                     spellDbc.PatchRow(request.SpellEntry, FIELD_SPELL_ICON_ID, finalIconId);
 
                     // ── School, attributes, name, subtext, description, tooltip ──
-                    if (request.SchoolMask.HasValue)
+                    // (Field 1 is the school NUMBER; the full mirror writes it. The legacy path
+                    // below writes a MASK there, which is wrong for every school but physical -
+                    // kept only for callers that do not supply a template row.)
+                    if (!fullMirror && request.SchoolMask.HasValue)
                         spellDbc.PatchRow(request.SpellEntry, FIELD_SCHOOL_MASK, request.SchoolMask.Value);
 
                     uint attrs = newSpellRow[FIELD_ATTRIBUTES];
@@ -436,8 +451,10 @@ public class PatchBuilderService
                     // These come from spell_template overrides set by the user in the wizard.
                     // Without this block, R1's DBC row is a pure clone of the source spell,
                     // so the server/client uses the source's mana cost, damage, etc.
-                    if (request.ManaCost.HasValue)
+                    if (!fullMirror && request.ManaCost.HasValue)
                         spellDbc.PatchRow(request.SpellEntry, FIELD_MANA_COST, (uint)request.ManaCost.Value);
+                    if (!fullMirror)
+                    {
                     if (request.EffectBasePoints0.HasValue)
                         spellDbc.PatchRow(request.SpellEntry, FIELD_EFFECT_BASE_POINTS_0, (uint)request.EffectBasePoints0.Value);
                     if (request.EffectDieSides0.HasValue)
@@ -456,14 +473,15 @@ public class PatchBuilderService
                         spellDbc.PatchRow(request.SpellEntry, FIELD_RANGE_INDEX, (uint)request.RangeIndex.Value);
                     if (request.EffectRealPointsPerLevel0.HasValue)
                         spellDbc.PatchRowFloat(request.SpellEntry, FIELD_EFFECT_REAL_PPL_0, request.EffectRealPointsPerLevel0.Value);
+                    }
 
                     // ── Spell Completer: mechanics mirrored SQL → DBC ──
                     // The server runs spell_template; the client reads Spell.dbc for
                     // tooltips ($s/$o/$d), aura display and duration. Any effect-
                     // structure change (DoT, slow, heal, duration) must land in both.
-                    if (request.DurationIndex.HasValue)
+                    if (!fullMirror && request.DurationIndex.HasValue)
                         spellDbc.PatchRow(request.SpellEntry, FIELD_DURATION_INDEX, (uint)request.DurationIndex.Value);
-                    foreach (var ef in request.EffectStructure ?? new List<EffectStructurePatch>())
+                    foreach (var ef in fullMirror ? new List<EffectStructurePatch>() : request.EffectStructure ?? new List<EffectStructurePatch>())
                     {
                         if (ef.Slot is < 0 or > 2) continue;
                         if (ef.Effect.HasValue)
@@ -516,7 +534,13 @@ public class PatchBuilderService
                     // ── M2 files ──
                     foreach (var effectFile in cloneResult.EffectFiles)
                     {
-                        byte[]? originalM2 = ReadFileFromClientMpq(effectFile.OriginalM2Path);
+                        // The Completer's stored bytes FIRST: an authored model (a creator Sketch)
+                        // has no archive file behind its path, so reading the archives first and
+                        // skipping on a miss dropped every sketched effect from the patch.
+                        byte[]? storedM2 = null;
+                        request.PerPathPatchedM2s?.TryGetValue(
+                            CompleterStore.NormalizeM2Key(effectFile.OriginalM2Path), out storedM2);
+                        byte[]? originalM2 = storedM2 ?? ReadFileFromClientMpq(effectFile.OriginalM2Path);
                         if (originalM2 == null)
                         {
                             string basePath = effectFile.OriginalM2Path;
@@ -722,6 +746,13 @@ public class PatchBuilderService
                         }
 
                         var newRow = spellDbc.CloneRow(rank.SourceRankEntry, rank.Entry);
+                        // Same law as rank 1: the rank's own spell_template row, mirrored whole.
+                        bool rankMirror = rank.TemplateRow is { Count: > 0 };
+                        if (rankMirror)
+                        {
+                            SpellDbcColumnMap.Apply(spellDbc, rank.Entry, rank.TemplateRow!);
+                            newRow = spellDbc.GetRow(rank.Entry)!;
+                        }
 
                         // Visual — same as rank 1 (all ranks share the same visual chain)
                         if (r1VisualId > 0)
@@ -730,8 +761,8 @@ public class PatchBuilderService
                         // Icon — same as rank 1
                         spellDbc.PatchRow(rank.Entry, FIELD_SPELL_ICON_ID, r1IconId);
 
-                        // School
-                        if (rank.SchoolMask.HasValue)
+                        // School (legacy path only: field 1 is the school NUMBER, see SpellDbcColumnMap)
+                        if (!rankMirror && rank.SchoolMask.HasValue)
                             spellDbc.PatchRow(rank.Entry, FIELD_SCHOOL_MASK, rank.SchoolMask.Value);
 
                         // Clear hidden attribute
@@ -787,6 +818,10 @@ public class PatchBuilderService
                         // CRITICAL: DBC EffectDieSides = spell_template effectDieSides + 1
                         // because DBC formula is: damage = BasePoints + rand(1, DieSides)
                         // while spell_template stores effectDieSides = damageMax - damageMin.
+                        // (Superseded by the full mirror: the stock data stores dieSides
+                        // IDENTICALLY on both sides - SpellDbcColumnMap. Legacy path only.)
+                        if (!rankMirror)
+                        {
                         if (rank.EffectBasePoints0.HasValue)
                             spellDbc.PatchRow(rank.Entry, FIELD_EFFECT_BASE_POINTS_0,
                                 (uint)rank.EffectBasePoints0.Value); // signed → uint reinterpret
@@ -839,6 +874,7 @@ public class PatchBuilderService
                                 spellDbc.PatchRow(rank.Entry, FIELD_EFFECT_AMPLITUDE_0 + ef.Slot, (uint)ef.Amplitude.Value);
                             if (ef.MiscValue.HasValue)
                                 spellDbc.PatchRow(rank.Entry, FIELD_EFFECT_MISC_VALUE_0 + ef.Slot, unchecked((uint)ef.MiscValue.Value));
+                        }
                         }
 
                         // ── SkillLineAbility.dbc — tab placement for this rank ──
@@ -1091,6 +1127,9 @@ public class PatchBuilderService
             mpqBuilder.AddFile("DBFilesClient\\SpellVisualEffectName.dbc", efnDbcBytes);
             mpqBuilder.AddFile("DBFilesClient\\SkillLineAbility.dbc", slaDbcBytes);
             mpqBuilder.AddFile("DBFilesClient\\SpellIcon.dbc", iconDbcBytes);
+            // D5: the index tables, once a Spell Creator build has added a row to them.
+            foreach (var (indexPath, indexBytes) in SpellIndexRows.PatchFiles(DbcPath))
+                mpqBuilder.AddFile(indexPath, indexBytes);
 
             // Only present when a spell brought its own audio, so an ordinary
             // rebuild never ships a megabyte of unchanged sound table.
@@ -1516,6 +1555,8 @@ public class PatchBuilderService
             mpqBuilder.AddFile("DBFilesClient\\SpellVisualEffectName.dbc", efnDbcBytes);
             mpqBuilder.AddFile("DBFilesClient\\SkillLineAbility.dbc", slaDbcBytes);
             mpqBuilder.AddFile("DBFilesClient\\SpellIcon.dbc", iconDbcBytes);
+            foreach (var (indexPath, indexBytes) in SpellIndexRows.PatchFiles(DbcPath))
+                mpqBuilder.AddFile(indexPath, indexBytes);
 
             // Add custom BLP icon if we generated one
             if (customBlpBytes != null && customBlpMpqPath != null)
@@ -1734,6 +1775,10 @@ public class PatchBuilderService
     ///   SpellVisual/Kit/EffectName → 10000 (client ignores 60000+)
     ///   Spell/SpellIcon/SkillLineAbility → 60000 (work fine at 60000+)
     /// </summary>
+    /// <summary>A server-side DBC with every custom row scrubbed - the stock table the patch
+    /// pipeline builds on. Public for diagnostics (SpellCompleter/ColumnMapCheck).</summary>
+    public DbcWriterService ReadStockServerDbc(string fileName) => ReadCleanDbc(fileName);
+
     private DbcWriterService ReadCleanDbc(string dbcMpqPath)
     {
         string fileName = Path.GetFileName(dbcMpqPath.Replace('\\', '/'));
@@ -2030,6 +2075,12 @@ public class SpellPatchRequest
     public float? MissileSpeed { get; set; }
     public int? Cooldown { get; set; }
 
+    /// <summary>The spell's whole spell_template row (column name → value). When set, the
+    /// Spell.dbc row is mirrored from it through SpellDbcColumnMap and the per-field gameplay
+    /// overrides above are ignored - the server's row is the single source of truth
+    /// (MSUIClient shared_docs/SPELL_CREATOR_PLAN.md P0.5).</summary>
+    public IDictionary<string, object?>? TemplateRow { get; set; }
+
     public M2ParticlePatcher.ParticlePatchParams? ParticleParams { get; set; }
 
     /// <summary>
@@ -2183,6 +2234,10 @@ public class EffectStructurePatch
 /// </summary>
 public class RankPatchData
 {
+    /// <summary>This rank's whole spell_template row; when set the Spell.dbc row is mirrored
+    /// from it (SpellDbcColumnMap) and the per-field overrides below are ignored.</summary>
+    public IDictionary<string, object?>? TemplateRow { get; set; }
+
     /// <summary>Custom spell entry for this rank (40000–65000 range).</summary>
     public uint Entry { get; set; }
 

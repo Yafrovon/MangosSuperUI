@@ -197,8 +197,10 @@
         return parts.join(' · ');
     }
 
-    // Points shown to the user are min/max; SQL stores basePoints/dieSides.
-    function pointsFromSql(bp, ds) { return { min: bp + 1, max: bp + ds + 1 }; }
+    // Points shown to the user are min/max; SQL stores basePoints/dieSides. vmangos rolls
+    // basePoints + irand(1, dieSides) (0 or 1 sides = a flat basePoints + 1), and the server
+    // writes dieSides = max-min+1 (SpellDbcColumnMap.PointsFor), so max = base + dieSides.
+    function pointsFromSql(bp, ds) { return { min: bp + 1, max: bp + Math.max(ds, 1) }; }
 
     function effectSlotLabel(ef) {
         const type = EFFECT_TYPES.find(function (t) { return t.id === Number(ef.effect); });

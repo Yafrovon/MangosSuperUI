@@ -435,9 +435,10 @@ public class SpellCompleterController : Controller
             // completed into anything — reject at the door rather than downstream.
             int modelCount = (entry["models"] as JsonArray)?.Count ?? 0;
             int audioCount = (entry["audio"] as JsonArray)?.Count ?? 0;
-            if (modelCount == 0 && audioCount == 0)
+            int ruleCount = (entry["rules"]?["columns"] as JsonObject)?.Count ?? 0;
+            if (modelCount == 0 && audioCount == 0 && ruleCount == 0)
             {
-                rejected.Add($"'{tempName}' carries no models and no audio");
+                rejected.Add($"'{tempName}' carries no models, no audio and no rules");
                 continue;
             }
             try
@@ -531,8 +532,9 @@ public class SpellCompleterController : Controller
         req.ExportedAtUtc ??= entry["exportedAtUtc"]?.GetValue<string>();
         // The source spell is the design's own property, never the form's — a
         // mistyped field must not clone the wrong spell.
+        // A design built from nothing says so with 0 - and that, too, must win over the form.
         int sourceId = JsonInt(entry["sourceSpellId"]);
-        if (sourceId > 0) req.SourceSpellEntry = sourceId;
+        if (entry["sourceSpellId"] is not null) req.SourceSpellEntry = Math.Max(0, sourceId);
 
         req.Models = (entry["models"] as JsonArray)?.Select(node => new CompleterModelDto
         {
@@ -548,6 +550,49 @@ public class SpellCompleterController : Controller
         }).ToList() ?? new List<CompleterBlpDto>();
 
         req.Composition = SpellComposition.Parse(entry["composition"]);
+
+        // The workshop's RULES (MSUIClient SPELL_CREATOR_PLAN.md P1.7): spell_template columns,
+        // numbers only, exactly as the author set them. Unknown names are dropped later by
+        // CloneSpellAsync, which only writes columns the table really has.
+        req.Rules = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        if (entry["rules"]?["columns"] is JsonObject ruleColumns)
+            foreach (var (column, value) in ruleColumns)
+                if (value is JsonValue jv && System.Text.RegularExpressions.Regex.IsMatch(column, "^[A-Za-z][A-Za-z0-9_]{0,63}$"))
+                {
+                    if (jv.TryGetValue(out long whole)) req.Rules[column] = whole;
+                    else if (jv.TryGetValue(out double real)) req.Rules[column] = real;
+                }
+
+        // D5 (SPELL_CREATOR_PLAN.md): the design's NEW index rows get real ones - an equal row when
+        // the server's table has it, else a new row at 1000+ written to the server's dbc dir (the
+        // Core merges it live on .reload spell_index; patch-3 carries the file) - and the rules'
+        // index columns are pointed at them.
+        List<SpellIndexRows.Request> newRows = SpellIndexRows.Parse(entry["rules"]?["newIndexRows"]);
+        try
+        {
+            string dbcDir = _config["Vmangos:DbcPath"] ?? "/home/wowvmangos/vmangos/run/data/5875/dbc";
+            Dictionary<uint, uint> rowMap = newRows.Count == 0 ? new()
+                : SpellIndexRows.ApplyToServer(dbcDir, newRows, out HashSet<string> grown);
+            if (newRows.Count > 0)
+                _logger.LogInformation("Completer: index rows {Map}", string.Join(", ",
+                    newRows.Select(r => $"{r.Table} {r.Value} -> {rowMap[r.LocalId]}")));
+            if (SpellIndexRows.RewriteColumns(req.Rules, rowMap) is { } rowError) return rowError;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Completer: new index rows failed");
+            return $"new index rows could not be written: {ex.Message}";
+        }
+
+        if (entry["actor"] is JsonObject actor)
+            req.Actor = new CompleterActorDto
+            {
+                Effect = (int)JsonNum(actor["effect"], 0f),
+                Name = actor["name"]?.GetValue<string>() ?? "Actor",
+                DisplayId = (uint)JsonNum(actor["displayId"], 4589f),
+                Scale = JsonNum(actor["scale"], 1f),
+                Spell = (uint)JsonNum(actor["spell"], 0f),
+            };
 
         req.Audio = (entry["audio"] as JsonArray)?.Select(node => new CompleterAudioDto
         {
@@ -569,6 +614,59 @@ public class SpellCompleterController : Controller
         return null;
     }
 
+    /// <summary>
+    /// Re-prove SpellDbcColumnMap against the LIVE data (MSUIClient SPELL_CREATOR_PLAN.md
+    /// P0.5): every stock spell's spell_template row is mapped through the table and compared
+    /// with the stock Spell.dbc row the patch pipeline builds on. A correct table agrees on
+    /// every column of nearly every spell; a column that disagrees broadly means the table
+    /// (or the schema) is wrong and custom spells would lie to the client about it.
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> ColumnMapCheck([FromServices] PatchBuilderService builder)
+    {
+        try
+        {
+            var spellDbc = builder.ReadStockServerDbc("Spell.dbc");
+            using var conn = _spellCreator.CreateMangosConnection();
+            var rows = await conn.QueryAsync(
+                @"SELECT t.* FROM spell_template t
+                  JOIN (SELECT entry, MAX(build) b FROM spell_template WHERE build <= 5875 AND entry < 40000 GROUP BY entry) m
+                    ON m.entry = t.entry AND m.b = t.build");
+            int checkedCount = 0, agreeing = 0;
+            var perColumn = new Dictionary<string, (int n, List<uint> sample)>();
+            foreach (var row in rows)
+            {
+                var map = ((IDictionary<string, object>)row)
+                    .ToDictionary(kv => kv.Key, kv => (object?)kv.Value, StringComparer.OrdinalIgnoreCase);
+                uint entry = Convert.ToUInt32(map["entry"]);
+                if (spellDbc.GetRow(entry) is not { } dbcRow) continue;
+                checkedCount++;
+                List<string> bad = SpellDbcColumnMap.Diff(dbcRow, map);
+                if (bad.Count == 0) { agreeing++; continue; }
+                foreach (string column in bad)
+                {
+                    if (!perColumn.TryGetValue(column, out var tally)) tally = (0, new List<uint>());
+                    if (tally.sample.Count < 8) tally.sample.Add(entry);
+                    perColumn[column] = (tally.n + 1, tally.sample);
+                }
+            }
+            return Json(new
+            {
+                success = true,
+                mappedColumns = SpellDbcColumnMap.Columns.Count,
+                spellsChecked = checkedCount,
+                spellsAgreeingOnEveryColumn = agreeing,
+                disagreements = perColumn.OrderByDescending(kv => kv.Value.n)
+                    .Select(kv => new { column = kv.Key, spells = kv.Value.n, sample = kv.Value.sample }),
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Completer: column-map check failed");
+            return Json(new { success = false, error = ex.Message });
+        }
+    }
+
     /// <summary>The creator writes volume as a float and the flags as integers, and
     /// GetValue&lt;float&gt; throws on an integer token (and vice versa) — every
     /// numeric read out of a pushed design goes through this tolerant pair.</summary>
@@ -582,6 +680,39 @@ public class SpellCompleterController : Controller
     }
 
     private static int JsonInt(JsonNode? node) => (int)JsonNum(node, 0f);
+
+    /// <summary>Spell Creator actors live at 7,900,000 + their spell's entry: inside the World Pack
+    /// template range (7,000,000+, WorldPackContent.TemplateBase) but above anything a pack allocates,
+    /// and stable per spell, so a Test live that replaces the spell replaces its actor too.</summary>
+    public const uint ActorEntryBase = 7_900_000;
+
+    /// <summary>The actor's creature_template row, cloned from Blizzard's Searing Totem (2523, patch 0) so
+    /// every column the core reads is a real totem's, then made this design's: name, display, scale,
+    /// the spell it casts, creature type 11 (totem). The spell's totem effect then names it.</summary>
+    private async Task WriteActorAsync(int spellEntry, CompleterActorDto actor)
+    {
+        uint actorEntry = ActorEntryBase + (uint)spellEntry;
+        using var conn = _db.Mangos();
+        conn.Open();
+        await conn.ExecuteAsync("DROP TEMPORARY TABLE IF EXISTS sui_actor_tmp");
+        await conn.ExecuteAsync("CREATE TEMPORARY TABLE sui_actor_tmp AS SELECT * FROM creature_template WHERE entry = 2523 AND patch = 0");
+        await conn.ExecuteAsync(
+            @"UPDATE sui_actor_tmp SET entry = @Entry, name = @Name, subname = 'Spell Creator actor',
+                     display_id1 = @Display, display_id2 = 0, display_id3 = 0, display_id4 = 0,
+                     display_scale1 = @Scale, display_probability1 = 100, display_total_probability = 100,
+                     spell_id1 = @Spell, type = 11",
+            new { Entry = actorEntry, Name = actor.Name.Length > 60 ? actor.Name[..60] : actor.Name,
+                  Display = actor.DisplayId, Scale = actor.Scale, Spell = actor.Spell });
+        await conn.ExecuteAsync("DELETE FROM creature_template WHERE entry = @Entry", new { Entry = actorEntry });
+        await conn.ExecuteAsync("INSERT INTO creature_template SELECT * FROM sui_actor_tmp");
+        await conn.ExecuteAsync("DROP TEMPORARY TABLE sui_actor_tmp");
+        await conn.ExecuteAsync(
+            $@"UPDATE spell_template SET effectMiscValue{actor.Effect} = @Actor
+               WHERE entry = @Spell AND build = (SELECT MAX(b) FROM (SELECT build AS b FROM spell_template WHERE entry = @Spell) t)",
+            new { Actor = actorEntry, Spell = spellEntry });
+        _logger.LogInformation("Completer: actor #{Actor} '{Name}' (display {Display}, casts {Cast}) for spell #{Spell} effect {Effect}",
+            actorEntry, actor.Name, actor.DisplayId, actor.Spell, spellEntry, actor.Effect);
+    }
 
     /// <summary>Complete one spell from an uploaded MSUIClient session: create the
     /// SQL rows, persist the design bytes, save the rebuild config.</summary>
@@ -598,8 +729,11 @@ public class SpellCompleterController : Controller
             return Json(new { success = false, error = "Spell name is required." });
         if (CompleterStore.SafeName(req.SpellName).Length == 0)
             return Json(new { success = false, error = "Spell name needs letters or digits." });
-        if (req.SourceSpellEntry <= 0)
-            return Json(new { success = false, error = "Session entry has no source spell." });
+        // A spell designed from nothing (MSUIClient "New spell") has no source to clone: it
+        // starts from the documented neutral template and every field the design and the form
+        // carry is written over it (SpellCreatorService.FromZeroTemplateSpell).
+        bool fromZero = req.SourceSpellEntry <= 0;
+        if (fromZero) req.SourceSpellEntry = SpellCreatorService.FromZeroTemplateSpell;
 
         string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "";
 
@@ -625,14 +759,20 @@ public class SpellCompleterController : Controller
             {
                 ["name"] = req.SpellName,
                 ["nameSubtext"] = req.NameSubtext ?? "Rank 1",
-                ["school"] = req.School,
             };
+            // A negative school means "keep the source's" (the creator's Test live sends it
+            // when the design itself says nothing about school).
+            if (req.School >= 0) overrides["school"] = req.School;
             if (!string.IsNullOrWhiteSpace(req.Description))
                 overrides["description"] = req.Description;
             if (req.DamageMin.HasValue && req.DamageMax.HasValue)
             {
-                overrides["effectBasePoints1"] = req.DamageMin.Value - 1;            // min = base + 1
-                overrides["effectDieSides1"] = req.DamageMax.Value - req.DamageMin.Value;
+                // vmangos rolls basePoints + irand(1, dieSides) (SpellCaster.cpp), so a min..max
+                // range is dieSides = max-min+1 - stored IDENTICALLY in Spell.dbc (SpellDbcColumnMap).
+                var (bp1, ds1) = SpellDbcColumnMap.PointsFor(req.DamageMin.Value, req.DamageMax.Value);
+                overrides["effectBasePoints1"] = bp1;
+                overrides["effectDieSides1"] = ds1;
+                overrides["effectBaseDice1"] = 1;   // the roll's floor; 0 on some templates (18282)
             }
             if (req.ManaCost.HasValue) overrides["manaCost"] = req.ManaCost.Value;
             if (req.SpellLevel.HasValue)
@@ -649,8 +789,9 @@ public class SpellCompleterController : Controller
 
             // Effect-slot overrides: the mechanics editor (School Damage / DoT /
             // Slow / Heal ...). Only CHANGED slots arrive; each carries its full
-            // value set. Points use the house convention: base = min-1,
-            // dieSides = max-min (mirrored to DBC with dieSides+1).
+            // value set. Points: base = min-1, dieSides = max-min+1, the same number on
+            // both sides (SpellDbcColumnMap.PointsFor - the old "max-min, +1 in the DBC"
+            // convention made the server roll one short of the tooltip's maximum).
             // These are also remembered for the rank chain below — the generator
             // clones ranks 2+ from the SOURCE ranks, which still have the source
             // mechanics, so the structure must ride the per-rank overrides too.
@@ -662,13 +803,20 @@ public class SpellCompleterController : Controller
                 effectStructure[$"effectApplyAuraName{ef.Slot}"] = ef.Effect == 6 ? ef.Aura : 0;
                 if (ef.PointsMin.HasValue && ef.PointsMax.HasValue)
                 {
-                    effectStructure[$"effectBasePoints{ef.Slot}"] = ef.PointsMin.Value - 1;
-                    effectStructure[$"effectDieSides{ef.Slot}"] = ef.PointsMax.Value - ef.PointsMin.Value;
+                    var (bp, ds) = SpellDbcColumnMap.PointsFor(ef.PointsMin.Value, ef.PointsMax.Value);
+                    effectStructure[$"effectBasePoints{ef.Slot}"] = bp;
+                    effectStructure[$"effectDieSides{ef.Slot}"] = ds;
+                    effectStructure[$"effectBaseDice{ef.Slot}"] = 1;
                 }
                 if (ef.Amplitude.HasValue) effectStructure[$"effectAmplitude{ef.Slot}"] = ef.Amplitude.Value;
                 if (ef.MiscValue.HasValue) effectStructure[$"effectMiscValue{ef.Slot}"] = ef.MiscValue.Value;
             }
             foreach (var (col, value) in effectStructure) overrides[col] = value;
+            // The design's rules win over every form field (decision D1: authoring lives in the
+            // workshop); identity columns stay the Completer's.
+            foreach (var (col, value) in req.Rules ?? new Dictionary<string, object?>())
+                if (!col.Equals("entry", StringComparison.OrdinalIgnoreCase) && !col.Equals("build", StringComparison.OrdinalIgnoreCase))
+                    overrides[col] = value;
             if (!string.IsNullOrEmpty(req.SkillTabKey))
             {
                 var tabMap = SpellCreatorService.GetSkillTabMap();
@@ -676,12 +824,32 @@ public class SpellCompleterController : Controller
                     overrides["spellFamilyName"] = tabInfo.spellFamilyName;
             }
 
-            int newEntry = await _spellCreator.CloneSpellAsync(req.SourceSpellEntry, overrides, ip);
+            // Replace in place (Test live): only an entry this Completer made from the SAME design.
+            int? replaceEntry = null;
+            if (req.ReplaceEntry is > 0)
+            {
+                var existingConfig = await _spellConfig.GetConfigAsync(req.ReplaceEntry.Value);
+                if (existingConfig is null)
+                    return Json(new { success = false, error = $"#{req.ReplaceEntry} is not a Completer spell - nothing to replace." });
+                replaceEntry = req.ReplaceEntry;
+            }
+            int newEntry = await _spellCreator.CloneSpellAsync(req.SourceSpellEntry, overrides, ip, replaceEntry);
             if (newEntry < 0)
             {
                 await LogCompletionAsync(req, ip, 0, null, 0, 0, null, warnings,
                     success: false, error: "spell_template clone produced no row");
                 return Json(new { success = false, error = "Failed to create spell in database." });
+            }
+
+            // ── 1b: the actor (P4.2) - its own creature row, then the spell's totem effect names it ──
+            if (req.Actor is { Effect: >= 1 and <= 3 } actorDto)
+            {
+                try { await WriteActorAsync(newEntry, actorDto); }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Completer: actor for #{Entry} failed", newEntry);
+                    warnings.Add($"the actor could not be written ({ex.Message}) - the spell summons nothing");
+                }
             }
 
             // ── 2: spellbook tab + rank chain root ──
@@ -927,8 +1095,10 @@ public class SpellCompleterController : Controller
                                 ? existing : new Dictionary<string, object?>();
                             if (ro.DamageMin.HasValue && ro.DamageMax.HasValue)
                             {
-                                d["effectBasePoints1"] = ro.DamageMin.Value - 1;
-                                d["effectDieSides1"] = ro.DamageMax.Value - ro.DamageMin.Value;
+                                var (rbp, rds) = SpellDbcColumnMap.PointsFor(ro.DamageMin.Value, ro.DamageMax.Value);
+                                d["effectBasePoints1"] = rbp;
+                                d["effectDieSides1"] = rds;
+                                d["effectBaseDice1"] = 1;
                             }
                             if (ro.ManaCost.HasValue) d["manaCost"] = ro.ManaCost.Value;
                             if (ro.SpellLevel.HasValue)
@@ -1044,7 +1214,7 @@ public class SpellCompleterController : Controller
             // The area kit (SpellVisual field 13) is cloned per spell alongside the stage
             // kits (SpellVisualCloner), so an area sound lands on the spell's own copy.
 
-            CompleterStore.Save(_env.WebRootPath, req.SpellName,
+            CompleterStore.Save(new CompleterStore.StoreKey(_env.ContentRootPath, _env.WebRootPath, newEntry, req.SpellName),
                 new CompleterStore.Manifest
                 {
                     TempName = req.TempName ?? "",
@@ -1210,6 +1380,18 @@ public class SpellCompleterController : Controller
 // of the uploaded session (models with bytes, tinted BLPs).
 // ═══════════════════════════════════════════════════════════════════════
 
+/// <summary>MSUIClient P4.2: what a workshop actor is. <see cref="Effect"/> = the spell's effect
+/// slot (1-3) whose SUMMON_TOTEM misc value must name the actor; <see cref="Spell"/> = the spell
+/// the actor casts (its TotemAI picks the nearest enemy in that spell's range).</summary>
+public class CompleterActorDto
+{
+    public int Effect { get; set; }
+    public string Name { get; set; } = "Actor";
+    public uint DisplayId { get; set; } = 4589;
+    public float Scale { get; set; } = 1f;
+    public uint Spell { get; set; }
+}
+
 public class CompleteSpellRequest
 {
     /// <summary>Names a design already pushed to the inbox by MSUIClient. When
@@ -1219,6 +1401,14 @@ public class CompleteSpellRequest
     public string? PendingId { get; set; }
 
     public string? TempName { get; set; }
+    /// <summary>Re-complete onto this existing custom entry instead of a new one (the creator's
+    /// Test live loop). Must be a spell the Completer made.</summary>
+    public int? ReplaceEntry { get; set; }
+    /// <summary>The design's rules block: spell_template column → value (pushed designs only).</summary>
+    public Dictionary<string, object?>? Rules { get; set; }
+    /// <summary>A workshop ACTOR (MSUIClient SPELL_CREATOR_PLAN.md P4.2): the totem the spell's
+    /// SUMMON_TOTEM effect plants, made for this spell.</summary>
+    public CompleterActorDto? Actor { get; set; }
     public int SourceSpellEntry { get; set; }
     public string? ExportedAtUtc { get; set; }
 

@@ -279,8 +279,11 @@ public partial class PatchController : Controller
             // Session 32: Apply spell property overrides
             if (req.DamageMin.HasValue && req.DamageMax.HasValue)
             {
-                overrides["effectBasePoints1"] = req.DamageMin.Value - 1; // min = base + 1
-                overrides["effectDieSides1"] = req.DamageMax.Value - req.DamageMin.Value; // max = base + dieSides
+                // basePoints + irand(1, dieSides): dieSides = max-min+1 (SpellDbcColumnMap.PointsFor).
+                var (bp1, ds1) = SpellDbcColumnMap.PointsFor(req.DamageMin.Value, req.DamageMax.Value);
+                overrides["effectBasePoints1"] = bp1;
+                overrides["effectDieSides1"] = ds1;
+                overrides["effectBaseDice1"] = 1;
             }
             if (req.ManaCost.HasValue)
                 overrides["manaCost"] = req.ManaCost.Value;
@@ -469,8 +472,10 @@ public partial class PatchController : Controller
                             var d = new Dictionary<string, object?>();
                             if (ro.DamageMin.HasValue && ro.DamageMax.HasValue)
                             {
-                                d["effectBasePoints1"] = ro.DamageMin.Value - 1;
-                                d["effectDieSides1"] = ro.DamageMax.Value - ro.DamageMin.Value;
+                                var (rbp, rds) = SpellDbcColumnMap.PointsFor(ro.DamageMin.Value, ro.DamageMax.Value);
+                                d["effectBasePoints1"] = rbp;
+                                d["effectDieSides1"] = rds;
+                                d["effectBaseDice1"] = 1;
                             }
                             if (ro.ManaCost.HasValue) d["manaCost"] = ro.ManaCost.Value;
                             if (ro.SpellLevel.HasValue) { d["spellLevel"] = ro.SpellLevel.Value; d["baseLevel"] = ro.SpellLevel.Value; }
@@ -1177,6 +1182,32 @@ public partial class PatchController : Controller
         if (!System.IO.File.Exists(fullPath)) return NotFound($"Patch '{file}' not found");
         return PhysicalFile(fullPath, "application/octet-stream", file);
     }
+
+    /// <summary>GET /Patch/SpellPatchInfo — what the unified spell patch is right now, so a
+    /// client can tell whether its copy is current before downloading 10+ MB (MSUIClient
+    /// SPELL_CREATOR_PLAN.md P0.7: Test live and the startup sync both ask this first).</summary>
+    [HttpGet]
+    public IActionResult SpellPatchInfo()
+    {
+        var fullPath = Path.Combine(PatchOutputPath, UnifiedSpellPatchName);
+        if (!System.IO.File.Exists(fullPath))
+            return Json(new { exists = false, file = UnifiedSpellPatchName });
+        var info = new FileInfo(fullPath);
+        string sha1;
+        using (var stream = System.IO.File.OpenRead(fullPath))
+            sha1 = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(stream)).ToLowerInvariant();
+        return Json(new
+        {
+            exists = true,
+            file = UnifiedSpellPatchName,
+            size = info.Length,
+            sha1,
+            builtUtc = info.LastWriteTimeUtc.ToString("o"),
+        });
+    }
+
+    /// <summary>The file name RebuildUnifiedPatchAsync writes the custom spells into.</summary>
+    private const string UnifiedSpellPatchName = "patch-3.MPQ";
 
     [HttpPost]
     public IActionResult Delete([FromBody] DeletePatchRequest req)
@@ -1962,12 +1993,11 @@ public partial class PatchController : Controller
                 "SELECT spellVisual1 FROM spell_template WHERE entry = @E ORDER BY build DESC LIMIT 1",
                 new { E = config.SourceEntry });
 
-            if (sourceVisual == null || sourceVisual == 0)
-            {
-                _logger.LogWarning("Patch: Skipping #{Entry} — source spell {Src} has no visual",
-                    config.Entry, config.SourceEntry);
-                continue;
-            }
+            // A source with no visual (or a spell built from nothing in the creator) is no
+            // longer skipped: SpellVisualCloner starts it from an all-zero visual row and the
+            // stored composition fills it. Skipping meant the spell had NO Spell.dbc row at
+            // all - castable on the server, invisible to the client.
+            sourceVisual ??= 0;
 
             // Build per-role params from saved config
             Dictionary<string, M2ParticlePatcher.ParticlePatchParams>? perRoleParams = null;
@@ -2037,6 +2067,10 @@ public partial class PatchController : Controller
             var r1Fields = await conn.QueryFirstOrDefaultAsync<dynamic>(
                 @"SELECT * FROM spell_template WHERE entry = @E ORDER BY build DESC LIMIT 1",
                 new { E = config.Entry });
+            // The whole row, for the full Spell.dbc mirror (SpellDbcColumnMap).
+            IDictionary<string, object?>? r1Template = r1Fields is IDictionary<string, object> r1Map
+                ? r1Map.ToDictionary(kv => kv.Key, kv => (object?)kv.Value, StringComparer.OrdinalIgnoreCase)
+                : null;
 
             // The server's spell_template is authoritative for mechanics; mirror
             // every effect slot + duration into the client DBC so tooltips and
@@ -2075,6 +2109,7 @@ public partial class PatchController : Controller
                 sourceIconId = sourceDbcEntry.SpellIconId;
             }
 
+            var storeKey = new CompleterStore.StoreKey(_env.ContentRootPath, _env.WebRootPath, config.Entry, config.SpellName);
             requests.Add(new SpellPatchRequest
             {
                 SpellEntry = (uint)config.Entry,
@@ -2107,11 +2142,12 @@ public partial class PatchController : Controller
                 PerPhasePatchedM2s = LoadPatchedM2s(config.Entry, config.SpellName),
                 // Spell Completer: per-path patched M2s + verbatim files (tinted
                 // BLPs, geometry M2s) persisted from an MSUIClient design session
-                PerPathPatchedM2s = CompleterStore.LoadPerPathM2s(_env.WebRootPath, config.SpellName),
-                ExtraMpqFiles = CompleterStore.LoadExtraFiles(_env.WebRootPath, config.SpellName),
-                CustomAudio = CompleterStore.LoadAudio(_env.WebRootPath, config.SpellName),
-                Composition = CompleterStore.LoadManifest(_env.WebRootPath, config.SpellName)?.Composition,
+                PerPathPatchedM2s = CompleterStore.LoadPerPathM2s(storeKey),
+                ExtraMpqFiles = CompleterStore.LoadExtraFiles(storeKey),
+                CustomAudio = CompleterStore.LoadAudio(storeKey),
+                Composition = CompleterStore.LoadManifest(storeKey)?.Composition,
                 MissileSpeed = r1Fields != null ? (float?)Convert.ToSingle(r1Fields.speed ?? 0f) : null,
+                TemplateRow = r1Template,
                 // Session 45: R1 gameplay fields for DBC accuracy
                 ManaCost = r1Fields != null ? (int?)Convert.ToInt32(r1Fields.manaCost ?? 0) : null,
                 EffectBasePoints0 = r1Fields != null ? (int?)Convert.ToInt32(r1Fields.effectBasePoints1 ?? 0) : null,
@@ -2133,8 +2169,19 @@ public partial class PatchController : Controller
                 var rankChain = await _spellCreator.GetRankChainForPatchingAsync((int)request.SpellEntry);
                 if (rankChain.Count > 0)
                 {
+                    var rankTemplates = new Dictionary<int, IDictionary<string, object?>>();
+                    foreach (var r in rankChain)
+                    {
+                        var rankRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                            "SELECT * FROM spell_template WHERE entry = @E ORDER BY build DESC LIMIT 1",
+                            new { E = r.Entry });
+                        if (rankRow is IDictionary<string, object> rankMap)
+                            rankTemplates[r.Entry] = rankMap.ToDictionary(kv => kv.Key, kv => (object?)kv.Value,
+                                StringComparer.OrdinalIgnoreCase);
+                    }
                     request.AdditionalRanks = rankChain.Select(r => new RankPatchData
                     {
+                        TemplateRow = rankTemplates.GetValueOrDefault(r.Entry),
                         Entry = (uint)r.Entry,
                         SourceRankEntry = (uint)r.SourceRankEntry,
                         Rank = r.Rank,
@@ -2212,7 +2259,28 @@ public partial class PatchController : Controller
             _logger.LogWarning(ex, "Patch: Failed to load trainer wrappers for DBC patching");
         }
 
-        return await _patchBuilder.RebuildUnifiedPatchAsync(requests);
+        var rebuilt = await _patchBuilder.RebuildUnifiedPatchAsync(requests);
+        // The server needs the visual id too: vmangos sends SPELL_START/GO for a TRIGGERED spell only
+        // when its spell_template SpellVisual is set (Spell::IsNeedSendToClient), so a workshop child
+        // spell cast on landing was invisible with 0 here (MSUIClient SPELL_CREATOR_PLAN.md P4.1).
+        // Generate already mirrors it (Step 5); the rebuild every Test live runs did not.
+        if (rebuilt?.VisualIdMap is { Count: > 0 } visuals)
+            foreach (var (entry, visual) in visuals)
+            {
+                try
+                {
+                    await conn.ExecuteAsync(
+                        @"UPDATE spell_template SET spellVisual1 = @Visual
+                          WHERE entry = @Entry AND spellVisual1 <> @Visual
+                            AND build = (SELECT MAX(b) FROM (SELECT build AS b FROM spell_template WHERE entry = @Entry) t)",
+                        new { Visual = visual, Entry = entry });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Patch: could not mirror spellVisual1 {Visual} into #{Entry}", visual, entry);
+                }
+            }
+        return rebuilt;
     }
 
     private static M2ParticlePatcher.ParticlePatchParams? BuildParticleParams(string? preset, float intensity)
@@ -3336,7 +3404,7 @@ public class GeneratePatchRequest
     /// <summary>Minimum direct damage. Mapped to effectBasePoints1 = damageMin - 1.</summary>
     public int? DamageMin { get; set; }
 
-    /// <summary>Maximum direct damage. effectDieSides1 = damageMax - damageMin.</summary>
+    /// <summary>Maximum direct damage. effectDieSides1 = damageMax - damageMin + 1 (SpellDbcColumnMap.PointsFor).</summary>
     public int? DamageMax { get; set; }
 
     /// <summary>Mana cost override.</summary>

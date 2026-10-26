@@ -17,6 +17,14 @@ namespace MangosSuperUI.Services;
 /// </summary>
 public class SpellCreatorService
 {
+    /// <summary>The row a spell designed FROM NOTHING is cloned from (MSUIClient
+    /// SPELL_CREATOR_PLAN.md P0.4): 18282 "Dummy Spell" - one DUMMY effect on the caster,
+    /// instant, self range, no cost, no cooldown, no visual, no attributes, no script, no
+    /// family, present in both spell_template and the client's Spell.dbc, and referenced by
+    /// no C++ in the core. Every field the design and the form set is written over it, so it
+    /// contributes only the neutral defaults of the columns nobody set.</summary>
+    public const int FromZeroTemplateSpell = 18282;
+
     private readonly ConnectionFactory _db;
     private readonly AuditService _audit;
     private readonly ILogger<SpellCreatorService> _logger;
@@ -120,8 +128,13 @@ public class SpellCreatorService
         return removed;
     }
 
-    /// <summary>Clone an existing spell to a new custom entry.</summary>
-    public async Task<int> CloneSpellAsync(int sourceEntry, Dictionary<string, object?> overrides, string? operatorIp = null)
+    /// <summary>Clone an existing spell to a new custom entry - or, with
+    /// <paramref name="replaceEntry"/>, onto an EXISTING custom entry: its row is replaced in
+    /// place, so a design iterated with the creator's Test live keeps one spell id (the same
+    /// action-bar slot, the same learned spell) instead of minting a new spell per try. Only
+    /// entries in the custom range can be replaced.</summary>
+    public async Task<int> CloneSpellAsync(int sourceEntry, Dictionary<string, object?> overrides,
+        string? operatorIp = null, int? replaceEntry = null)
     {
         using var conn = _db.Mangos();
 
@@ -136,7 +149,15 @@ public class SpellCreatorService
         }
 
         var sourceDict = (IDictionary<string, object>)source;
-        int newEntry = await GetNextCustomEntryAsync();
+        int newEntry;
+        if (replaceEntry is { } fixedEntry)
+        {
+            if (fixedEntry < CUSTOM_SPELL_BASE || fixedEntry > CUSTOM_SPELL_MAX)
+                throw new InvalidOperationException($"#{fixedEntry} is not a custom spell and cannot be replaced.");
+            await conn.ExecuteAsync("DELETE FROM spell_template WHERE entry = @E", new { E = fixedEntry });
+            newEntry = fixedEntry;
+        }
+        else newEntry = await GetNextCustomEntryAsync();
 
         var columns = (await conn.QueryAsync<string>(
             @"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS

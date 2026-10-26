@@ -92,4 +92,13 @@ public class QuestAtlasController : Controller
     [HttpGet]
     public async Task<IActionResult> Creatures(int mapId, float top, float bottom, float left, float right)
         => Json(await _atlas.CreaturesOnBoardAsync(mapId, top, bottom, left, right));
+
+    /// <summary>
+    /// GET /QuestAtlas/CreatureCatalogue — every creature template as the MSUIClient's creator-creatures.tsv
+    /// (entry, name, subname, levels, rank, type, display id, scale; highest patch, no-model entries dropped).
+    /// The client downloads it itself, so no machine needs a hand-made copy.
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> CreatureCatalogue()
+        => Content(await _atlas.CreatureCatalogueTsvAsync(), "text/tab-separated-values; charset=utf-8");
 }
