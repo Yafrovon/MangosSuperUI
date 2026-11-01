@@ -1208,7 +1208,7 @@ public class PatchBuilderService
         }
     }
 
-    public async Task<PatchResult?> BuildSpellPatchAsync(SpellPatchRequest request)
+    public Task<PatchResult?> BuildSpellPatchAsync(SpellPatchRequest request)
     {
         try
         {
@@ -1218,7 +1218,7 @@ public class PatchBuilderService
             if (request.SpellEntry > 65000)
             {
                 _logger.LogError("PatchBuilder: Entry {E} exceeds uint16 safe range (60000–65000)", request.SpellEntry);
-                return null;
+                return Task.FromResult<PatchResult?>(null);
             }
 
             // ── Step 1: Load CLEAN DBCs from server directory ──
@@ -1259,7 +1259,7 @@ public class PatchBuilderService
             if (sourceSpellRow == null)
             {
                 _logger.LogError("PatchBuilder: Source spell {E} not found in Spell.dbc", request.SourceSpellEntry);
-                return null;
+                return Task.FromResult<PatchResult?>(null);
             }
 
             var newSpellRow = spellDbc.CloneRow(request.SourceSpellEntry, request.SpellEntry);
@@ -1592,7 +1592,7 @@ public class PatchBuilderService
             if (!mpqBuilder.Build(fullPath))
             {
                 _logger.LogError("PatchBuilder: MPQ build failed");
-                return null;
+                return Task.FromResult<PatchResult?>(null);
             }
 
             var result = new PatchResult
@@ -1614,12 +1614,12 @@ public class PatchBuilderService
                 "PatchBuilder: SUCCESS — {File} ({Total} files, {M2} M2s, customBlp={Blp})",
                 patchFileName, result.TotalFiles, patchedM2Count, result.CustomBlpPackaged);
 
-            return result;
+            return Task.FromResult<PatchResult?>(result);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "PatchBuilder: Failed for spell {E}", request.SpellEntry);
-            return null;
+            return Task.FromResult<PatchResult?>(null);
         }
     }
 

@@ -3246,7 +3246,7 @@ public partial class WorldEditorController : Controller
             string adtMpqPath = AdtPatcherService.GetAdtMpqPath(mapName, p.gridX, p.gridY);
 
             // Read ORIGINAL ADT (skip our patch)
-            byte[] originalAdt = ReadOriginalAdtSkippingPatch(clientDataPath, adtMpqPath, patchPath);
+            byte[]? originalAdt = ReadOriginalAdtSkippingPatch(clientDataPath, adtMpqPath, patchPath);
             if (originalAdt == null)
             {
                 _logger.LogWarning("RebuildPatchMpq: Could not read original ADT");
@@ -3327,7 +3327,7 @@ public partial class WorldEditorController : Controller
                 // Try to read actual WMO bbox from MOHD
                 try
                 {
-                    byte[] wmoBytes = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, wmoPath);
+                    byte[]? wmoBytes = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, wmoPath);
                     if (wmoBytes != null)
                     {
                         var root = WmoReader.ParseRoot(wmoBytes);
@@ -3398,7 +3398,7 @@ public partial class WorldEditorController : Controller
     /// Read the original ADT from base MPQs, skipping patch-Z.MPQ.
     /// Uses skipPatchZ parameter instead of fragile file rename.
     /// </summary>
-    private byte[] ReadOriginalAdtSkippingPatch(string clientDataPath, string adtMpqPath, string patchPath)
+    private byte[]? ReadOriginalAdtSkippingPatch(string clientDataPath, string adtMpqPath, string patchPath)
     {
         return AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath, skipPatchZ: true);
     }
@@ -3423,7 +3423,7 @@ public partial class WorldEditorController : Controller
             if (string.IsNullOrEmpty(clientDataPath))
             { W("ERROR: No client data path"); return Content(sb.ToString(), "text/plain"); }
 
-            System.Data.IDbConnection adminConn = null;
+            System.Data.IDbConnection? adminConn = null;
             try { adminConn = _db?.Admin(); adminConn?.Open(); } catch { }
 
             var lastPlacement = adminConn != null
@@ -3445,13 +3445,14 @@ public partial class WorldEditorController : Controller
             W($"ADT: {adtMpqPath}");
 
             // Read both ADTs
-            byte[] orig = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath, skipPatchZ: true);
+            byte[]? orig = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath, skipPatchZ: true);
             if (orig == null) { W("ERROR: Could not read original ADT"); adminConn?.Dispose(); return Content(sb.ToString(), "text/plain"); }
 
-            byte[] patched = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
-            bool hasPatch = patched != null && patched.Length != orig.Length;
+            // A same-size read is the unpatched original, so it counts as no patch.
+            byte[]? patched = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
+            if (patched != null && patched.Length == orig.Length) patched = null;
 
-            W($"Original: {orig.Length} bytes  Patched: {(hasPatch ? $"{patched.Length} bytes (+{patched.Length - orig.Length})" : "none")}");
+            W($"Original: {orig.Length} bytes  Patched: {(patched != null ? $"{patched.Length} bytes (+{patched.Length - orig.Length})" : "none")}");
             W();
 
             // ── Helper lambdas ──
@@ -3657,14 +3658,14 @@ public partial class WorldEditorController : Controller
             }
 
             AnalyzeAdt(orig, "ORIGINAL");
-            if (hasPatch) AnalyzeAdt(patched, "PATCHED");
+            if (patched != null) AnalyzeAdt(patched, "PATCHED");
 
             adminConn?.Dispose();
         }
         catch (Exception ex)
         {
             W($"EXCEPTION: {ex.Message}");
-            W(ex.StackTrace);
+            W(ex.StackTrace ?? "");
         }
 
         string output = sb.ToString();
@@ -5604,8 +5605,8 @@ public partial class WorldEditorController : Controller
                 return Json(new { error = "patch-Z.MPQ not found" });
 
             // Read the patched ADT from the MPQ
-            byte[] patchedAdt = null;
-            string adtPathInMpq = null;
+            byte[]? patchedAdt = null;
+            string? adtPathInMpq = null;
 
             using var archive = MangosSuperUI.Services.Mpq.MpqArchive.Open(patchPath);
 
@@ -5633,7 +5634,7 @@ public partial class WorldEditorController : Controller
                 return Json(new { error = "No ADT found in patch-Z.MPQ", files });
 
             // Validate the ADT structure
-            var diag = new Dictionary<string, object>();
+            var diag = new Dictionary<string, object?>();
             diag["mpqFiles"] = files;
             diag["adtPath"] = adtPathInMpq;
             diag["adtSize"] = patchedAdt.Length;
@@ -5809,6 +5810,7 @@ public partial class WorldEditorController : Controller
 
             // Read original ADT from MPQ (same one we'd patch)
             // Use the preset from the last placement, or hardcode for testing
+            if (_db == null) return Json(new { error = "Database not configured" });
             using var adminConn = _db.Admin();
             adminConn.Open();
             var lastPlacement = adminConn.QueryFirstOrDefault(
@@ -5823,7 +5825,7 @@ public partial class WorldEditorController : Controller
 
             string mapName = AdtPatcherService.GetMapName(p.mapId);
             string adtMpqPath = AdtPatcherService.GetAdtMpqPath(mapName, p.gridX, p.gridY);
-            byte[] original = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
+            byte[]? original = AdtTerrainReader.ReadFileFromMpqs(clientDataPath, adtMpqPath);
 
             if (original == null)
                 return Json(new { error = "Could not read original ADT" });
@@ -5867,7 +5869,7 @@ public partial class WorldEditorController : Controller
             if (!System.IO.File.Exists(patchPath))
                 return Json(new { error = "patch-Z.MPQ not found", diag });
 
-            byte[] patched = null;
+            byte[]? patched = null;
             using (var archive = MangosSuperUI.Services.Mpq.MpqArchive.Open(patchPath))
             {
                 var data = archive?.ReadFile(adtMpqPath);
@@ -6130,9 +6132,6 @@ public partial class WorldEditorController : Controller
         var placements = adminConn.Query(
             "SELECT id, wmo_path, mesh_x, mesh_y, mesh_z, rot_y, scale_val, committed FROM custom_wmo_placements WHERE preset=@Preset ORDER BY id",
             new { Preset = preset });
-
-        float cellSize = AdtTerrainReader.CELL_SIZE;
-        float gridSize = AdtTerrainReader.GRID_SIZE;
 
         foreach (var row in placements)
         {

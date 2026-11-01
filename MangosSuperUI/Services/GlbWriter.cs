@@ -141,7 +141,7 @@ public static class GlbWriter
             // per-batch blend modes we need (texIdx × blendMode) materials, so
             // defer material construction to the per-submesh loop and just cache
             // the decoded PNG up front.
-            var pngByTexIdx = new Dictionary<int, byte[]>();
+            Dictionary<int, byte[]> pngByTexIdx = new();
             foreach (var (texIdx, blpData) in textures)
             {
                 var pngBytes = ConvertBlpToPngBytes(blpData);
@@ -176,8 +176,8 @@ public static class GlbWriter
             // exactly the Warglaive shape, and would otherwise collide with the second silently
             // inheriting the first's marker. wantDoubleSide is in the key because a fused _mod
             // primitive forces it on regardless of what the caller asked for.
-            var matCache = new Dictionary<(int texIdx, int blendMode, int alphaBucket, int tintBucket,
-                bool env, bool mod, bool dbl), MaterialBuilder>();
+            Dictionary<(int texIdx, int blendMode, int alphaBucket, int tintBucket,
+                bool env, bool mod, bool dbl), MaterialBuilder> matCache = new();
 
             // exactOnly: an overlay or fused pass must resolve its OWN texture. The three-tier
             // fallback below is load-bearing for a BASE pass (losing tier 2 is what made Thunderfury
@@ -347,9 +347,11 @@ public static class GlbWriter
             // wrong — see class docstring).
             var rootMatrix = Matrix4x4.Identity;
 
-            var scene = new SceneBuilder("scene");
-            var vertices = m2.Vertices;
-            var indices = m2.Indices;
+            // Explicit types, not `var`: these are captured by the local functions below, which
+            // see a `var` local's declared (nullable) type rather than its not-null flow state.
+            SceneBuilder scene = new("scene");
+            List<M2Vertex> vertices = m2.Vertices;
+            List<ushort> indices = m2.Indices;
 
             // Skinned item path. Non-null ONLY for the handful of models whose visible geometry
             // depends on a camera-facing bone or a global-sequence bone track - Thunderfury, the
@@ -429,7 +431,7 @@ public static class GlbWriter
 
             // Every primitive actually emitted, with the glTF names it landed under — this is what
             // the animation manifest keys on now, instead of re-deriving "first batch per submesh".
-            var emittedPasses = new List<M2Fx.M2FxPass>();
+            List<M2Fx.M2FxPass> emittedPasses = new();
 
             // ── Fusion test ─────────────────────────────────────────────────────────────────────
             // A batch with TWO texture units that resolve to the SAME M2 texture slot is WoW's

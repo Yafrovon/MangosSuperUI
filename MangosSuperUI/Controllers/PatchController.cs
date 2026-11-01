@@ -350,7 +350,7 @@ public partial class PatchController : Controller
                         @"SELECT skill_id, class_mask, superseded_by_spell
                           FROM skill_line_ability WHERE spell_id = @E AND build = 5875 LIMIT 1",
                         new { E = req.SourceSpellEntry });
-                    if (sourceSla != null && (int)(sourceSla.skill_id ?? 0) > 0)
+                    if (sourceSla is not null && (int)(sourceSla.skill_id ?? 0) > 0)
                     {
                         int nextSlaId = await Dapper.SqlMapper.ExecuteScalarAsync<int>(slaConn,
                             "SELECT COALESCE(MAX(id), 0) + 1 FROM skill_line_ability");
@@ -435,7 +435,7 @@ public partial class PatchController : Controller
                                 catch { /* fallback */ }
 
                                 int wrapperId = await _spellCreator.CreateTrainerWrapperAsync(
-                                    newEntry, req.SpellName ?? "Custom Spell", req.NameSubtext ?? "Rank 1",
+                                    newEntry, req.SpellName, req.NameSubtext ?? "Rank 1",
                                     req.SpellLevel ?? 1, iconId);
 
                                 // Use a reasonable cost for R1 (vanilla Fireball R2 costs 100 copper = 1 silver)
@@ -2042,7 +2042,7 @@ public partial class PatchController : Controller
                 var slaRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
                     "SELECT skill_id, class_mask FROM skill_line_ability WHERE spell_id = @E AND build = 5875 LIMIT 1",
                     new { E = config.Entry });
-                if (slaRow == null || Convert.ToInt32(slaRow.skill_id ?? 0) == 0)
+                if (slaRow is null || Convert.ToInt32(slaRow.skill_id ?? 0) == 0)
                 {
                     slaRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
                         "SELECT skill_id, class_mask FROM skill_line_ability WHERE spell_id = @E AND build = 5875 LIMIT 1",

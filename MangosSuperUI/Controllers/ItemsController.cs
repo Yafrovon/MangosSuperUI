@@ -527,7 +527,8 @@ public class ItemsController : Controller
             var beforeRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
                 "SELECT * FROM item_template WHERE entry = @Entry ORDER BY patch DESC LIMIT 1",
                 new { Entry = entry });
-            stateBefore = JsonSerializer.Serialize((IDictionary<string, object>)beforeRow);
+            if (beforeRow is IDictionary<string, object> beforeState)
+                stateBefore = JsonSerializer.Serialize(beforeState);
         }
 
         bool isInsert = existing == null;
@@ -2689,7 +2690,8 @@ public class ItemsController : Controller
         using var canvas = new SkiaSharp.SKCanvas(sheet);
         canvas.Clear(new SkiaSharp.SKColor(24, 24, 28));
         using var text = new SkiaSharp.SKPaint
-        { Color = SkiaSharp.SKColors.White, TextSize = 13, IsAntialias = true };
+        { Color = SkiaSharp.SKColors.White, IsAntialias = true };
+        using var font = new SkiaSharp.SKFont { Size = 13 };
 
         // Family diagnostics — a single chromatic family makes five of the six
         // theories mathematically near-identical (they all reduce to "seed hue
@@ -2701,19 +2703,19 @@ public class ItemsController : Controller
         string famLine = $"families: {string.Join(", ", fams.Select(f => $"{f.Family} {f.Percent:F0}%"))}";
         if (chromaticFams.Count <= 1)
             famLine += "   [SINGLE CHROMATIC FAMILY — theories degenerate; judge on a multi-family item]";
-        canvas.DrawText(famLine, label + pad + (cell + pad), 14, text);
+        canvas.DrawText(famLine, label + pad + (cell + pad), 14, SkiaSharp.SKTextAlign.Left, font, text);
 
         // Column headers
-        canvas.DrawText("original", label + pad, header - 8, text);
+        canvas.DrawText("original", label + pad, header - 8, SkiaSharp.SKTextAlign.Left, font, text);
         for (int t = 0; t < tiers.Length; t++)
-            canvas.DrawText(tiers[t], label + pad + (t + 1) * (cell + pad), header - 8, text);
+            canvas.DrawText(tiers[t], label + pad + (t + 1) * (cell + pad), header - 8, SkiaSharp.SKTextAlign.Left, font, text);
 
         using (var orig = SkiaSharp.SKBitmap.Decode(srcPng))
         {
             for (int r = 0; r < rows; r++)
             {
                 string theory = theories[r];
-                canvas.DrawText(theory, pad, header + r * (cell + pad) + cell / 2, text);
+                canvas.DrawText(theory, pad, header + r * (cell + pad) + cell / 2, SkiaSharp.SKTextAlign.Left, font, text);
 
                 var oRect = SkiaSharp.SKRect.Create(label + pad, header + r * (cell + pad), cell, cell);
                 if (orig != null) canvas.DrawBitmap(orig, oRect);

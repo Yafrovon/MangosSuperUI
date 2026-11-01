@@ -80,11 +80,11 @@ public class HomeController : Controller
         var hostCores = _cores.SampleHost();
 
         // Parse .server info from RA for live data
-        string serverInfoRaw = null;
+        string? serverInfoRaw = null;
         int playersOnline = 0;
         int maxOnline = 0;
-        string uptime = null;
-        string coreRevision = null;
+        string? uptime = null;
+        string? coreRevision = null;
 
         try
         {
@@ -831,7 +831,7 @@ public class HomeController : Controller
     /// <summary>
     /// Parses VMaNGOS .server info response.
     /// </summary>
-    private static void ParseServerInfo(string raw, out int playersOnline, out int maxOnline, out string uptime, out string coreRevision)
+    private static void ParseServerInfo(string raw, out int playersOnline, out int maxOnline, out string? uptime, out string? coreRevision)
     {
         playersOnline = 0;
         maxOnline = 0;

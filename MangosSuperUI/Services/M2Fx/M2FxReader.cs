@@ -575,8 +575,9 @@ public static class M2FxReader
             if (i > 0 && times[i] < times[i - 1]) return null;   // not monotonic: not a curve
 
             var value = readValue(data, (int)(keyOffset + k * (long)storedStride));
-            keys[i] = Components(value, components);
-            if (keys[i] is null) return null;
+            var parsed = Components(value, components);
+            if (parsed is null) return null;
+            keys[i] = parsed;
         }
 
         // A "curve" whose keys are all the same value animates nothing; leave it to the baked

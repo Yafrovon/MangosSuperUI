@@ -74,7 +74,7 @@ public sealed class FleetReportTests
     {
         // The bounded selector is a set, so its comparer must be a TOTAL order.
         // Without the guid tie-break, one of these two would be silently dropped.
-        var bots = new[] { Bot(11, "Same"), Bot(12, "Same"), Bot(13, "Later") };
+        var bots = new[] { Bot(11, "Same"), Bot(12, "Same"), Bot(13, "Zed") };
 
         string report = FleetReport.RenderDetailed(bots, maxRows: 2);
 

@@ -215,7 +215,8 @@ public class RetextureEngineController : Controller
         using var canvas = new SkiaSharp.SKCanvas(sheet);
         canvas.Clear(new SkiaSharp.SKColor(24, 24, 28));
         using var text = new SkiaSharp.SKPaint
-        { Color = SkiaSharp.SKColors.White, TextSize = 13, IsAntialias = true };
+        { Color = SkiaSharp.SKColors.White, IsAntialias = true };
+        using var font = new SkiaSharp.SKFont { Size = 13 };
 
         var fams = _palette.DetectFamilies(srcPng);
         var chromaticFams = fams.Where(f => f.Family != "white" && f.Family != "black").ToList();
@@ -225,18 +226,18 @@ public class RetextureEngineController : Controller
         string vLine = vset.IsInvert
             ? $"   value: INVERT (sigma {(vSigma ?? 2.5f):0.0}, detail {(vDetail ?? 1.0f):0.0})"
             : "   value: keep";
-        canvas.DrawText(famLine + vLine, label + pad + (cell + pad), 14, text);
+        canvas.DrawText(famLine + vLine, label + pad + (cell + pad), 14, SkiaSharp.SKTextAlign.Left, font, text);
 
-        canvas.DrawText("original", label + pad, header - 8, text);
+        canvas.DrawText("original", label + pad, header - 8, SkiaSharp.SKTextAlign.Left, font, text);
         for (int t = 0; t < tiers.Length; t++)
-            canvas.DrawText(tiers[t], label + pad + (t + 1) * (cell + pad), header - 8, text);
+            canvas.DrawText(tiers[t], label + pad + (t + 1) * (cell + pad), header - 8, SkiaSharp.SKTextAlign.Left, font, text);
 
         using (var orig = SkiaSharp.SKBitmap.Decode(srcPng))
         {
             for (int r = 0; r < rows; r++)
             {
                 string theory = theories[r];
-                canvas.DrawText(theory, pad, header + r * (cell + pad) + cell / 2, text);
+                canvas.DrawText(theory, pad, header + r * (cell + pad) + cell / 2, SkiaSharp.SKTextAlign.Left, font, text);
 
                 var oRect = SkiaSharp.SKRect.Create(label + pad, header + r * (cell + pad), cell, cell);
                 if (orig != null) canvas.DrawBitmap(orig, oRect);

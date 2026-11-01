@@ -343,7 +343,8 @@ public class GameObjectsController : Controller
             var beforeRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
                 "SELECT * FROM gameobject_template WHERE entry = @Entry ORDER BY patch DESC LIMIT 1",
                 new { Entry = entry });
-            stateBefore = JsonSerializer.Serialize((IDictionary<string, object>)beforeRow);
+            if (beforeRow is IDictionary<string, object> beforeState)
+                stateBefore = JsonSerializer.Serialize(beforeState);
         }
 
         bool isInsert = existing == null;
