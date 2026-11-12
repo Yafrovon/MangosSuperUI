@@ -100,8 +100,21 @@
 		<Content Remove="wwwroot\minimap\**" />
 		<Content Remove="wwwroot\models\**" />
 		<Content Remove="wwwroot\icons\**" />
+		<!-- Runtime caches: each machine generates its own (the box's are far larger), they are
+		     gitignored, and shipping the local ones would overwrite the box's copies. -->
+		<Content Remove="wwwroot\armor_forge_cache\**" />
+		<Content Remove="wwwroot\body_atlas_cache\**" />
+		<Content Remove="wwwroot\weapon_forge_cache\**" />
 		<EmbeddedResource Remove="BotLogic\Domains\**" />
 		<None Remove="BotLogic\Domains\**" />
+	</ItemGroup>
+
+	<!-- Equipment evidence (~950 MB, 6,280 files) is needed on the box by the ArmorForge review
+	     pages but changes rarely and is already there; deploy.sh overlays without deleting and
+	     UseStaticFiles serves it from disk. So it is left out of the routine publish. When the
+	     evidence changes, ship it on purpose:  dotnet publish -c Release -p:ShipEquipmentEvidence=true -->
+	<ItemGroup Condition="'$(ShipEquipmentEvidence)' != 'true'">
+		<Content Remove="wwwroot\equipment-workshop\**" />
 	</ItemGroup>
 
 

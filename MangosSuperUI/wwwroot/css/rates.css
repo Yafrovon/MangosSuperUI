@@ -1,0 +1,394 @@
+/* Gameplay Tuning > Rates (Experience / Reputation / Honor). Dense layout: one toolbar row,
+   one master strip, then a rates table beside a page-specific panel. site.css tokens only. */
+
+/* ── toolbar: tabs | status, pending, save ── */
+.rt-toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border-light);
+    margin-bottom: 10px;
+}
+
+.rt-subnav { display: flex; gap: 2px; }
+
+    .rt-subnav a {
+        padding: 7px 14px;
+        font-size: 13px;
+        color: var(--text-muted);
+        text-decoration: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+    }
+
+        .rt-subnav a:hover { color: var(--text-primary); }
+
+        .rt-subnav a.active {
+            color: var(--text-primary);
+            border-bottom-color: var(--accent);
+        }
+
+.rt-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 6px;
+}
+
+.rt-status { display: inline-flex; gap: 6px; }
+
+.rt-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: default;
+}
+
+    .rt-dot::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--status-offline);
+    }
+
+    .rt-dot.ok::before { background: var(--status-online); }
+    .rt-dot.warn::before { background: var(--status-warning); }
+    .rt-dot.err::before { background: var(--status-error); }
+
+.rt-pending {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+    .rt-pending.has { color: var(--accent); font-weight: 600; }
+
+.rt-banner {
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--status-warning);
+    background: var(--bg-card);
+    padding: 5px 10px;
+    margin-bottom: 6px;
+    border-radius: var(--radius-sm);
+}
+
+    .rt-banner i { color: var(--status-warning); }
+
+/* ── master strip ── */
+.rt-master {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+}
+
+.rt-master-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-right: 4px;
+}
+
+.rt-chip {
+    min-width: 42px;
+    padding: 3px 9px;
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+    .rt-chip:hover { border-color: var(--accent); }
+
+    .rt-chip.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--text-on-accent);
+    }
+
+.rt-master input { width: 76px; padding: 3px 6px; font-size: 12px; }
+
+.rt-master .rt-hint {
+    flex: 1 1 200px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-left: 6px;
+}
+
+.rt-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* ── two-column layout ── */
+.rt-layout {
+    display: grid;
+    grid-template-columns: minmax(380px, 5fr) minmax(0, 7fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.rt-side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.rt-panel { margin: 0; overflow: hidden; }
+
+.rt-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+}
+
+.rt-panel-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+    .rt-panel-tools input[type=search] { width: 130px; padding: 3px 6px; font-size: 12px; }
+    .rt-panel-tools label { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+
+.rt-panel-body { padding: 10px 12px; }
+
+.rt-empty {
+    padding: 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.rt-info {
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: help;
+}
+
+/* ── rates table ── */
+.rt-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+    .rt-grid td { padding: 4px 12px; border-top: 1px solid var(--border-light); vertical-align: middle; }
+
+    .rt-grid .rt-group-row th {
+        padding: 10px 12px 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+        background: var(--bg-card-alt);
+    }
+
+    .rt-grid tr.rt-group-row:first-child th { padding-top: 7px; }
+
+    .rt-grid tr.changed td { background: var(--accent-light); }
+
+.rt-label {
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.rt-input { width: 96px; white-space: nowrap; }
+
+    .rt-input input {
+        width: 70px;
+        padding: 3px 6px;
+        font-size: 13px;
+        text-align: right;
+    }
+
+    .rt-input .x { color: var(--text-muted); font-weight: 600; margin-left: 3px; }
+
+.rt-now {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+    .rt-now .mismatch { color: var(--status-warning); }
+    .rt-now .delta { color: var(--accent); font-weight: 600; }
+    .rt-now .ok { color: var(--status-online); }
+
+.rt-tag {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 0 4px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-medium);
+    color: var(--text-muted);
+    vertical-align: 1px;
+    cursor: help;
+}
+
+    .rt-tag.hook { border-color: var(--accent); color: var(--accent); }
+    .rt-tag.inactive { border-color: var(--status-warning); color: var(--status-warning); }
+
+/* ── level curve editor ── */
+.rt-curve-presets {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+    .rt-curve-presets .rt-chip { min-width: 0; font-weight: 500; }
+
+.rt-curve-band {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+    .rt-curve-band input { width: 56px; padding: 2px 6px; font-size: 12px; }
+    .rt-curve-band input.rate { width: 64px; }
+
+.rt-curve-strip {
+    display: grid;
+    grid-template-columns: repeat(60, 1fr);
+    gap: 1px;
+    height: 16px;
+    margin-top: 8px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+    .rt-curve-strip span { background: var(--border-light); }
+
+.rt-curve-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.rt-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+/* ── tables in the side panel (preview, factions) ── */
+.rt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+    .rt-table th {
+        text-align: left;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--border-medium);
+        background: var(--bg-card);
+    }
+
+    .rt-table td {
+        padding: 3px 8px;
+        border-bottom: 1px solid var(--border-light);
+        color: var(--text-primary);
+    }
+
+    .rt-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .rt-table tr.total td { font-weight: 600; border-bottom: none; }
+
+    .rt-table tr.rt-parent td {
+        background: var(--bg-card-alt);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        padding-top: 6px;
+    }
+
+    .rt-table tr.custom td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+    .rt-table input { width: 58px; padding: 2px 6px; font-size: 12px; text-align: right; }
+
+.rt-key {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: ui-monospace, Consolas, monospace;
+}
+
+/* Faction table scrolls inside its panel so the page itself stays one screen. */
+.rt-scroll {
+    max-height: calc(100vh - 380px);   /* refined by rates-rep.js fitHeight() */
+    min-height: 240px;
+    overflow: auto;
+}
+
+    .rt-scroll .rt-table thead th { position: sticky; top: 0; z-index: 1; }
+
+.rt-explain {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+    .rt-explain p { margin: 0 0 8px; }
+    .rt-explain p:last-child { margin-bottom: 0; }
+
+.rt-toast {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2000;
+    max-width: 440px;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    background: var(--bg-sidebar);
+    color: var(--text-sidebar-active);
+    font-size: 13px;
+    box-shadow: var(--shadow-lg);
+    white-space: pre-line;
+}
+
+    .rt-toast.err { background: var(--status-error); }
+
+@media (max-width: 1200px) {
+    .rt-layout { grid-template-columns: 1fr; }
+    .rt-scroll { max-height: 60vh; }
+}

@@ -1,0 +1,40 @@
+@{
+    // Shared top of every Rates page: one toolbar row (tabs | status, pending, save), a
+    // problem banner, and the master multiplier strip. The page key drives /Rates/State?page=…
+    var ratesPage = ViewData["RatesPage"] as string ?? "Experience";
+    var masterHint = ViewData["RatesMasterHint"] as string ?? "Sets every rate on this page to the same value.";
+    string Active(string p) => p == ratesPage ? "active" : "";
+}
+
+<div id="ratesRoot" data-page="@ratesPage">
+    <div class="rt-toolbar">
+        <nav class="rt-subnav">
+            <a asp-controller="Rates" asp-action="Experience" class="@Active("Experience")"><i class="fa-solid fa-arrow-trend-up"></i> Experience</a>
+            <a asp-controller="Rates" asp-action="Reputation" class="@Active("Reputation")"><i class="fa-solid fa-handshake"></i> Reputation</a>
+            <a asp-controller="Rates" asp-action="Honor" class="@Active("Honor")"><i class="fa-solid fa-medal"></i> Honor</a>
+        </nav>
+        <div class="rt-toolbar-right">
+            <span class="rt-status" id="rtStatus"><span class="rt-dot">&hellip;</span></span>
+            <span id="rtPending" class="rt-pending">No unsaved changes</span>
+            <button type="button" class="btn-sm btn-outline-subtle" id="rtRevert" disabled>Revert</button>
+            <button type="button" class="btn-accent btn-sm" id="rtSave" disabled>
+                <i class="fa-solid fa-bolt"></i> Save &amp; apply
+            </button>
+        </div>
+    </div>
+
+    <div id="rtBanner"></div>
+
+    <div class="rt-master" id="rtMaster">
+        <span class="rt-master-label">Master</span>
+        <button type="button" class="rt-chip" data-mult="1">1&times;</button>
+        <button type="button" class="rt-chip" data-mult="1.5">1.5&times;</button>
+        <button type="button" class="rt-chip" data-mult="2">2&times;</button>
+        <button type="button" class="rt-chip" data-mult="3">3&times;</button>
+        <button type="button" class="rt-chip" data-mult="5">5&times;</button>
+        <button type="button" class="rt-chip" data-mult="10">10&times;</button>
+        <input type="number" class="form-input" id="rtMasterCustom" min="0" max="1000" step="0.01" placeholder="2.13" />
+        <button type="button" class="btn-sm btn-outline-subtle" id="rtMasterApply">Set</button>
+        <span class="rt-hint" title="@masterHint Nothing changes on the server until you save.">@masterHint</span>
+    </div>
+</div>

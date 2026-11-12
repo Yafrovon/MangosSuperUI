@@ -1,0 +1,47 @@
+@{
+    ViewData["Title"] = "Honor Rates";
+    ViewData["RatesPage"] = "Honor";
+    ViewData["RatesMasterHint"] = "Sets honor from kills, BG bonus, spells/quests and rank point earning. Penalty and decay stay.";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <h1><i class="fa-solid fa-medal" style="color: var(--accent);"></i> Rates &middot; Honor</h1>
+            <p>Honor per kill, battleground bonus honor, and how fast weekly ranks climb.</p>
+        </div>
+
+        <div class="content-body">
+            <partial name="_RatesFrame" />
+
+            <div class="rt-layout">
+                <div class="card rt-panel">
+                    <div id="rtFields"><div class="rt-empty">Loading rates&hellip;</div></div>
+                </div>
+
+                <div class="rt-side">
+                    <div class="card rt-panel">
+                        <div class="rt-panel-head"><strong>Which setting makes ranking faster?</strong></div>
+                        <div class="rt-panel-body rt-explain">
+                            <p>Weekly honor only sets your <strong>standing</strong> against everyone else; rank points are handed out by standing.
+                                At 2&times; honor everyone earns twice as much, standings stay the same, and nobody ranks up sooner.</p>
+                            <p>To rank faster, raise <strong>Rank point earning</strong> and lower <strong>Weekly rank point decay</strong>.
+                                The honor rates change the per-kill numbers and the balance between sources (BG objectives vs. open-world kills).</p>
+                            <p class="rt-hint">Rank points still stop at vanilla's cap for each character level. Rank point changes apply at the next weekly honor maintenance.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/rates.css" asp-append-version="true" />
+}
+
+@section Scripts {
+    <script src="~/js/rates.js" asp-append-version="true"></script>
+}

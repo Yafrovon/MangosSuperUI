@@ -21,6 +21,7 @@
         "items" or "retextureengine" => "content",
         "loottuner" or "instances" or "lootifier" or "questlootifier" or "craftinglootifier" or "professiontuning" => "loot",
         "worldeditor" or "worldmap" or "questatlas" => "world",
+        "rates" => "rates",
         "database" or "functiongraph" or "sourcemap" => "data",
         "circuittrace" => "devtools",
         "weaponforge" or "armorforge" => "gamedev",
@@ -35,7 +36,7 @@
     string activeSection = activeGroup switch
     {
         "operations" or "server" or "state" => "admin",
-        "content" or "loot" or "spells" or "world" or "archive" => "tuning",
+        "content" or "loot" or "spells" or "world" or "rates" or "archive" => "tuning",
         "bots" => "aibots",
         "data" or "devtools" or "gamedev" => "devdata",
         "wiki" => "wiki",
@@ -48,7 +49,7 @@
     var macroSections = new[]
     {
         new { Key = "admin",   Label = "Server Administration", Icon = "fa-server",   Sub = "Operations, players & server health", Ctl = "Home",      Act = "Index" },
-        new { Key = "tuning",  Label = "Gameplay Tuning",       Icon = "fa-sliders",  Sub = "Items, loot, spells & the world",     Ctl = "Items",     Act = "Index" },
+        new { Key = "tuning",  Label = "Gameplay Tuning",       Icon = "fa-sliders",  Sub = "Items, loot, spells, world & rates",  Ctl = "Items",     Act = "Index" },
         new { Key = "aibots",  Label = "AI Bot Control",        Icon = "fa-robot",    Sub = "Fleet, brains & chat",                Ctl = "Bots",      Act = "Fleet" },
         new { Key = "devdata", Label = "Data & Development",    Icon = "fa-database", Sub = "Database, source & tooling",          Ctl = "Database",  Act = "Index" },
         new { Key = "wiki",    Label = "Wiki",                  Icon = "fa-book",     Sub = "Documentation",                       Ctl = "Wiki",      Act = "Index" },
@@ -322,6 +323,34 @@
                     <a asp-controller="WorldEditor" asp-action="Index" class="@NavClass("WorldEditor")">
                         <i class="fa-solid fa-mountain-sun"></i>
                         3D World Editor
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Rates (XP / reputation / honor multipliers) -->
+        <div class="sidebar-section" data-group="rates" data-section="tuning">
+            <div class="sidebar-section-title" data-toggle-group="rates">
+                <span>Rates</span>
+                <i class="fa-solid fa-chevron-right sidebar-chevron"></i>
+            </div>
+            <ul class="sidebar-nav sidebar-nav-collapsible">
+                <li class="sidebar-nav-item" data-nav-key="rates-xp">
+                    <a asp-controller="Rates" asp-action="Experience" class="@(currentController.Equals("Rates", StringComparison.OrdinalIgnoreCase) && (currentAction.Equals("Experience", StringComparison.OrdinalIgnoreCase) || currentAction.Equals("Index", StringComparison.OrdinalIgnoreCase)) ? "active" : "")">
+                        <i class="fa-solid fa-arrow-trend-up"></i>
+                        Experience
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="rates-rep">
+                    <a asp-controller="Rates" asp-action="Reputation" class="@(currentController.Equals("Rates", StringComparison.OrdinalIgnoreCase) && currentAction.Equals("Reputation", StringComparison.OrdinalIgnoreCase) ? "active" : "")">
+                        <i class="fa-solid fa-handshake"></i>
+                        Reputation
+                    </a>
+                </li>
+                <li class="sidebar-nav-item" data-nav-key="rates-honor">
+                    <a asp-controller="Rates" asp-action="Honor" class="@(currentController.Equals("Rates", StringComparison.OrdinalIgnoreCase) && currentAction.Equals("Honor", StringComparison.OrdinalIgnoreCase) ? "active" : "")">
+                        <i class="fa-solid fa-medal"></i>
+                        Honor
                     </a>
                 </li>
             </ul>

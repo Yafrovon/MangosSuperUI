@@ -1,0 +1,56 @@
+@{
+    ViewData["Title"] = "XP Rates";
+    ViewData["RatesPage"] = "Experience";
+    ViewData["RatesMasterHint"] = "Sets kill, quest and exploration XP and rested gain. Elite factor, .xprate bounds and the curve stay.";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <h1><i class="fa-solid fa-arrow-trend-up" style="color: var(--accent);"></i> Rates &middot; Experience</h1>
+            <p>Server-wide XP multipliers, saved to mangosd.conf and applied live. Each world keeps its own copy.</p>
+        </div>
+
+        <div class="content-body">
+            <partial name="_RatesFrame" />
+
+            <div class="rt-layout">
+                <div class="card rt-panel">
+                    <div id="rtFields"><div class="rt-empty">Loading rates&hellip;</div></div>
+                </div>
+
+                <div class="rt-side">
+                    <div class="card rt-panel">
+                        <div class="rt-panel-head">
+                            <span><strong>XP level curve</strong> <span id="rtCurveTags"></span>
+                                <i class="fa-regular fa-circle-question rt-info"
+                                   title="Extra multiplier by the player's level, applied to every XP source after the rates on the left. Overlapping bands: the later one wins. Levels with no band stay at 1×.&#10;Rate.XP.LevelCurve"></i></span>
+                            <span class="rt-now" id="rtCurveNow"></span>
+                        </div>
+                        <div class="rt-panel-body"><div id="rtCurve"></div></div>
+                    </div>
+
+                    <div class="card rt-panel">
+                        <div class="rt-panel-head">
+                            <span><strong>Leveling preview</strong>
+                                <i class="fa-regular fa-circle-question rt-info"
+                                   title="Kills of normal mobs at the player's own level, with no rested bonus, group or quest XP. For comparing settings, not a real time-to-60. Updates as you edit."></i></span>
+                        </div>
+                        <div class="rt-panel-body"><div id="rtPreview" class="rt-empty">Loading the XP table&hellip;</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/rates.css" asp-append-version="true" />
+}
+
+@section Scripts {
+    <script src="~/js/rates.js" asp-append-version="true"></script>
+    <script src="~/js/rates-xp.js" asp-append-version="true"></script>
+}

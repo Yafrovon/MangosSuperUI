@@ -1,0 +1,54 @@
+@{
+    ViewData["Title"] = "Reputation Rates";
+    ViewData["RatesPage"] = "Reputation";
+    ViewData["RatesMasterHint"] = "Sets the global rate only. Source rates and faction overrides multiply on top, so leave them at 1 for a plain 2× / 3×.";
+}
+
+<div class="app-shell">
+    <partial name="_Sidebar" />
+
+    <div class="main-content">
+        <div class="content-header">
+            <h1><i class="fa-solid fa-handshake" style="color: var(--accent);"></i> Rates &middot; Reputation</h1>
+            <p>Server-wide reputation multipliers plus per-faction overrides. Every layer multiplies together.</p>
+        </div>
+
+        <div class="content-body">
+            <partial name="_RatesFrame" />
+
+            <div class="rt-layout">
+                <div class="card rt-panel">
+                    <div id="rtFields"><div class="rt-empty">Loading rates&hellip;</div></div>
+                </div>
+
+                <div class="rt-side">
+                    <div class="card rt-panel">
+                        <div class="rt-panel-head">
+                            <span><strong>Per-faction overrides</strong>
+                                <i class="fa-regular fa-circle-question rt-info"
+                                   title="Extra multipliers for one faction, on top of the rates on the left (e.g. 3× Timbermaw from kills only). 0 stops that faction gaining reputation from that source. 1 / 1 / 1 means no override. Saved to the world table reputation_reward_rate and applied live."></i></span>
+                            <span class="rt-panel-tools">
+                                <input type="search" class="form-input" id="rfFilter" placeholder="Filter" />
+                                <label class="rt-hint"><input type="checkbox" id="rfOnlyCustom" /> Changed</label>
+                                <span id="rfPending" class="rt-pending"></span>
+                                <button type="button" class="btn-accent btn-sm" id="rfSave" disabled>
+                                    <i class="fa-solid fa-bolt"></i> Save factions
+                                </button>
+                            </span>
+                        </div>
+                        <div class="rt-scroll" id="rfTable"><div class="rt-empty">Loading factions&hellip;</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/rates.css" asp-append-version="true" />
+}
+
+@section Scripts {
+    <script src="~/js/rates.js" asp-append-version="true"></script>
+    <script src="~/js/rates-rep.js" asp-append-version="true"></script>
+}

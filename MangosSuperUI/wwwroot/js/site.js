@@ -100,7 +100,7 @@
     // and mirrored by data-section="" on each .sidebar-section in _Sidebar.cshtml.
     var SECTIONS = [
         { key: 'admin', label: 'Server Administration', icon: 'fa-server', groups: ['operations', 'server', 'state'] },
-        { key: 'tuning', label: 'Gameplay Tuning', icon: 'fa-sliders', groups: ['content', 'loot', 'spells', 'world', 'archive'] },
+        { key: 'tuning', label: 'Gameplay Tuning', icon: 'fa-sliders', groups: ['content', 'loot', 'spells', 'world', 'rates', 'archive'] },
         { key: 'aibots', label: 'AI Bot Control', icon: 'fa-robot', groups: ['bots'] },
         { key: 'devdata', label: 'Data & Development', icon: 'fa-database', groups: ['data', 'devtools', 'gamedev'] },
         { key: 'wiki', label: 'Wiki', icon: 'fa-book', groups: ['wiki'] },
@@ -116,6 +116,7 @@
         loot: { name: 'Loot', icon: 'fa-dice-d20' },
         spells: { name: 'Spells', icon: 'fa-wand-sparkles' },
         world: { name: 'World & Maps', icon: 'fa-map-location-dot' },
+        rates: { name: 'Rates', icon: 'fa-gauge-high' },
         archive: { name: 'Archive', icon: 'fa-box-archive' },
         bots: { name: 'Bots', icon: 'fa-robot' },
         data: { name: 'Data', icon: 'fa-database' },
@@ -135,7 +136,7 @@
 
     // Default group order + item order within each group
     var DEFAULT_ORDER = {
-        groups: ['operations', 'server', 'state', 'content', 'loot', 'spells', 'world', 'archive', 'bots', 'data', 'devtools', 'gamedev', 'wiki', 'gameworld', 'superui'],
+        groups: ['operations', 'server', 'state', 'content', 'loot', 'spells', 'world', 'rates', 'archive', 'bots', 'data', 'devtools', 'gamedev', 'wiki', 'gameworld', 'superui'],
         items: {
             operations: ['home', 'console', 'players', 'accounts', 'realm'],
             server: ['serverlogs', 'livelogs', 'config'],
@@ -144,6 +145,7 @@
             loot: ['loottuner', 'instances', 'lootifier', 'questlootifier', 'craftinglootifier', 'professiontuning'],
             spells: ['spells', 'patch', 'spellcompleter'],
             world: ['worldmap', 'worldeditor'],
+            rates: ['rates-xp', 'rates-rep', 'rates-honor'],
             archive: ['visuallab', 'gameobjects'],
             bots: ['bots-dashboard', 'bots-fleet', 'bots-map', 'bots-chatfeel', 'bots-chatcapacity'],
             data: ['database', 'sourcemap'],
@@ -538,6 +540,9 @@
             weaponforge: { icon: 'fa-hammer', label: 'Weapon Forge' },
             armorforge: { icon: 'fa-shield-halved', label: 'Armor Forge' },
             worldeditor: { icon: 'fa-mountain-sun', label: '3D World Editor' },
+            'rates-xp': { icon: 'fa-arrow-trend-up', label: 'XP Rates' },
+            'rates-rep': { icon: 'fa-handshake', label: 'Reputation Rates' },
+            'rates-honor': { icon: 'fa-medal', label: 'Honor Rates' },
             armory: { icon: 'fa-shield-halved', label: 'Armory' },
             'downloads-page': { icon: 'fa-download', label: 'Downloads' },
             settings: { icon: 'fa-gear', label: 'Settings' },

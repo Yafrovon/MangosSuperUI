@@ -64,6 +64,7 @@ builder.Services.AddSingleton<WorldStateService>();   // world suspend/resume â€
 builder.Services.AddSingleton<ChangeGraphService>();  // audit_log as a drillable graph, with entry/batch undo
 builder.Services.AddSingleton<DivergenceService>();   // live drift vs og_* baselines â€” the state view behind the graph
 builder.Services.AddSingleton<DbcService>();
+builder.Services.AddSingleton<RatesService>();        // Gameplay Tuning > Rates: mangosd.conf rate keys + .sui rates readback
 builder.Services.AddSingleton<BotTalentVisibilityService>();
 builder.Services.AddSingleton<HeightMapService>();
 builder.Services.AddSingleton<BotBridgeService>();

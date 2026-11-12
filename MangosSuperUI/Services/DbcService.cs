@@ -55,6 +55,10 @@ public partial class DbcService
     public IReadOnlySet<uint> SkillLineIds { get; private set; } = new HashSet<uint>();
     public IReadOnlySet<uint> FactionIds { get; private set; } = new HashSet<uint>();
 
+    /// <summary>Reputation-bearing Faction.dbc rows with their enUS name and parent
+    /// (header) faction. Used by Gameplay Tuning > Rates > Reputation.</summary>
+    public IReadOnlyList<ReputationFactionDbc> ReputationFactions { get; private set; } = Array.Empty<ReputationFactionDbc>();
+
     /// <summary>displayId → model info (model names + texture names from DBC fields [1-4]).
     /// Used by ItemTextureService to resolve displayId → M2 file path.</summary>
     public IReadOnlyDictionary<uint, ItemModelDbc> ItemModelInfos { get; private set; }
@@ -520,6 +524,7 @@ public partial class DbcService
         SpellEntries = new Dictionary<uint, SpellDbcEntry>();
         SkillLineIds = new HashSet<uint>();
         FactionIds = new HashSet<uint>();
+        ReputationFactions = Array.Empty<ReputationFactionDbc>();
 
         // Read path from config — check server-config.json override first, then appsettings.json
         DbcPath = _configuration["Vmangos:DbcPath"]
@@ -549,6 +554,7 @@ public partial class DbcService
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
             SkillLineIds = LoadEntryIds(Path.Combine(DbcPath, "SkillLine.dbc"), "SkillLine");
             FactionIds = LoadFactionRequirementIds(Path.Combine(DbcPath, "Faction.dbc"));
+            ReputationFactions = LoadReputationFactions(Path.Combine(DbcPath, "Faction.dbc"));
             CharacterSections = LoadCharSections(Path.Combine(DbcPath, "CharSections.dbc"));
             CharacterHairGeosets = LoadCharHairGeosets(Path.Combine(DbcPath, "CharHairGeosets.dbc"));
             HelmetGeosetVisData = LoadHelmetGeosetVisData(Path.Combine(DbcPath, "HelmetGeosetVisData.dbc"));
@@ -1283,6 +1289,37 @@ public partial class DbcService
         return ids;
     }
 
+    /// <summary>
+    /// Faction.dbc (vanilla 1.12.1, 37 fields / 148 bytes): [0] ID, [1] ReputationIndex
+    /// (-1 = no reputation), [18] ParentFactionID, [19] Name_lang enUS. Rows whose name
+    /// starts with a space are the hidden profession-spec "factions" and are skipped.
+    /// </summary>
+    private IReadOnlyList<ReputationFactionDbc> LoadReputationFactions(string filePath)
+    {
+        if (!File.Exists(filePath))
+            return Array.Empty<ReputationFactionDbc>();
+
+        var (records, stringBlock, recordSize) = ReadDbcFile(filePath);
+        if (recordSize != 37 * sizeof(uint))
+        {
+            _logger.LogWarning("DbcService: Faction.dbc record size {Size} is not the vanilla 148; faction names skipped", recordSize);
+            return Array.Empty<ReputationFactionDbc>();
+        }
+
+        var list = new List<ReputationFactionDbc>();
+        for (int offset = 0; offset < records.Length; offset += recordSize)
+        {
+            uint id = BitConverter.ToUInt32(records, offset);
+            int reputationIndex = BitConverter.ToInt32(records, offset + 4);
+            if (id == 0 || reputationIndex < 0) continue;
+            uint parentId = BitConverter.ToUInt32(records, offset + 18 * 4);
+            string name = ReadString(stringBlock, BitConverter.ToUInt32(records, offset + 19 * 4));
+            if (name.Length == 0 || char.IsWhiteSpace(name[0])) continue;
+            list.Add(new ReputationFactionDbc(id, reputationIndex, parentId, name));
+        }
+        return list;
+    }
+
     private IReadOnlySet<uint> LoadEntryIds(string filePath, string label)
     {
         if (!File.Exists(filePath))
@@ -1487,6 +1524,8 @@ public record HelmetGeosetVisEntry(
 /// X borders (north/south) — WoW's map axes are rotated relative to
 /// world coordinates. AreaId 0 marks continent overview rows.
 /// </summary>
+public record ReputationFactionDbc(uint Id, int ReputationIndex, uint ParentId, string Name);
+
 public record WorldMapZoneDbc(
     uint Id,
     uint MapId,
